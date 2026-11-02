@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { OptionView, VarView, World } from "../api";
+import type { Cell, GraphNode, OptionView, Reading, VarView, World } from "../api";
 import type { ViewProps } from "./MapView";
 import { CellValue } from "../bits";
 import { label } from "../theme";
@@ -56,6 +56,8 @@ export function WorldsView({ ws, onSelect }: ViewProps) {
   const drawing = drawings.find((n) => n.id === wanted);
   const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => setFailed(null), [drawing?.id]);
+  const [remembered, setShowing] = useRemembered(`recollect.worlds-showing:${g.workspace.dir}`);
+  const showing = remembered === DEFAULT ? "left" : remembered;
 
   if (!w.vars.length && !drawing && !drawings.length) {
     return (
@@ -71,7 +73,21 @@ export function WorldsView({ ws, onSelect }: ViewProps) {
   const atInfo = (v: VarView) => ws.byId.get(v.id)?.cells.at?.value as { row: number; col: number } | undefined;
   const isBoard = w.vars.length > 0 && w.vars.every((v) => atInfo(v));
   const summaries = g.components.filter((c) => c.summary);
-  const values = g.nodes.filter((n) => summaries.some((c) => n.cells[c.name]?.shown?.kind === "cond" && !w.vars.some((v) => v.id === n.id)));
+  // Differs between the worlds left, or between any, ignoring what rules worlds out, as a puzzle's
+  // constraints do.
+  const differsLeft = (c: Cell) => !!c.vars?.length;
+  const differsAny = (c: Cell) => {
+    const s = c.shown;
+    const open = (r: Reading) => !r.always && !r.never;
+    return s?.kind === "bool" ? open(s) : s?.kind === "cond" ? s.cases.length > 1 : s?.kind === "named" ? s.items.some((i) => open(i.when)) : false;
+  };
+  const differs = (c: Cell) => (showing === "all" ? true : showing === "any" ? differsAny(c) : differsLeft(c));
+  // What a node says that's worth a column: what its systems summarise it by, and any of the workspace's
+  // own cells that are worked out, like a car's cost a year.
+  const shownOf = (n: GraphNode) => [...summaries.map((c) => c.name).filter((k) => n.cells[k]), ...Object.keys(n.cells).filter((k) => n.cells[k].workspace && n.cells[k].source === "rule")];
+  // A choice and its options say what they are above.
+  const above = new Set(w.vars.flatMap((v) => [v.id, ...v.options.map((o) => o.id)]));
+  const values = g.nodes.filter((n) => !above.has(n.id) && shownOf(n).some((k) => differs(n.cells[k])));
 
   return (
     <div className="scroll pad worlds">
@@ -137,21 +153,27 @@ export function WorldsView({ ws, onSelect }: ViewProps) {
         </>
       )}
 
-      {values.length > 0 && (
+      {g.nodes.some((n) => !above.has(n.id) && shownOf(n).length) && (
         <section className="world-values">
-          <h4>What that makes things</h4>
+          <h4>
+            What that makes things{" "}
+            <select className="small" value={showing} onChange={(e) => setShowing(e.target.value)}>
+              <option value="left">that differ between the worlds left</option>
+              <option value="any">that differ between any worlds</option>
+              <option value="all">all of them</option>
+            </select>
+          </h4>
+          {!values.length && <p className="muted small">Nothing does.</p>}
           <table className="sheet">
             <tbody>
               {values.map((n) => (
                 <tr key={n.id} onClick={() => onSelect(n.id)}>
                   <td className="sheet-name">{n.name}</td>
-                  {summaries
-                    .filter((c) => n.cells[c.name])
-                    .map((c) => (
-                      <td key={c.name}>
-                        <span className="muted small">{label(c.name)}</span> <CellValue ws={ws} cell={n.cells[c.name]} onSelect={onSelect} component={c.name} />
-                      </td>
-                    ))}
+                  {shownOf(n).map((k) => (
+                    <td key={k}>
+                      <span className="muted small">{label(k)}</span> <CellValue ws={ws} cell={n.cells[k]} onSelect={onSelect} component={k} />
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>

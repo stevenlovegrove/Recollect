@@ -26,7 +26,7 @@ export interface Cell {
   formula?: string;
   value?: unknown;
   shown?: Shown;
-  /** The open choices it differs over, by id. */
+  /** The open choices it differs over, by id. Empty if it's the same in every world that's left. */
   vars?: string[];
   error?: string;
 }

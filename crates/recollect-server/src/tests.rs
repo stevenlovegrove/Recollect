@@ -774,6 +774,20 @@ async fn held_out_choosing_a_car() {
     assert_eq!(per_mile(&v, "Hybrid"), 0.09);
 }
 
+/// A puzzle's constraints differ over its choices, but they hold in every world that's left, so there's
+/// nothing to say about which they depend on. Something that differs between the worlds left still does.
+#[tokio::test]
+async fn what_holds_in_every_world_left_differs_over_nothing() {
+    let c = Client::new();
+    c.open("australia").await;
+    let v = c.view(json!({})).await;
+    assert_eq!(cell(&v, "Western Australia ≠ Northern Territory", "value")["vars"], Value::Null);
+    assert_eq!(cell(&v, "A colouring", "value")["vars"], Value::Null);
+    c.open("trip-budget").await;
+    let v = c.view(json!({})).await;
+    assert_eq!(cell(&v, "Over £200", "value")["vars"], json!([id(&v, "Stay")]));
+}
+
 #[tokio::test]
 async fn part_of_a_formula_can_be_tried_with_nothing_changed() {
     let c = Client::new();

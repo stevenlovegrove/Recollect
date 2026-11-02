@@ -42,7 +42,7 @@ pub struct CellView {
     /// The same value, if it differs between worlds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shown: Option<ShownView>,
-    /// The open choices it differs over, by id.
+    /// The open choices it differs over, by id. Empty if it's the same in every world that's left.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub vars: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -207,7 +207,22 @@ fn show(s: &Shown, labels: &Labels) -> ShownView {
     }
 }
 
-fn cell_view(g: &Graph, catalog: &Catalog, e: Entity, c: &str, picks: &Picks, labels: &Labels, vars: &mut BTreeMap<String, Var>) -> Option<CellView> {
+/// The worlds that are left once these picks are made, and whatever rules worlds out has.
+fn in_play(g: &Graph, catalog: &Catalog, picks: &Picks) -> Bool {
+    catalog.constrained(g).map_or_else(|| Space::global().always(), |c| c.given(picks))
+}
+
+/// The same in every world that's left, though it could differ in worlds that are ruled out.
+fn settled(s: &Shown, in_play: &Bool) -> bool {
+    let fixed = |b: &Bool| b.holds_given(in_play) || (!b).holds_given(in_play);
+    match s {
+        Shown::Bool(b) => fixed(b),
+        Shown::Cond(c) => c.cases().iter().any(|(when, _)| when.holds_given(in_play)),
+        Shown::Named(items) => items.iter().all(|(_, b)| fixed(b)),
+    }
+}
+
+fn cell_view(g: &Graph, catalog: &Catalog, e: Entity, c: &str, picks: &Picks, in_play: &Bool, labels: &Labels, vars: &mut BTreeMap<String, Var>) -> Option<CellView> {
     let rule = g.rule_of(e, c).map(|(r, _)| r);
     let source = if rule.is_some() { "rule" } else { "stored" };
     let own = g.has_own(e, c);
@@ -232,7 +247,8 @@ fn cell_view(g: &Graph, catalog: &Catalog, e: Entity, c: &str, picks: &Picks, la
                     },
                     _ => None,
                 };
-                let mut open: Vec<String> = narrowed.vars().iter().map(Var::name).collect();
+                // A puzzle's constraint differs over its choices, but not between the worlds that are left.
+                let mut open: Vec<String> = if settled(&narrowed, in_play) { Vec::new() } else { narrowed.vars().iter().map(Var::name).collect() };
                 open.sort();
                 open.dedup();
                 Some(cell(value, Some(show(&narrowed, labels)), open, None))
@@ -248,8 +264,7 @@ fn cell_view(g: &Graph, catalog: &Catalog, e: Entity, c: &str, picks: &Picks, la
 
 fn worlds(g: &Graph, catalog: &Catalog, world: &World, picks: &Picks, labels: &Labels, vars: BTreeMap<String, Var>) -> WorldsView {
     let constraint = catalog.constrained(g);
-    let space = Space::global();
-    let in_play = constraint.as_ref().map_or_else(|| space.always(), |c| c.given(picks));
+    let in_play = in_play(g, catalog, picks);
     let mut applied = World::new();
     let mut unpicked = Vec::new();
     let mut count = Some(1u128);
@@ -326,11 +341,12 @@ pub fn view(o: &Open, world: &World) -> View {
     let catalog = &o.built.catalog;
     let labels = Labels(recollect_systems::labels(g));
     let picks = Space::global().picks(world);
+    let playing = in_play(g, catalog, &picks);
     let mut vars = BTreeMap::new();
     let nodes = g
         .entities()
         .map(|e| {
-            let cells = g.components_of(e).into_iter().filter(|c| !catalog.is_internal(c)).filter_map(|c| cell_view(g, catalog, e, &c, &picks, &labels, &mut vars).map(|v| (c, v))).collect();
+            let cells = g.components_of(e).into_iter().filter(|c| !catalog.is_internal(c)).filter_map(|c| cell_view(g, catalog, e, &c, &picks, &playing, &labels, &mut vars).map(|v| (c, v))).collect();
             NodeView { id: e, name: recollect_systems::label_of(g, e), cells }
         })
         .collect();
@@ -408,7 +424,8 @@ pub fn sweep(o: &Open, set: &CellRef, values: &[f64], read: &[CellRef], world: &
         .iter()
         .map(|&at| {
             copy.set_runtime(set.node, &set.component, json!(at));
-            Swept { at, cells: read.iter().map(|r| cell_view(&copy, catalog, r.node, &r.component, &picks, &labels, &mut vars)).collect() }
+            let playing = in_play(&copy, catalog, &picks);
+            Swept { at, cells: read.iter().map(|r| cell_view(&copy, catalog, r.node, &r.component, &picks, &playing, &labels, &mut vars)).collect() }
         })
         .collect())
 }
@@ -548,8 +565,9 @@ pub fn node(o: &Open, e: Entity, world: &World) -> NodeDetail {
     let catalog = &o.built.catalog;
     let labels = Labels(recollect_systems::labels(g));
     let picks = Space::global().picks(world);
+    let playing = in_play(g, catalog, &picks);
     let mut vars = BTreeMap::new();
-    let cells = g.components_of(e).into_iter().filter(|c| !catalog.is_internal(c)).filter_map(|c| cell_view(g, catalog, e, &c, &picks, &labels, &mut vars).map(|v| (c, v))).collect();
+    let cells = g.components_of(e).into_iter().filter(|c| !catalog.is_internal(c)).filter_map(|c| cell_view(g, catalog, e, &c, &picks, &playing, &labels, &mut vars).map(|v| (c, v))).collect();
     let mut outgoing = Vec::new();
     let mut incoming = Vec::new();
     for (from, to, bag) in g.links() {
