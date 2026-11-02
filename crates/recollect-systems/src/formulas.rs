@@ -76,6 +76,12 @@ pub struct IsA;
 #[component]
 pub struct Requires;
 
+/// A choice that isn't anyone's to make, such as how far you'll drive: it lands one way or another, as
+/// likely as its weights say. What's expected averages over these, and never over a choice still to be
+/// made.
+#[component]
+pub struct Uncertain;
+
 /// A function of your own, written as a formula over its parameters.
 #[component("macro")]
 pub struct Macro {
@@ -1130,7 +1136,7 @@ pub fn install(reg: &mut Registry) {
     reg.rule_on::<TryExpansion>(EXPR, build_expansion);
     reg.rule_on_unowned(EXPR, build_unowned);
     reg.set_default(ChoiceOf).set_default(TypeOf).set_default(MacroOf);
-    reg.on_nodes::<ValueCell>().on_nodes::<Domain>().on_nodes::<At>().on_nodes::<Requires>().on_nodes::<Macro>();
+    reg.on_nodes::<ValueCell>().on_nodes::<Domain>().on_nodes::<At>().on_nodes::<Requires>().on_nodes::<Uncertain>().on_nodes::<Macro>();
     reg.declare(Label::NAME, Place::Link, Some(valid_label));
     reg.on_links::<IsA>().inherit_through(IsA::NAME);
 }
@@ -1157,6 +1163,7 @@ pub fn describe(c: &mut Catalog) {
     c.fact::<Domain>("The options this choice has.", json!([]));
     c.fact::<At>("Where this choice goes on a board.", json!({ "row": 0, "col": 0 }));
     c.fact::<Requires>("Only the worlds where this node's value is true count.", Value::Null);
+    c.fact::<Uncertain>("Not anyone's choice: it lands one way or another, as likely as its weights say. Expected values average over it.", Value::Null);
     c.fact::<Macro>("A function of your own, which formulas can call by linking here with a label.", json!({ "params": [], "body": "0" }));
     c.internal::<ValueType>();
     c.internal::<MacroBody>();

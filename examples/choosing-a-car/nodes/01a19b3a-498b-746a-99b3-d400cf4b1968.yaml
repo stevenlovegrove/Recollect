@@ -1,9 +1,9 @@
-id: 01a19b32-8fe4-767b-b40d-df03bda390e1
+id: 01a19b3a-498b-746a-99b3-d400cf4b1968
 components:
   name: Heavy
   value: 16000.0
 links:
-- to: 01a19b32-8fe4-767b-b40d-df00a19b2b33
+- to: 01a19b3a-498b-746a-99b3-d3fd05c9cd2e
   components:
     alternative:
       weight: 1.0

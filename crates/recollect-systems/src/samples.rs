@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use recollect_graph::{Component, Entity, Name, Op, Storage};
 use serde_json::{Value, json};
 
-use crate::formulas::{At, Domain, EXPR, IsA, Label, Requires, ValueCell};
+use crate::formulas::{At, Domain, EXPR, IsA, Label, Requires, Uncertain, ValueCell};
 use crate::notes::{Body, Drawing};
 use crate::plan::{Alternative, Decision, DependsOn, Done, Estimate, Goal, PartOf, Task, Unknown};
 
@@ -168,7 +168,8 @@ fn trip_budget(b: &mut Build) {
 
 fn choosing_a_car(b: &mut Build) {
     b.set("Years kept", ValueCell::num(5.0));
-    b.set("Miles a year", Decision::default()).formula("Miles a year", "pick(in.alternative)");
+    // Not something to decide: it'll be whatever it is, and these are guesses at how likely each is.
+    b.set("Miles a year", Decision::default()).set("Miles a year", Uncertain).formula("Miles a year", "pick(in.alternative)");
     for (option, miles, weight) in [("Light use", 6000.0, 1.0), ("Typical", 10000.0, 2.0), ("Heavy", 16000.0, 1.0)] {
         b.set(option, ValueCell::num(miles)).link(option, "Miles a year", Alternative { weight: Some(weight), ..Alternative::default() });
     }

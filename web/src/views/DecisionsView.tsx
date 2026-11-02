@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import type { Matrix, MatrixOption, MatrixRow } from "../api";
+import { api, type Cell, type Matrix, type MatrixOption, type MatrixRow, type VarView, type View } from "../api";
 import type { ViewProps } from "./MapView";
 import type { Workspace } from "../workspace";
-import { Formula, NodeChip } from "../bits";
+import { Formula, NodeChip, valueText } from "../bits";
 import { nodeColor, pct } from "../theme";
 import { askWhy } from "../Ask";
 
@@ -58,6 +58,7 @@ function DecisionCard({ m, ws, selected, onSelect, focused }: { m: Matrix; ws: W
   const safe = m.rows.filter((r) => r.is_work && r.need.always && !r.finished).length;
   const specific = m.rows.filter((r) => r.is_work && !r.need.always && !r.need.never && !r.finished).length;
   const live = m.options.filter((o) => !o.ruled_out && !o.dropped);
+  const uncertain = ws.view?.worlds.vars.find((v) => v.id === m.id)?.uncertain;
 
   return (
     <article id={`decision-${m.id}`} className={`choice-card ${focused ? "focused" : ""} ${m.chosen ? "decided" : ""}`}>
@@ -65,12 +66,7 @@ function DecisionCard({ m, ws, selected, onSelect, focused }: { m: Matrix; ws: W
         <button className="choice-title" onClick={() => onSelect(m.id)}>
           ⑂ {m.name}
         </button>
-        <span className={`pressure p-${m.pressure.state}`}>
-          {m.pressure.state === "free" && `${m.pressure.work.length} safe step${m.pressure.work.length === 1 ? "" : "s"} ready: no need to decide yet`}
-          {m.pressure.state === "blocking" && `Holding up ${m.pressure.work.length} task${m.pressure.work.length === 1 ? "" : "s"}`}
-          {m.pressure.state === "idle" && "Nothing to start beneath it yet"}
-          {m.pressure.state === "decided" && "Decided"}
-        </span>
+        <span className={`pressure p-${uncertain && !m.chosen ? "idle" : m.pressure.state}`}>{standing(m, !!uncertain)}</span>
       </header>
 
       <div className="opt-list">
@@ -125,6 +121,7 @@ function DecisionCard({ m, ws, selected, onSelect, focused }: { m: Matrix; ws: W
         })}
       </div>
 
+      {!m.chosen && <CompareTable m={m} ws={ws} onSelect={onSelect} />}
       {committing && <CommitPanel key={committing.option.id + committing.kind} m={m} ws={ws} commit={committing} onSelect={onSelect} onCancel={() => setCommitting(null)} run={run} />}
       {err && <div className="error">{err}</div>}
       {(safe > 0 || specific > 0) && !m.chosen && (
@@ -136,6 +133,22 @@ function DecisionCard({ m, ws, selected, onSelect, focused }: { m: Matrix; ws: W
       {m.rows.length === 0 && <p className="muted small">Nothing has been broken down beneath this yet.</p>}
     </article>
   );
+}
+
+/** Where a decision stands, in a few words. Something uncertain isn't waiting on anyone to decide it. */
+function standing(m: Matrix, uncertain: boolean): string {
+  const n = m.pressure.work.length;
+  if (uncertain && !m.chosen) return "Not yours to choose: weighted by how likely each is";
+  switch (m.pressure.state) {
+    case "free":
+      return `${n} safe step${n === 1 ? "" : "s"} ready: no need to decide yet`;
+    case "blocking":
+      return `Holding up ${n} task${n === 1 ? "" : "s"}`;
+    case "idle":
+      return "Nothing to start beneath it yet";
+    default:
+      return "Decided";
+  }
 }
 
 /** Before deciding: what it would change, worked out from the same exact values. Nothing beneath a decision is touched by it. */
@@ -225,6 +238,127 @@ function MatrixTable({ m, ws, selected, onSelect }: { m: Matrix; ws: Workspace; 
       </tbody>
     </table>
   );
+}
+
+type Column = { node: string; cell: string; title: string; of: "option" | "elsewhere" };
+
+/**
+ * The options side by side: what each says about itself, and whatever else comes out differently
+ * depending on which is taken. Each is worked out by asking as if that option were taken, which is the
+ * same as really deciding, with every other choice still open.
+ */
+function CompareTable({ m, ws, onSelect }: { m: Matrix; ws: Workspace; onSelect: (id: string | null) => void }) {
+  const live = m.options.filter((o) => !o.ruled_out && !o.dropped && !o.gap);
+  const [views, setViews] = useState<Record<string, View> | null>(null);
+  const key = `${ws.view?.last_seq}|${JSON.stringify(ws.world)}|${live.map((o) => o.id).join()}`;
+  useEffect(() => {
+    let alive = true;
+    Promise.all(live.map((o) => api.view({ ...ws.world, [m.id]: o.id }).then((v) => [o.id, v] as const)))
+      .then((rs) => alive && setViews(Object.fromEntries(rs)))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!views || live.length < 2) return null;
+
+  const cellIn = (o: string, node: string, cell: string) => views[o]?.nodes.find((n) => n.id === node)?.cells[cell];
+  const options = new Set(m.options.map((o) => o.id));
+  const columns: Column[] = [];
+  // What the options say about themselves: their own cells, by the names formulas use.
+  const own = new Set(live.flatMap((o) => Object.entries(ws.byId.get(o.id)?.cells ?? {}).filter(([, c]) => c.workspace).map(([c]) => c)));
+  for (const c of [...own].sort()) columns.push({ node: "", cell: c, title: c, of: "option" });
+  // Anything else whose value isn't the same whichever is taken.
+  for (const n of ws.view!.nodes) {
+    if (options.has(n.id) || n.id === m.id) continue;
+    for (const [c, cell] of Object.entries(n.cells)) {
+      if (c !== "value" && !cell.workspace) continue;
+      const seen = new Set(live.map((o) => JSON.stringify(cellIn(o.id, n.id, c)?.shown ?? cellIn(o.id, n.id, c)?.value ?? null)));
+      if (seen.size > 1) columns.push({ node: n.id, cell: c, title: c === "value" ? n.name : `${n.name} · ${c}`, of: "elsewhere" });
+    }
+  }
+  if (!columns.length) return null;
+
+  return (
+    <div className="compare-wrap">
+    <table className="matrix compare">
+      <thead>
+        <tr>
+          <th className="t">If it's</th>
+          {columns.map((col) => (
+            <th key={col.node + col.cell} className={col.of === "elsewhere" ? "elsewhere" : ""} title={col.of === "elsewhere" ? `${col.title}, if this option is taken` : `Each option's ${col.cell}`}>
+              {col.title}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {live.map((o) => (
+          <tr key={o.id} className={ws.world[m.id] === o.id ? "selected" : ""} onClick={() => onSelect(o.id)}>
+            <td className="t">{o.name}</td>
+            {columns.map((col) => (
+              <td key={col.node + col.cell}>
+                <Summary cell={cellIn(o.id, col.of === "option" ? o.id : col.node, col.cell)} vars={views[o.id].worlds.vars} />
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+    </div>
+  );
+}
+
+/**
+ * A cell in a few characters: true or false, or a number and its range over what's still open. What's
+ * expected only averages over what's uncertain: over a choice still to be made, it means nothing, so
+ * that's a range, saying which choices it's waiting on.
+ */
+function Summary({ cell, vars }: { cell: Cell | undefined; vars: VarView[] }) {
+  if (!cell) return <span className="muted">–</span>;
+  if (cell.error) return <span className="cell-error">error</span>;
+  const s = cell.shown;
+  const choices = (cell.vars ?? []).map((id) => vars.find((v) => v.id === id)).filter((v) => v && !v.uncertain) as VarView[];
+  const waiting = choices.length ? `depends on ${choices.map((v) => v.name).join(" and ")}` : null;
+  if (s?.kind === "bool") {
+    if (s.always) return <span className="yes">✓</span>;
+    if (s.never) return <span className="no">✕</span>;
+    return (
+      <span title={s.when}>
+        {waiting ? <span className="muted small">{waiting}</span> : <>✓ <span className="muted small">{pct(s.prob)}</span></>}
+      </span>
+    );
+  }
+  if (s?.kind === "cond") {
+    const nums = s.cases.filter((c) => typeof c.value === "number");
+    const total = nums.reduce((t, c) => t + c.when.prob, 0);
+    if (nums.length === s.cases.length && total > 0) {
+      const mean = nums.reduce((t, c) => t + (c.value as number) * c.when.prob, 0) / total;
+      const values = nums.map((c) => c.value as number);
+      const [lo, hi] = [Math.min(...values), Math.max(...values)];
+      const cases = s.cases.map((c) => `${valueText(c.value)} when ${c.when.when}`).join("\n");
+      if (lo !== hi && waiting) {
+        return (
+          <span title={cases}>
+            {valueText(lo)} to {valueText(hi)}
+            <span className="range muted small">{waiting}</span>
+          </span>
+        );
+      }
+      return (
+        <span title={cases}>
+          {valueText(lo === hi ? lo : mean)}
+          {lo !== hi && (
+            <span className="range muted small">
+              {valueText(lo)} to {valueText(hi)}
+            </span>
+          )}
+        </span>
+      );
+    }
+    if (s.cases.length === 1) return <span>{valueText(s.cases[0].value)}</span>;
+  }
+  return <span>{valueText(cell.value)}</span>;
 }
 
 function NeedDot({ p }: { p: number }) {

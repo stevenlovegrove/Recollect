@@ -989,6 +989,35 @@ table.matrix tr.done td.t {
   text-decoration: line-through;
   color: var(--muted);
 }
+/* Side by side, a row per option. Numbers line up, and what's worked out elsewhere is set apart. */
+.compare-wrap {
+  overflow-x: auto;
+  margin: 8px 0 12px;
+}
+table.matrix.compare {
+  table-layout: auto;
+}
+table.matrix.compare .range {
+  display: block;
+  font-size: 11px;
+}
+table.matrix.compare td:not(.t) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+table.matrix.compare th:not(.t) {
+  text-align: right;
+}
+table.matrix.compare th.elsewhere {
+  font-style: italic;
+}
+table.matrix.compare .yes {
+  color: var(--ok, var(--c-task));
+}
+table.matrix.compare .no {
+  color: var(--danger);
+}
 .need {
   display: inline-block;
   width: 11px;

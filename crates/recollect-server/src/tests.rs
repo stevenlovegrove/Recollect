@@ -679,11 +679,11 @@ async fn held_out_choosing_a_car() {
     let cost = "self.price * (1 - 0.85 ^ years) / years + miles * self.per_mile + self.insurance";
     let done = c.post("/api/ops", json!({ "ops": [
         { "op": "add_node", "id": "new:years", "name": "Years kept", "components": { "value": 5 } },
-        { "op": "add_node", "id": "new:miles", "name": "Miles a year", "components": { "decision": {} }, "formula": "pick(in.alternative)" },
+        { "op": "add_node", "id": "new:miles", "name": "Miles a year", "components": { "decision": {}, "uncertain": null }, "formula": "pick(in.alternative)" },
         option("new:light", "Light use", "new:miles", 6000.0, 1.0), option("new:typical", "Typical", "new:miles", 10000.0, 2.0), option("new:heavy", "Heavy", "new:miles", 16000.0, 1.0),
         { "op": "add_node", "id": "new:kind", "name": "Car", "components": { "value": 1, "task": {} }, "links": [{ "to": "new:years", "kind": "label", "value": "years" }, { "to": "new:miles", "kind": "label", "value": "miles" }] },
         { "op": "set", "id": "new:kind", "component": "yearly", "formula": cost },
-        { "op": "add_node", "id": "new:which", "name": "Which car?", "components": { "decision": {} }, "formula": "pick(in.alternative)" },
+        { "op": "add_node", "id": "new:which", "name": "Which car?", "components": { "decision": {} }, "formula": "pick(o in in.alternative: o.yearly)" },
         { "op": "set", "id": "new:which", "component": "range", "formula": "pick(o in in.alternative: o.range)" },
         car("new:hatch", "Hatchback", 18000.0, 0.12, 500.0, 450.0), car("new:estate", "Estate", 24000.0, 0.13, 550.0, 500.0), car("new:ev", "Electric", 32000.0, 0.05, 600.0, 250.0),
         { "op": "add_node", "id": "new:trip", "name": "To Edinburgh", "components": { "value": 400 } },
@@ -715,6 +715,17 @@ async fn held_out_choosing_a_car() {
 
     // The decision's range is whichever car it lands on, so anything can read it.
     assert_eq!(when(&v, "Gets to Edinburgh without stopping", "value"), "Which car?∈{Hatchback,Estate}");
+
+    // How far you drive isn't yours to choose, and which car is. A view says which each cell differs
+    // over, so what's expected can average over one and never the other.
+    let mut uncertain: Vec<(String, bool)> = v["worlds"]["vars"].as_array().unwrap().iter().map(|x| (x["name"].as_str().unwrap().to_string(), x["uncertain"].as_bool().unwrap())).collect();
+    uncertain.sort();
+    assert_eq!(uncertain, vec![("Miles a year".to_string(), true), ("Which car?".to_string(), false)]);
+    assert_eq!(cell(&v, "Hatchback", "yearly")["vars"], json!([ids("new:miles")]), "a car's own cost differs only with the mileage");
+    let mut both = vec![ids("new:miles"), ids("new:which")];
+    both.sort();
+    assert_eq!(cell(&v, "Which car?", "value")["vars"], json!(both), "the chosen car's differs with both");
+    assert!(cell(&c.view(json!({ ids("new:which"): ids("new:hatch") })).await, "Which car?", "value")["vars"] == json!([ids("new:miles")]), "until the car is pinned");
 
     // A car can say otherwise for itself, such as needing a charger at home, and goes back to its kind's
     // when that's taken away.

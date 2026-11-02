@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use recollect_graph::worlds::{Bool, Picks, Space, Var};
 use recollect_graph::{Component, Entity, Error, Event, Graph, Log, Op, Stored, Target, Violation};
-use recollect_systems::formulas::{EXPR, formula_text};
+use recollect_systems::formulas::{EXPR, Uncertain, formula_text};
 use recollect_systems::notes::Body;
 use recollect_systems::plan::{self, Matrix, WorkItem};
 use recollect_systems::{Catalog, ComponentInfo, Shown};
@@ -42,6 +42,9 @@ pub struct CellView {
     /// The same value, if it differs between worlds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shown: Option<ShownView>,
+    /// The open choices it differs over, by id.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub vars: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -106,6 +109,8 @@ pub struct VarView {
     pub id: String,
     pub name: String,
     pub options: Vec<OptionView>,
+    /// Not anyone's to choose, so what's expected averages over it.
+    pub uncertain: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -209,11 +214,11 @@ fn cell_view(g: &Graph, catalog: &Catalog, e: Entity, c: &str, picks: &Picks, la
     let formula = g.saved_rule(e, c).filter(|r| r.rule == EXPR).and_then(|r| formula_text(&r.params).ok().map(String::from));
     let kind = g.kind_beneath(e, c);
     let workspace = catalog.is_own_cell(c) && c != recollect_graph::Name::NAME;
-    let cell = |value, shown, error| CellView { source, rule: rule.clone(), own, kind, workspace, formula: formula.clone(), value, shown, error };
+    let cell = |value, shown, open: Vec<String>, error| CellView { source, rule: rule.clone(), own, kind, workspace, formula: formula.clone(), value, shown, vars: open, error };
     if let Some(shown) = catalog.shown(g, e, c) {
         return match shown {
             Ok(None) => None,
-            Err(err) => Some(cell(None, None, Some(describe_error(&err, labels)))),
+            Err(err) => Some(cell(None, None, Vec::new(), Some(describe_error(&err, labels)))),
             Ok(Some(s)) => {
                 for v in s.vars() {
                     vars.insert(v.name(), v);
@@ -227,14 +232,17 @@ fn cell_view(g: &Graph, catalog: &Catalog, e: Entity, c: &str, picks: &Picks, la
                     },
                     _ => None,
                 };
-                Some(cell(value, Some(show(&narrowed, labels)), None))
+                let mut open: Vec<String> = narrowed.vars().iter().map(Var::name).collect();
+                open.sort();
+                open.dedup();
+                Some(cell(value, Some(show(&narrowed, labels)), open, None))
             }
         };
     }
     match g.get_runtime(e, c) {
         Ok(None) => None,
-        Err(err) => Some(cell(None, None, Some(describe_error(&err, labels)))),
-        Ok(Some(r)) => Some(cell(Some(r.value), None, None)),
+        Err(err) => Some(cell(None, None, Vec::new(), Some(describe_error(&err, labels)))),
+        Ok(Some(r)) => Some(cell(Some(r.value), None, Vec::new(), None)),
     }
 }
 
@@ -268,7 +276,8 @@ fn worlds(g: &Graph, catalog: &Catalog, world: &World, picks: &Picks, labels: &L
                 OptionView { id: o.clone(), name: labels.of(o), weight: weights[i], gap: gaps[i], possible, picked: picked == Some(o) }
             })
             .collect();
-        views.push(VarView { id: id.clone(), name: labels.of(id), options: views_options });
+        let uncertain = id.parse::<Entity>().is_ok_and(|e| g.has_own(e, Uncertain::NAME));
+        views.push(VarView { id: id.clone(), name: labels.of(id), options: views_options, uncertain });
     }
     views.sort_by(|a, b| a.id.cmp(&b.id));
     let (count, solutions) = if constraint.is_some() {

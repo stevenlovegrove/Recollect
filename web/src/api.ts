@@ -26,6 +26,8 @@ export interface Cell {
   formula?: string;
   value?: unknown;
   shown?: Shown;
+  /** The open choices it differs over, by id. */
+  vars?: string[];
   error?: string;
 }
 
@@ -82,6 +84,8 @@ export interface VarView {
   id: string;
   name: string;
   options: OptionView[];
+  /** Not anyone's to choose, so what's expected averages over it. */
+  uncertain: boolean;
 }
 
 export interface WorldsView {
