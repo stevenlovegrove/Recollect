@@ -18,7 +18,7 @@ use recollect_graph::{Cell, Component, Compute, Cx, Entity, Error, Graph, Inputs
 use serde_json::{Value, json};
 
 use crate::expr::{self, BinOp, CORE, Expr, Type, Val, inputs_of};
-use crate::plan::{Choice, Need};
+use crate::plan::{Choice, Done, Dropped, Need};
 use crate::schedule::{Finish, LatestFinish, LatestStart, PlanEnd, Start};
 use crate::{Catalog, Shown};
 
@@ -103,7 +103,7 @@ pub struct TryExpansion(pub String);
 /// checked as it runs.
 fn component_type(component: &str) -> Type {
     match component {
-        "need" | "actionable" | "blocked" | "completion" | "requires" => Type::Bool,
+        "need" | "actionable" | "blocked" | "done" | "dropped" | "requires" => Type::Bool,
         "estimate" | "start" | "finish" | "latest_start" | "latest_finish" | "slack" | "plan_end" => Type::Number,
         "name" | "body" | "choice" => Type::Text,
         _ => Type::Any,
@@ -686,6 +686,8 @@ fn read_cell(cx: &Cx, node: Entity, component: &str, fields: &[String]) -> Resul
             Some(n) => Ev::Truth { yes: n.0, undefined: Space::global().never() },
             None => Ev::Data(pure(Val::Undefined)),
         },
+        Done::NAME => flag_cell(cx.get::<Done>(node)?.map(|c| c.0)),
+        Dropped::NAME => flag_cell(cx.get::<Dropped>(node)?.map(|c| c.0)),
         crate::plan::Estimate::NAME => number_cell(cx.get::<crate::plan::Estimate>(node)?.map(|c| c.0)),
         Start::NAME => number_cell(cx.get::<Start>(node)?.map(|c| c.0)),
         Finish::NAME => number_cell(cx.get::<Finish>(node)?.map(|c| c.0)),
@@ -701,6 +703,13 @@ fn read_cell(cx: &Cx, node: Entity, component: &str, fields: &[String]) -> Resul
         return Ok(whole);
     }
     Ok(Ev::Data(field_of(&whole.data(), fields)))
+}
+
+fn flag_cell(c: Option<Worldly<Option<bool>>>) -> Ev {
+    match c {
+        Some(c) => Ev::Truth { yes: c.0.holds(|v| *v == Some(true)), undefined: c.0.holds(Option::is_none) },
+        None => Ev::Data(pure(Val::Undefined)),
+    }
 }
 
 fn number_cell(c: Option<Worldly<Option<f64>>>) -> Ev {
@@ -893,6 +902,14 @@ pub fn defaults_to<C: Component>(reg: &mut Registry, expected: Type, wrap: Wrap<
     fills::<C>(reg, expected, wrap);
     reg.on_nodes::<C>();
     reg.set_default_rule(C::NAME, EXPR, json!({ "text": text }));
+}
+
+/// What a formula gives a cell that holds true or false. Undefined is `None`.
+pub fn flag_cases(c: Cond<Val>, what: &str) -> Result<Worldly<Option<bool>>, Error> {
+    if let Some((_, bad)) = c.cases().iter().find(|(_, v)| !matches!(v, Val::Bool(_) | Val::Undefined)) {
+        return failed(format!("{what} is true or false, not {}", Type::of(bad).word()));
+    }
+    Ok(Worldly(c.map(|v| if let Val::Bool(b) = v { Some(*b) } else { None })))
 }
 
 /// What a formula gives a cell that holds a number. Undefined is `None`.

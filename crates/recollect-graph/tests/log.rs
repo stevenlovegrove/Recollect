@@ -84,7 +84,7 @@ fn every_kind_of_op_survives_being_written_down() {
     let ops = vec![
         Op::Spawn { id: a },
         Op::Despawn { id: a },
-        Op::set(a, Done),
+        Op::set(a, Done::yes()),
         Op::set_runtime(a, "note", json!({ "text": null })),
         Op::set_rule(a, "x", "some/rule", json!({ "n": 1 })),
         Op::remove::<Done>(a),
@@ -132,14 +132,14 @@ fn a_refused_commit_changes_nothing_and_leaves_no_event() {
 
     // A change that's partly fine is refused as a whole, including what came before the bad part.
     let extra = Entity::new();
-    assert_eq!(refused(&mut log, vec![Op::set(extra, Done), choose(c.calib, c.imu)]), ["chosen_must_be_a_live_option"]);
-    assert_eq!(refused(&mut log, vec![Op::set(extra, Done), Op::Despawn { id: Entity::new() }]), ["op_failed"]);
+    assert_eq!(refused(&mut log, vec![Op::set(extra, Done::yes()), choose(c.calib, c.imu)]), ["chosen_must_be_a_live_option"]);
+    assert_eq!(refused(&mut log, vec![Op::set(extra, Done::yes()), Op::Despawn { id: Entity::new() }]), ["op_failed"]);
     assert_eq!(log.graph().save().unwrap(), before);
     assert!(!log.graph().entities().any(|e| e == extra));
 
     ok(&mut log, vec![choose(c.calib, c.cad)]);
     assert_eq!(refused(&mut log, vec![Op::link(c.cad, c.calib, Alternative { ruled_out: Some(json!({})), weight: None })]), ["chosen_must_be_a_live_option"]);
-    assert_eq!(refused(&mut log, vec![Op::set(c.cad, Dropped)]), ["chosen_must_be_a_live_option"], "reaching it from the other end");
+    assert_eq!(refused(&mut log, vec![Op::set(c.cad, Dropped::yes())]), ["chosen_must_be_a_live_option"], "reaching it from the other end");
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn gaps_cannot_be_done_chosen_or_given_parts() {
     ok(&mut log, plan::new_decision(d, gap));
     ok(&mut log, vec![Op::set(task, Task {})]);
 
-    assert_eq!(refused(&mut log, vec![Op::set(gap, Done)]), ["unknown_cannot_be_done"]);
+    assert_eq!(refused(&mut log, vec![Op::set(gap, Done::yes())]), ["unknown_cannot_be_done"]);
     assert_eq!(refused(&mut log, vec![choose(d, gap)]), ["unknown_cannot_be_chosen"]);
     assert_eq!(refused(&mut log, vec![Op::link(task, gap, PartOf)]), ["unknown_has_no_parts"]);
 
@@ -223,7 +223,7 @@ fn a_check_only_reruns_where_an_edit_reached() {
     log.graph().take_ran();
 
     // No check reached `done` here: the one that could reads `unknown` first, and stops.
-    ok(&mut log, vec![Op::set(tasks[7], Done)]);
+    ok(&mut log, vec![Op::set(tasks[7], Done::yes())]);
     assert_eq!(log.graph().take_ran(), vec![]);
 
     ok(&mut log, vec![Op::set(tasks[7], Decision::default())]);
@@ -304,7 +304,7 @@ fn external_edits_are_audited_not_lost() {
 
     log.undo(seq, "steven", "that pull was wrong").unwrap();
     assert!(log.graph().entities().any(|e| e == c.free), "external edits can be undone too");
-    assert_eq!(log.graph().get::<Done>(c.imu), Ok(None));
+    assert!(!log.graph().has_own(c.imu, Done::NAME), "and it's worked out again");
 
     let events = log.events().len();
     let same = log.graph().save().unwrap();
@@ -413,7 +413,7 @@ fn a_hand_edit_can_break_things_without_losing_them() {
     assert!(problems.iter().any(|p| matches!(p, LoadProblem::BrokenRule(_, Error::UnknownRule(k)) if k == "not/registered")), "{problems:?}");
     assert!(problems.iter().any(|p| matches!(p, LoadProblem::Standing(v) if v.iter().any(|v| v.rule == "malformed_component"))), "{problems:?}");
 
-    ok(&mut log, vec![Op::set(b, Done)]);
+    ok(&mut log, vec![Op::set(b, Done::yes())]);
     assert_eq!(log.graph().get_runtime(a, "estimate").unwrap().unwrap().value, json!("soon"), "it's kept as written");
     assert!(matches!(log.graph().get::<Estimate>(a), Err(Error::Malformed { .. })));
 }
@@ -424,7 +424,7 @@ fn a_new_file_and_a_removed_file_are_edits_too() {
     let reg = plan_registry();
     let (mut log, _) = Log::open(dir.path(), reg.clone(), "ext").unwrap();
     let (a, b) = (Entity::new(), Entity::new());
-    ok(&mut log, vec![Op::set(a, Done), Op::set(b, Done)]);
+    ok(&mut log, vec![Op::set(a, Done::yes()), Op::set(b, Done::yes())]);
     drop(log);
 
     let new = Entity::new();
@@ -444,7 +444,7 @@ fn a_directory_of_plain_files_becomes_a_logged_one() {
     let reg = plan_registry();
     let mut g = Graph::with_registry(reg.clone());
     let a = g.spawn();
-    g.set(a, Done);
+    g.set(a, Done::yes());
     g.save_dir(dir.path()).unwrap();
 
     let (log, problems) = Log::open(dir.path(), reg, "first import").unwrap();
@@ -587,7 +587,7 @@ fn what_a_commit_costs() {
         let import = start.elapsed();
         let start = std::time::Instant::now();
         for i in 0..edits {
-            log.commit("t", "edit", vec![Op::set(ids[i * 7 % n], Done)]).unwrap();
+            log.commit("t", "edit", vec![Op::set(ids[i * 7 % n], Done::yes())]).unwrap();
         }
         let memory = start.elapsed() / edits as u32;
 
@@ -598,7 +598,7 @@ fn what_a_commit_costs() {
         let import_disk = start.elapsed();
         let start = std::time::Instant::now();
         for i in 0..edits {
-            log.commit("t", "edit", vec![Op::set(ids[i * 7 % n], Done)]).unwrap();
+            log.commit("t", "edit", vec![Op::set(ids[i * 7 % n], Done::yes())]).unwrap();
         }
         let disk = start.elapsed() / edits as u32;
         drop(log);

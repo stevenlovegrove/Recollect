@@ -37,7 +37,7 @@ fn setup(dir: &Path) -> SavedGraph {
 
 fn the_commit() -> Vec<Op> {
     vec![
-        Op::set(id(1), Done),
+        Op::set(id(1), Done::yes()),
         Op::remove::<Task>(id(2)),
         Op::unlink::<PartOf>(id(2), id(1)),
         Op::Despawn { id: id(3) },
@@ -105,7 +105,7 @@ fn a_crash_at_any_step_of_going_back_leaves_it_there_or_where_it_was() {
         assert_eq!(plain.save().unwrap(), now, "the files have caught up at step {steps}");
         outcomes.push(went);
         // And it goes on working, as a branch if it did go back.
-        let seq = log.commit("t", "afterwards", vec![Op::set(id(6), Done)]).unwrap();
+        let seq = log.commit("t", "afterwards", vec![Op::set(id(6), Done::yes())]).unwrap();
         assert_eq!(log.events()[seq as usize].parent, Some(if went { 0 } else { 1 }));
         if code == 0 {
             assert!(steps > 5, "this should have passed several steps: {steps}");
@@ -159,7 +159,7 @@ fn recover_and_check(dir: &Path, before: &SavedGraph, after: &SavedGraph) -> boo
     assert_eq!(leftovers, Vec::<String>::new());
 
     // And it goes on working.
-    log.commit("t", "afterwards", vec![Op::set(id(6), Done)]).unwrap();
+    log.commit("t", "afterwards", vec![Op::set(id(6), Done::yes())]).unwrap();
     drop(log);
     let (log, problems) = Log::open(dir, registry(), "ext").unwrap();
     assert_eq!(problems, vec![], "a clean run leaves nothing to report");
@@ -313,14 +313,14 @@ fn a_failed_write_of_the_log_changes_nothing_and_stale_files_are_repaired() {
     let mut perms = std::fs::metadata(&nodes).unwrap().permissions();
     perms.set_readonly(true);
     std::fs::set_permissions(&nodes, perms.clone()).unwrap();
-    let result = log.commit("t", "second", vec![Op::set(id(2), Done)]);
+    let result = log.commit("t", "second", vec![Op::set(id(2), Done::yes())]);
     #[allow(clippy::permissions_set_readonly_false)]
     perms.set_readonly(false);
     std::fs::set_permissions(&nodes, perms).unwrap();
 
     assert!(matches!(result, Err(recollect_graph::CommitError::FilesBehind { seq: 1, .. })), "{result:?}");
-    assert_eq!(log.graph().get(id(2)), Ok(Some(Done)), "it did happen");
-    log.commit("t", "third", vec![Op::set(id(1), Done)]).unwrap();
+    assert_eq!(log.graph().get(id(2)), Ok(Some(Done::yes())), "it did happen");
+    log.commit("t", "third", vec![Op::set(id(1), Done::yes())]).unwrap();
     let saved = log.graph().save().unwrap();
     drop(log);
 

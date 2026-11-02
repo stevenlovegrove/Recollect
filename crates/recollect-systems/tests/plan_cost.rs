@@ -16,7 +16,7 @@ fn registry() -> Arc<Registry> {
 fn read_everything(g: &Graph) {
     for e in g.entities() {
         g.get::<Need>(e).unwrap();
-        g.get::<Completion>(e).unwrap();
+        g.get::<Done>(e).unwrap();
         g.get::<Blocked>(e).unwrap();
         g.get::<Actionable>(e).unwrap();
         g.get::<Scope>(e).unwrap();
@@ -131,7 +131,7 @@ fn an_edit_then_reading_the_whole_plan() {
         for i in 0..edits {
             let leaf = leaves[i * leaves.len() / edits];
             let start = Instant::now();
-            log.commit("t", "finished", vec![Op::set(leaf, Done)]).unwrap();
+            log.commit("t", "finished", vec![Op::set(leaf, Done::yes())]).unwrap();
             commit += start.elapsed();
             let start = Instant::now();
             read_everything(log.graph());

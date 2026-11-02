@@ -104,13 +104,13 @@ impl G {
 
     fn done(&mut self, name: &str) -> &mut Self {
         let e = self.e(name);
-        self.commit(vec![Op::set(e, Done)]);
+        self.commit(vec![Op::set(e, Done::yes())]);
         self
     }
 
     fn drop(&mut self, name: &str) -> &mut Self {
         let e = self.e(name);
-        self.commit(vec![Op::set(e, Dropped)]);
+        self.commit(vec![Op::set(e, Dropped::yes())]);
         self
     }
 
@@ -148,11 +148,11 @@ impl G {
 
     /// The worlds in which something here is still owed.
     fn open(&self, name: &str) -> String {
-        self.show(&self.g().get::<Completion>(self.id(name)).unwrap().unwrap().open())
+        self.show(&self.g().get::<Done>(self.id(name)).unwrap().unwrap().open())
     }
 
     fn finished(&self, name: &str) -> String {
-        self.show(&self.g().get::<Completion>(self.id(name)).unwrap().unwrap().finished())
+        self.show(&self.g().get::<Done>(self.id(name)).unwrap().unwrap().finished())
     }
 
     fn blocked(&self, name: &str) -> String {
@@ -252,7 +252,7 @@ fn an_outer_decision_comes_first_even_if_the_inner_one_is_asked_about_first() {
     g.decision("root").node("a").option("a", "root").node("b").option("b", "root");
     g.decision("x").part_of("x", "a").node("p").option("p", "x").node("q").option("q", "x");
     g.task("y").part_of("y", "p").part_of("y", "b");
-    g.g().get::<Completion>(g.id("x")).unwrap();
+    g.g().get::<Done>(g.id("x")).unwrap();
     assert_eq!(g.need("y"), "(root=a ∧ x=p) ∨ root=b");
 }
 
@@ -262,7 +262,7 @@ fn ruling_out_narrows_the_worlds() {
     g.rule_out("board", "calib");
     assert!(g.need_of("static").is_always(), "cad and free both need it, and they're all that's left");
     assert_eq!(g.need("detector"), "never", "pruned, with nothing stored on detector");
-    assert_eq!(g.g().get::<Dropped>(g.id("detector")), Ok(None));
+    assert!(!g.g().has_own(g.id("detector"), Dropped::NAME), "nobody said anything about it");
 }
 
 #[test]
@@ -321,8 +321,8 @@ fn completion_knows_about_choices() {
 fn a_node_with_nothing_to_finish_is_not_in_the_completion_system() {
     let mut g = G::new();
     g.node("note").task("t").depends("t", "note");
-    let c = g.g().get::<Completion>(g.id("note")).unwrap().unwrap();
-    assert_eq!(c.0, Space::global().pure(None));
+    let c = g.g().get::<Done>(g.id("note")).unwrap().unwrap();
+    assert_eq!(c.0.0, Space::global().pure(None));
     assert_eq!(g.blocked("t"), "never", "a note requires nothing");
 
     let (note, gap) = (g.id("note"), g.e("note.gap"));
@@ -336,7 +336,7 @@ fn a_node_with_nothing_to_finish_is_not_in_the_completion_system() {
 fn a_summary_with_nothing_completable_beneath_it_is_not_in_the_system_either() {
     let mut g = G::new();
     g.node("folder").node("note").part_of("note", "folder");
-    assert_eq!(g.g().get::<Completion>(g.id("folder")).unwrap().unwrap().0, Space::global().pure(None));
+    assert_eq!(g.g().get::<Done>(g.id("folder")).unwrap().unwrap().0.0, Space::global().pure(None));
     g.task("t").part_of("t", "folder");
     assert_eq!(g.open("folder"), "always", "a task under it brings it in");
     g.done("t");
@@ -393,31 +393,37 @@ fn a_decision_that_is_only_a_decision() {
     assert_eq!(g.blocked("mix"), "never");
 }
 
-/// Differs from the kernel, where a statement overrides what's beneath it.
 #[test]
-fn done_only_means_something_at_a_leaf() {
+fn what_a_node_says_for_itself_replaces_what_is_beneath_it() {
     let mut g = G::new();
     let goal = g.e("goal");
     g.commit(vec![Op::set(goal, Goal)]);
     g.task("t").part_of("t", "goal").task("after").depends("after", "goal");
-    g.done("goal");
-    assert_eq!(g.open("goal"), "always", "one source of truth: it's derived from t");
+    assert_eq!(g.open("goal"), "always", "it's worked out from t");
     assert_eq!(g.blocked("after"), "always");
-    assert_eq!(g.notices(), vec![("stated_done_with_open_work".to_string(), "goal".to_string())], "so the disagreement is visible");
 
-    // Finishing early is saying what's being left out, which is a fact with an author.
-    g.drop("t");
-    assert_eq!(g.finished("goal"), "always", "with no live parts, the goal is a leaf and its statement counts");
+    g.done("goal");
+    assert_eq!(g.finished("goal"), "always", "until it says otherwise");
     assert_eq!(g.blocked("after"), "never");
+    assert_eq!(g.notices(), vec![("stated_done_with_open_work".to_string(), "goal".to_string())], "and the disagreement is visible");
+
+    // Saying what's being left out settles it, and it's a fact with an author too.
+    g.drop("t");
+    assert_eq!(g.notices(), vec![("dropped_part_of_live_work".to_string(), "t".to_string())]);
+
+    // And without the statement, it's worked out again.
+    let t = g.id("t");
+    g.commit(vec![Op::remove::<Dropped>(t), Op::remove::<Done>(goal)]);
+    assert_eq!(g.open("goal"), "always");
 }
 
-/// Differs from the kernel: a stated done in the middle doesn't stop what's beneath it counting.
+/// A statement in the middle settles things for what's above it, so that's the one that disagrees.
 #[test]
-fn the_notice_goes_on_every_statement_that_disagrees() {
+fn the_notice_goes_on_the_statement_that_disagrees() {
     let mut g = G::new();
     g.node("goal").node("phase").task("t").part_of("phase", "goal").part_of("t", "phase");
     g.done("phase").done("goal");
-    assert_eq!(g.notices().iter().map(|n| n.1.as_str()).collect::<Vec<_>>(), vec!["goal", "phase"]);
+    assert_eq!(g.notices().iter().map(|n| n.1.as_str()).collect::<Vec<_>>(), vec!["phase"]);
     g.done("t");
     assert_eq!(g.notices(), vec![], "they agree now");
 }
@@ -431,10 +437,10 @@ fn a_done_leaf_is_not_a_contradiction() {
 }
 
 #[test]
-fn a_stated_done_decision_is_noted_and_changes_nothing() {
+fn a_stated_done_decision_is_noted() {
     let mut g = calibration();
     g.done("calib");
-    assert_eq!(g.open("calib"), "always");
+    assert_eq!(g.finished("calib"), "always");
     assert_eq!(g.notices(), vec![("stated_done_with_open_work".to_string(), "calib".to_string())]);
 }
 
@@ -654,7 +660,7 @@ fn dropping_is_explicit_and_reversible() {
     g.drop("b");
     assert_eq!(g.finished("phase"), "always", "it no longer requires b");
     assert_eq!(g.notices(), vec![("dropped_part_of_live_work".to_string(), "b".to_string())], "so that isn't silent");
-    assert_eq!(g.g().get::<Completion>(g.id("b")).unwrap().unwrap().0, Space::global().pure(None), "dropped is neither done nor owed");
+    assert_eq!(g.g().get::<Done>(g.id("b")).unwrap().unwrap().0.0, Space::global().pure(None), "dropped is neither done nor owed");
     let b = g.id("b");
     g.commit(vec![Op::remove::<Dropped>(b)]);
     assert_eq!(g.open("phase"), "always");
@@ -795,10 +801,10 @@ fn what_if_and_commit_share_one_code_path() {
 #[test]
 fn the_reads_say_what_each_value_came_from() {
     let g = estimated();
-    g.g().get::<Completion>(g.id("calib")).unwrap();
-    let reads = g.g().reads_of(g.id("calib"), Completion::NAME);
+    g.g().get::<Done>(g.id("calib")).unwrap();
+    let reads = g.g().reads_of(g.id("calib"), Done::NAME);
     for child in ["imu", "cad", "free", "calib.unknown"] {
-        assert!(reads.contains(&Dep::Cell((g.id(child), Completion::NAME.to_string()))), "{child}: {reads:?}");
+        assert!(reads.contains(&Dep::Cell((g.id(child), Done::NAME.to_string()))), "{child}: {reads:?}");
     }
 }
 
@@ -814,7 +820,7 @@ fn an_edit_reruns_only_what_it_reaches() {
     assert_eq!(actionable.len(), g.g().entities().count());
     let ran: Vec<String> = g.g().take_ran().into_iter().map(|(e, c)| format!("{c}({})", g.name_of(e))).collect();
     assert!(!ran.iter().any(|r| r.starts_with("need") || r.starts_with("choice") || r.contains("export") || r.contains("static")), "{ran:?}");
-    assert!(ran.contains(&"completion(detector)".to_string()), "{ran:?}");
+    assert!(ran.contains(&"actionable(detector)".to_string()), "{ran:?}");
 }
 
 #[test]
@@ -905,7 +911,7 @@ impl Compute for ExposedRule {
     fn compute(&self, cx: &Cx) -> Result<Exposed, Error> {
         let mut any_open = false;
         for risk in cx.sources::<Threatens>()? {
-            any_open |= cx.get::<Done>(risk)?.is_none() && cx.get::<Dropped>(risk)?.is_none();
+            any_open |= !cx.get::<Done>(risk)?.is_some_and(|d| d.finished().is_always()) && !cx.get::<Dropped>(risk)?.is_some_and(|d| d.0.0.holds(|v| *v == Some(true)).is_always());
         }
         Ok(Exposed(if any_open { cx.own_value::<Need>()?.0 } else { Space::global().never() }))
     }
@@ -981,7 +987,7 @@ impl Compute for RemainingRule {
         let space = Space::global();
         let mut total = space.pure(0.0);
         for (t, _) in cx.with::<Task>()? {
-            let open = &cx.value::<Need>(t)?.0 & &cx.value::<Completion>(t)?.open();
+            let open = &cx.value::<Need>(t)?.0 & &cx.value::<Done>(t)?.open();
             let days = cx.get::<Estimate>(t)?.map_or_else(|| space.pure(Some(0.0)), |e| e.0.0).map(|d| d.unwrap_or(0.0));
             let term = Cond::when(&open, &days, &space.pure(0.0));
             total = total.zip(&term, |a, b| a + b);
@@ -1137,7 +1143,7 @@ fn it_scales_with_structure_not_with_the_number_of_worlds() {
     }
     g.commit(ops);
     assert_eq!(g.need("t3_0"), "d3=d3a");
-    assert!(g.g().get::<Completion>(root).unwrap().unwrap().finished().prob().abs() < 1e-9);
+    assert!(g.g().get::<Done>(root).unwrap().unwrap().finished().prob().abs() < 1e-9);
 }
 
 #[test]
@@ -1154,5 +1160,5 @@ fn a_long_chain_computes() {
     g.commit(ops);
     assert!(g.need_of("n19999").is_always());
     assert_eq!(g.g().get::<ScopeDepth>(last), Ok(Some(ScopeDepth(19_999))));
-    assert_eq!(g.g().get::<Completion>(g.id("n0")).unwrap().unwrap().0, Space::global().pure(None));
+    assert_eq!(g.g().get::<Done>(g.id("n0")).unwrap().unwrap().0.0, Space::global().pure(None));
 }

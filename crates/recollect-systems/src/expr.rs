@@ -163,7 +163,10 @@ const LIBRARY: &[(&str, &[&str], &str)] = &[
     // once. A gap in play means nobody knows, and a task with no estimate is the same.
     ("effort", &[], "if(any(u in with.unknown: u.need), undefined, sum(t in with.task: if(t.need, t.estimate, 0)))"),
     // Whether this node's own time is its own, because nothing beneath it stands in for it.
-    ("is_leaf", &[], "count(p in in.part_of: !has(p.dropped)) = 0 && !has(self.decision)"),
+    ("is_leaf", &[], "count(p in in.part_of: !p.dropped) = 0 && !has(self.decision)"),
+    // Whether what's beneath is finished. What has nothing to finish has no say, and if nothing does,
+    // neither does this.
+    ("done_beneath", &["chosen"], "if(any(p in in.part_of: defined(p.done)) || defined(chosen), all(p in in.part_of: or(p.done, true)) && or(chosen, true), undefined)"),
     // How long this node takes. With no estimate that's nothing, and an estimate a formula can't
     // work out makes the dates unknowable.
     ("days", &[], "if(has(self.estimate), self.estimate, 0)"),

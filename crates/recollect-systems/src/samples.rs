@@ -123,7 +123,7 @@ fn critical_path(b: &mut Build) {
     b.link("Frame the walls", "Lay foundations", DependsOn::default());
     b.link("Paint", "Wire the rooms", DependsOn::default());
     b.link("Paint", "Frame the walls", DependsOn::default());
-    b.set("Lay foundations", Done);
+    b.set("Lay foundations", Done::yes());
 }
 
 fn invoice(b: &mut Build) {

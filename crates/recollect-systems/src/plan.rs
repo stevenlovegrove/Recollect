@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use recollect_graph::worlds::{Bool, Cond, Space, Worldly};
@@ -53,13 +53,60 @@ pub struct Risk;
 #[component]
 pub struct Unknown;
 
-/// Stated complete.
-#[component]
-pub struct Done;
+/// As a stored `done` or `dropped` used to be written: there or not, with nothing in it.
+fn flag<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Worldly<Option<bool>>, D::Error> {
+    let v = Value::deserialize(d)?;
+    if v.is_null() {
+        return Ok(Worldly::plain(Some(true)));
+    }
+    serde_json::from_value(v).map_err(serde::de::Error::custom)
+}
 
-/// Deliberately out of the picture.
+/// Whether it's finished, per world. Undefined where nothing about it can be finished, which a node
+/// opts into by holding an obligation, by being a decision, or by having parts that did. It's worked
+/// out from what's beneath, and whatever a node says for itself is what counts instead.
 #[component]
-pub struct Dropped;
+pub struct Done(#[serde(deserialize_with = "flag")] pub Worldly<Option<bool>>);
+
+impl Done {
+    pub fn yes() -> Self {
+        Done(Worldly::plain(Some(true)))
+    }
+
+    /// The worlds in which something here is still owed. This is what a dependent waits for.
+    pub fn open(&self) -> Bool {
+        self.0.0.holds(|c| *c == Some(false))
+    }
+
+    /// The worlds in which it's been finished.
+    pub fn finished(&self) -> Bool {
+        self.0.0.holds(|c| *c == Some(true))
+    }
+}
+
+/// Deliberately out of the picture, per world.
+#[component]
+pub struct Dropped(#[serde(deserialize_with = "flag")] pub Worldly<Option<bool>>);
+
+impl Dropped {
+    pub fn yes() -> Self {
+        Dropped(Worldly::plain(Some(true)))
+    }
+}
+
+/// The worlds where this node is dropped.
+fn dropped_when(cx: &Cx, e: Entity) -> Result<Bool, Error> {
+    Ok(cx.get::<Dropped>(e)?.map_or_else(|| Space::global().never(), |d| d.0.0.holds(|v| *v == Some(true))))
+}
+
+/// Whether this node is finished in every world.
+fn all_done(cx: &Cx) -> Result<bool, Error> {
+    Ok(cx.own::<Done>()?.is_some_and(|d| d.finished().is_always()))
+}
+
+fn is_dropped(g: &Graph, e: Entity) -> Result<bool, Error> {
+    Ok(g.get::<Dropped>(e)?.is_some_and(|d| d.0.0.holds(|v| *v == Some(true)).is_always()))
+}
 
 /// An open question with options, and which one was taken, if any.
 #[derive(Default)]
@@ -141,8 +188,9 @@ impl Compute for CanFinishRule {
     }
 }
 
+/// Whether it's in the picture in any world.
 pub(crate) fn is_live(cx: &Cx, e: Entity) -> Result<bool, Error> {
-    Ok(cx.get::<Dropped>(e)?.is_none())
+    Ok(!dropped_when(cx, e)?.is_always())
 }
 
 // ---------- what's being attempted, per world ----------
@@ -165,7 +213,9 @@ impl Compute for ChoiceRule {
         let Some(decision) = cx.own::<Decision>()? else { return Ok(None) };
         let space = Space::global();
         if let Some(chosen) = decision.chosen {
-            return Ok(Some(Choice(space.pure(Some(chosen)))));
+            // Only a hand edit can choose what isn't a live option, and that lands on nothing.
+            let live = cx.incoming::<Alternative>()?.into_iter().any(|(o, alt)| o == chosen && alt.ruled_out.is_none());
+            return Ok(Some(Choice(space.pure(if live && is_live(cx, chosen)? { Some(chosen) } else { None }))));
         }
         // Variables are ordered by creation. Whatever this is inside gets its variable first, so
         // formulas read from the outside in.
@@ -217,41 +267,13 @@ impl Compute for NeedRule {
     type Output = Need;
     fn compute(&self, cx: &Cx) -> Result<Need, Error> {
         let space = Space::global();
-        if cx.own::<Dropped>()?.is_some() {
+        let dropped = dropped_when(cx, cx.id())?;
+        if dropped.is_always() {
             return Ok(Need(space.never()));
         }
         let parents = in_play_parents(cx)?;
-        if parents.is_empty() {
-            return Ok(Need(space.always()));
-        }
-        Ok(Need(space.any(parents.into_iter().map(|(_, via)| via))))
-    }
-}
-
-// ---------- completion: real data at the leaves, and everything above is derived ----------
-
-/// Per world: `Some(true)` finished, `Some(false)` still owed, and `None` where this isn't in the
-/// completion system at all, because nothing about it can be finished. A node opts in by holding
-/// an obligation, by being a decision, or by having parts that did.
-#[component]
-pub struct Completion(pub Cond<Option<bool>>);
-
-impl Completion {
-    /// The worlds in which something here is still owed. This is what a dependent waits for.
-    pub fn open(&self) -> Bool {
-        self.0.holds(|c| *c == Some(false))
-    }
-
-    /// The worlds in which it's been finished.
-    pub fn finished(&self) -> Bool {
-        self.0.holds(|c| *c == Some(true))
-    }
-}
-
-fn both(a: &Option<bool>, b: &Option<bool>) -> Option<bool> {
-    match (a, b) {
-        (None, x) | (x, None) => *x,
-        (Some(a), Some(b)) => Some(*a && *b),
+        let through = if parents.is_empty() { space.always() } else { space.any(parents.into_iter().map(|(_, via)| via)) };
+        Ok(Need(&through & &!&dropped))
     }
 }
 
@@ -266,61 +288,12 @@ pub(crate) fn live_parts(cx: &Cx) -> Result<Vec<Entity>, Error> {
     Ok(out)
 }
 
-/// `Done` only means something at a leaf. Above that it's the combination of what's beneath, so
-/// there's one source of truth, and a stated `Done` that disagrees is a notice. To finish
-/// something early, drop what's left. That's a fact with an author.
-#[rule("plan/completion", incoming(PartOf, Alternative))]
-pub struct CompletionRule {
-    /// Components that are work of their own, which only `Done` discharges.
-    pub obligations: Vec<String>,
-}
-
-impl CompletionRule {
-    fn leaf(&self, cx: &Cx) -> Result<Option<bool>, Error> {
-        if cx.own::<Unknown>()?.is_some() {
-            return Ok(Some(false));
-        }
-        if cx.own::<Done>()?.is_some() {
-            return Ok(Some(true));
-        }
-        for c in &self.obligations {
-            if cx.get_runtime(cx.id(), c)?.is_some() {
-                return Ok(Some(false));
-            }
-        }
-        Ok(None)
-    }
-}
-
-impl Compute for CompletionRule {
-    type Output = Completion;
-    fn compute(&self, cx: &Cx) -> Result<Completion, Error> {
-        let space = Space::global();
-        if cx.own::<Dropped>()?.is_some() {
-            return Ok(Completion(space.pure(None)));
-        }
-        let parts = live_parts(cx)?;
-        let choice = cx.own::<Choice>()?;
-        if parts.is_empty() && choice.is_none() {
-            return Ok(Completion(space.pure(self.leaf(cx)?)));
-        }
-        let mut acc = space.pure(None);
-        for p in parts {
-            acc = acc.zip(&cx.value::<Completion>(p)?.0, both);
-        }
-        if let Some(choice) = choice {
-            // A decision that lands on nothing can't complete.
-            let mut selected = space.pure(Some(false));
-            for (o, alt) in cx.incoming::<Alternative>()? {
-                if alt.ruled_out.is_none() && is_live(cx, o)? {
-                    let is_this = choice.0.holds(|c| *c == Some(o));
-                    selected = Cond::when(&is_this, &cx.value::<Completion>(o)?.0, &selected);
-                }
-            }
-            acc = acc.zip(&selected, both);
-        }
-        Ok(Completion(acc))
-    }
+/// A gap is owed until someone closes it, and so is anything that's work of its own. Above a leaf,
+/// a decision that lands on nothing can't complete. Whatever a node says for itself replaces all of
+/// this, and if that disagrees with what's beneath, that's a notice.
+fn done_formula(obligations: &[String]) -> String {
+    let owed: Vec<String> = std::iter::once("has(self.unknown)".to_string()).chain(obligations.iter().map(|c| format!("has(self.{c})"))).collect();
+    format!("if(self.dropped, undefined, if(is_leaf(), if({}, false, undefined), done_beneath(if(has(self.decision), pick(o in in.alternative: o.done, false), undefined))))", owed.join(" || "))
 }
 
 // ---------- blocking ----------
@@ -356,7 +329,7 @@ impl Compute for BlockersRule {
             }
             let waits = match dep.on {
                 Some(WaitFor::Decided) => space.truth(cx.get::<Decision>(target)?.is_some_and(|d| d.chosen.is_none())),
-                _ => &cx.value::<Need>(target)?.0 & &cx.value::<Completion>(target)?.open(),
+                _ => &cx.value::<Need>(target)?.0 & &cx.value::<Done>(target)?.open(),
             };
             add(target, waits);
         }
@@ -385,10 +358,10 @@ pub struct ActionableRule;
 impl Compute for ActionableRule {
     type Output = Option<Actionable>;
     fn compute(&self, cx: &Cx) -> Result<Option<Actionable>, Error> {
-        if cx.own::<Task>()?.is_none() || cx.own::<Dropped>()?.is_some() || !live_parts(cx)?.is_empty() {
+        if cx.own::<Task>()?.is_none() || !is_live(cx, cx.id())? || !live_parts(cx)?.is_empty() {
             return Ok(None);
         }
-        let wanted = &cx.own_value::<Need>()?.0 & &cx.own_value::<Completion>()?.open();
+        let wanted = &cx.own_value::<Need>()?.0 & &cx.own_value::<Done>()?.open();
         Ok(Some(Actionable(&wanted & &!&cx.own_value::<Blocked>()?.0)))
     }
 }
@@ -468,7 +441,7 @@ fn chosen(cx: &Cx) -> Result<Option<Entity>, Error> {
 /// What a plugin can add to the planning system without changing it.
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Components that are work of their own, which only `Done` discharges.
+    /// Components that are work of their own, which `Done` discharges.
     pub obligations: Vec<String>,
     /// Kinds of link that place a node inside another.
     pub scoping: Vec<String>,
@@ -494,10 +467,12 @@ pub fn install_with(reg: &mut Registry, config: Config) {
     formulas::fills::<Estimate>(reg, Type::Number, estimate_of);
     reg.on_nodes::<Estimate>();
     reg.on_nodes::<Task>().on_nodes::<Goal>().on_nodes::<Question>().on_nodes::<Risk>().on_nodes::<Unknown>();
-    reg.on_nodes::<Done>().on_nodes::<Dropped>().on_nodes::<Decision>();
+    reg.on_nodes::<Decision>();
     reg.on_links::<PartOf>().on_links::<Alternative>().on_links::<DependsOn>();
     reg.set_default(CanStartRule).set_default(CanFinishRule);
-    reg.set_default(ChoiceRule).set_default(NeedRule).set_default(CompletionRule { obligations: config.obligations });
+    reg.set_default(ChoiceRule).set_default(NeedRule);
+    formulas::defaults_to::<Dropped>(reg, Type::Bool, |c| formulas::flag_cases(c, "dropped").map(Dropped), "false");
+    formulas::defaults_to::<Done>(reg, Type::Bool, |c| formulas::flag_cases(c, "done").map(Done), &done_formula(&config.obligations));
     reg.set_default(BlockersRule).set_default(BlockedRule).set_default(ActionableRule);
     reg.set_default(ScopeRule { links: config.scoping }).set_default(ScopeDepthRule);
 
@@ -520,7 +495,8 @@ pub fn install_with(reg: &mut Registry, config: Config) {
     });
 
     reg.invariant(rule("unknown_cannot_be_done"), |cx| {
-        let both = cx.own::<Unknown>()?.is_some() && cx.own::<Done>()?.is_some();
+        // What's beneath a gap can finish. It's saying so of the gap itself that isn't allowed.
+        let both = cx.own::<Unknown>()?.is_some() && cx.own_is_stored(Done::NAME) && cx.own::<Done>()?.is_some_and(|d| !d.finished().is_never());
         Ok(if both { vec!["a gap can't be done: remove it to close it".to_string()] } else { vec![] })
     });
 
@@ -548,7 +524,7 @@ pub fn install_with(reg: &mut Registry, config: Config) {
     });
 
     reg.notice(rule("decision_without_options").incoming::<Alternative>(), |cx| {
-        let open = cx.own::<Decision>()?.is_some_and(|d| d.chosen.is_none()) && cx.own::<Dropped>()?.is_none();
+        let open = cx.own::<Decision>()?.is_some_and(|d| d.chosen.is_none()) && is_live(cx, cx.id())?;
         if !open {
             return Ok(vec![]);
         }
@@ -560,17 +536,31 @@ pub fn install_with(reg: &mut Registry, config: Config) {
         Ok(vec!["open, with no live options".to_string()])
     });
 
-    // A leaf's statement is what its completion comes from, so this can only be true above one.
-    reg.notice(rule("stated_done_with_open_work"), |cx| {
-        if cx.own::<Done>()?.is_none() {
+    // What's worked out can't disagree with what's beneath it, so this is only ever what a node said
+    // for itself.
+    reg.notice(rule("stated_done_with_open_work").incoming::<PartOf>().incoming::<Alternative>(), |cx| {
+        let Some(done) = cx.own::<Done>()? else { return Ok(vec![]) };
+        if !is_live(cx, cx.id())? {
             return Ok(vec![]);
         }
-        let open = cx.own_value::<Completion>()?.open();
-        Ok(if open.is_never() { vec![] } else { vec![format!("marked done, but it's derived from what's beneath it, which is still open: {}", open.show())] })
+        let space = Space::global();
+        let mut beneath = space.never();
+        for p in cx.sources::<PartOf>()? {
+            beneath = &beneath | &cx.value::<Done>(p)?.open();
+        }
+        if let Some(choice) = cx.own::<Choice>()? {
+            // A decision that lands on nothing can't complete.
+            beneath = &beneath | &choice.0.holds(Option::is_none);
+            for o in cx.sources::<Alternative>()? {
+                beneath = &beneath | &(&selects(cx, cx.id(), o)? & &cx.value::<Done>(o)?.open());
+            }
+        }
+        let open = &done.finished() & &beneath;
+        Ok(if open.is_never() { vec![] } else { vec![format!("marked done, with what's beneath it still open: {}", open.show())] })
     });
 
     reg.notice(rule("undeveloped_goal").incoming::<PartOf>().incoming_named("serves"), |cx| {
-        if cx.own::<Goal>()?.is_none() || cx.own::<Dropped>()?.is_some() || cx.own::<Done>()?.is_some() {
+        if cx.own::<Goal>()?.is_none() || !is_live(cx, cx.id())? || all_done(cx)? {
             return Ok(vec![]);
         }
         let means = live_parts(cx)?.len() + cx.incoming_runtime("serves")?.len();
@@ -578,7 +568,7 @@ pub fn install_with(reg: &mut Registry, config: Config) {
     });
 
     reg.notice(rule("one_option_left").incoming::<Alternative>(), |cx| {
-        if !cx.own::<Decision>()?.is_some_and(|d| d.chosen.is_none()) || cx.own::<Dropped>()?.is_some() {
+        if !cx.own::<Decision>()?.is_some_and(|d| d.chosen.is_none()) || !is_live(cx, cx.id())? {
             return Ok(vec![]);
         }
         let (mut live, mut gaps) = (0, 0);
@@ -593,7 +583,7 @@ pub fn install_with(reg: &mut Registry, config: Config) {
     });
 
     reg.notice(rule("risk_without_target").outgoing_named("contradicts"), |cx| {
-        if cx.own::<Risk>()?.is_none() || cx.own::<Dropped>()?.is_some() || cx.own::<Done>()?.is_some() {
+        if cx.own::<Risk>()?.is_none() || !is_live(cx, cx.id())? || all_done(cx)? {
             return Ok(vec![]);
         }
         Ok(if cx.outgoing_runtime("contradicts")?.is_empty() { vec!["it isn't linked to what it threatens".to_string()] } else { vec![] })
@@ -601,14 +591,14 @@ pub fn install_with(reg: &mut Registry, config: Config) {
 
     reg.notice(rule("oversized_task").incoming::<PartOf>(), |cx| {
         let big = cx.own::<Estimate>()?.is_some_and(|e| !e.0.0.holds(|d| d.is_some_and(|d| d > 5.0)).is_never());
-        if !big || cx.own::<Done>()?.is_some() || !live_parts(cx)?.is_empty() {
+        if !big || all_done(cx)? || !live_parts(cx)?.is_empty() {
             return Ok(vec![]);
         }
         Ok(vec!["a big task with no breakdown".to_string()])
     });
 
     reg.notice(rule("dropped_part_of_live_work").outgoing::<PartOf>(), |cx| {
-        if cx.own::<Dropped>()?.is_none() {
+        if is_live(cx, cx.id())? {
             return Ok(vec![]);
         }
         let mut out = Vec::new();
@@ -647,7 +637,7 @@ pub fn reopen(decision: Entity) -> Op {
 }
 
 pub fn describe(c: &mut Catalog) {
-    c.fact::<Task>("Work of its own, which only Done discharges.", json!({}));
+    c.fact::<Task>("Work of its own, which Done discharges.", json!({}));
     let estimate = c.worldly::<Estimate>("How long it takes, in days: typed in, or a formula.", |e| Shown::cond(&e.0.0));
     estimate.derived = false;
     estimate.initial = Some(json!(1.0));
@@ -655,14 +645,13 @@ pub fn describe(c: &mut Catalog) {
     c.fact::<Question>("Something not yet known. Done means it's been answered.", Value::Null);
     c.fact::<Risk>("Something that could go wrong. Link it to what it threatens.", Value::Null);
     c.fact::<Unknown>("A gap: something here isn't specified yet. Removing it says the gap is closed.", Value::Null);
-    c.fact::<Done>("Stated complete. Only counts at a leaf: above that, it's derived.", Value::Null);
-    c.fact::<Dropped>("Deliberately out of the picture.", Value::Null);
+    c.worldly::<Done>("Whether it's finished, in each world: worked out from what's beneath it, or typed in.", |d| Shown::cond(&d.0.0));
+    c.worldly::<Dropped>("Deliberately out of the picture.", |d| Shown::cond(&d.0.0)).quiet = true;
     c.fact::<Decision>("An open question with options, and which one was taken, if any.", json!({}));
     c.arranging::<PartOf>("Part of that: all of a node's parts are needed.", Value::Null);
     c.arranging::<Alternative>("One way of doing that decision: only the option taken is needed.", json!({}));
     c.link::<DependsOn>("Waits for that.", json!({})).orders = true;
     c.worldly::<Need>("The worlds where this is part of what's being attempted.", |n| Shown::Bool(n.0.clone())).summary = true;
-    c.worldly::<Completion>("Per world: finished, still owed, or nothing to finish.", |v| Shown::cond(&v.0));
     c.worldly::<Choice>("What this decision could land on.", |v| Shown::cond(&v.0));
     c.worldly::<Blockers>("What this waits for, and in which worlds.", |b| Shown::Named(b.0.clone()));
     c.worldly::<Blocked>("The worlds where something holds this up.", |b| Shown::Bool(b.0.clone()));
@@ -737,11 +726,11 @@ pub fn pressure(g: &Graph, decision: Entity) -> Result<Pressure, Error> {
 pub fn explain(g: &Graph, e: Entity, label: &dyn Fn(&str) -> String) -> Result<String, Error> {
     let name = |e: Entity| label(&e.to_string());
     let show = |b: &Bool| b.show_with(label);
-    let open = |e: Entity| Ok::<_, Error>(g.get::<Completion>(e)?.map_or_else(|| "never".to_string(), |c| show(&c.open())));
+    let open = |e: Entity| Ok::<_, Error>(g.get::<Done>(e)?.map_or_else(|| "never".to_string(), |c| show(&c.open())));
     let need = g.get::<Need>(e)?.map_or_else(|| "never".to_string(), |n| show(&n.0));
     let blocked = g.get::<Blocked>(e)?.map_or_else(|| "never".to_string(), |b| show(&b.0));
     let mut out = format!("{}\n  need: {need}\n  open: {}\n  blocked: {blocked}\n", name(e), open(e)?);
-    if g.get::<Done>(e)?.is_some() {
+    if g.has_own(e, Done::NAME) {
         out += "  stated done\n";
     }
     for c in g.sources_of(e, PartOf::NAME) {
@@ -858,7 +847,7 @@ pub fn matrices(g: &Graph, world: &BTreeMap<String, String>) -> Result<Vec<Matri
         let mut live = Vec::new();
         for o in g.sources_of(d, Alternative::NAME) {
             let alt: Alternative = g.link_value(o, d, Alternative::NAME).and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
-            let dropped = g.get::<Dropped>(o)?.is_some();
+            let dropped = is_dropped(g, o)?;
             let gap = g.get::<Unknown>(o)?.is_some();
             let is_live = alt.ruled_out.is_none() && !dropped;
             if is_live {
@@ -877,7 +866,7 @@ pub fn matrices(g: &Graph, world: &BTreeMap<String, String>) -> Result<Vec<Matri
         let direct: BTreeSet<Entity> = options.iter().map(|o| o.id).collect();
         let mut rows = Vec::new();
         for (&e, &row_depth) in &depth {
-            if direct.contains(&e) || g.get::<Dropped>(e)?.is_some() {
+            if direct.contains(&e) || is_dropped(g, e)? {
                 continue;
             }
             let need = g.get::<Need>(e)?.map_or(space.never(), |n| n.0);
@@ -887,14 +876,14 @@ pub fn matrices(g: &Graph, world: &BTreeMap<String, String>) -> Result<Vec<Matri
                 w.insert(d.to_string(), o.id.to_string());
                 per_option.insert(o.id, need.given(&space.picks(&w)).prob());
             }
-            let completion = g.get::<Completion>(e)?;
+            let done = g.get::<Done>(e)?;
             rows.push(MatrixRow {
                 id: e,
                 name: label_of(g, e),
                 depth: row_depth,
                 per_option,
                 need: read(&need.given(&picks), &label),
-                finished: completion.is_some_and(|c| c.finished().given(&picks).is_always()),
+                finished: done.is_some_and(|c| c.finished().given(&picks).is_always()),
                 is_work: g.get::<Task>(e)?.is_some() && g.sources_of(e, PartOf::NAME).is_empty(),
                 actionable: g.get::<Actionable>(e)?.map(|a| read(&a.0.given(&picks), &label)),
                 blockers: blockers_of(g, e, &picks, &label)?,
@@ -963,7 +952,7 @@ pub fn work(g: &Graph, world: &BTreeMap<String, String>) -> Result<Vec<WorkItem>
         let Some(actionable) = g.get::<Actionable>(e)? else { continue };
         let actionable = actionable.0.given(&picks);
         let need = g.get::<Need>(e)?.map_or(Space::global().never(), |n| n.0).given(&picks);
-        let finished = g.get::<Completion>(e)?.is_some_and(|c| c.finished().given(&picks).holds_given(&need));
+        let finished = g.get::<Done>(e)?.is_some_and(|c| c.finished().given(&picks).holds_given(&need));
         let standing = if need.is_never() {
             Standing::NotNeeded
         } else if finished {

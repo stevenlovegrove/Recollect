@@ -513,8 +513,8 @@ fn a_loop_is_found_by_its_types_and_heals() {
 fn a_formula_can_only_go_on_a_cell_that_says_it_can_hold_one() {
     let mut g = N::with(plan::install);
     let e = g.e("x");
-    g.g.set_rule(e, "done", recollect_systems::formulas::EXPR, json!({ "text": "true" }));
-    assert!(matches!(g.get::<plan::Done>("x"), Err(Error::WrongRule { .. })));
+    g.g.set_rule(e, "task", recollect_systems::formulas::EXPR, json!({ "text": "true" }));
+    assert!(matches!(g.get::<Task>("x"), Err(Error::WrongRule { .. })));
     g.g.set_rule(e, "estimate", recollect_systems::formulas::EXPR, json!({ "text": r#""soon""# }));
     let Err(Error::Failed(why)) = g.get::<Estimate>("x") else { panic!() };
     assert!(why.contains("this cell holds a number, and this formula gives text"), "{why}");

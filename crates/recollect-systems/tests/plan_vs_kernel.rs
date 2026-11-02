@@ -4,7 +4,6 @@
 //!
 //! Two differences are deliberate, and both are handled explicitly rather than by comparing less:
 //!
-//! - `Done` only counts at a leaf here, so the kernel is given a store without the others.
 //! - A node only inherits blocking from parents it's in play through. The kernel inherits from all
 //!   of them, so its blocking can only be wider here. Where every node has one parent and the node
 //!   is needed in that world, there's nothing to differ about, so they have to be equal.
@@ -20,7 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use recollect_systems::plan::{self, Actionable, Blocked, Completion, Need, Pressure, Scope, ScopeDepth};
+use recollect_systems::plan::{self, Actionable, Blocked, Done, Need, Pressure, Scope, ScopeDepth};
 use recollect_systems::view::ViewGraph;
 use recollect_graph::worlds::Bool;
 use recollect_graph::{Entity, Graph, Log, Registry, Target};
@@ -70,9 +69,9 @@ impl Both {
             ops.extend(self.ids.op(op, &state));
             let _ = state.apply(op);
         }
-        let (a, b) = (self.old.commit("t", "x", kops.clone()).is_ok(), self.new.commit("t", "x", ops).is_ok());
-        assert_eq!(a, b, "{kops:?}");
-        a
+        let (a, b) = (self.old.commit("t", "x", kops.clone()), self.new.commit("t", "x", ops));
+        assert_eq!(a.is_ok(), b.is_ok(), "{kops:?}\nold: {:?}\nnew: {:?}", a.as_ref().err(), b.as_ref().err());
+        a.is_ok()
     }
 }
 
@@ -164,19 +163,6 @@ fn random_edit(rng: &mut Rng, names: &[String], one_parent: bool) -> KOp {
 
 // ---------- the same plan, as the kernel should see it ----------
 
-/// `Done` only counts at a leaf, so here it's gone from everything above one.
-fn leaves_only(s: &Store) -> Store {
-    let mut out = s.clone();
-    for id in s.entities.keys() {
-        if is_above_a_leaf(s, id)
-            && let Some(comps) = out.entities.get_mut(id)
-        {
-            comps.remove(DONE);
-        }
-    }
-    out
-}
-
 fn is_above_a_leaf(s: &Store, id: &str) -> bool {
     s.has(id, DECISION) || !s.children(id, PART_OF).is_empty()
 }
@@ -213,10 +199,14 @@ fn owed(s: &Store, w: &World, id: &str) -> bool {
     if !s.live(id) {
         return false;
     }
+    // What a node says for itself is what counts.
+    if s.has(id, DONE) {
+        return false;
+    }
     let parts = s.children(id, PART_OF);
     let is_decision = s.has(id, DECISION);
     if parts.is_empty() && !is_decision {
-        return s.has(id, UNKNOWN) || (!s.has(id, DONE) && ["task", "goal", "question", "risk"].iter().any(|c| s.has(id, c)));
+        return s.has(id, UNKNOWN) || ["task", "goal", "question", "risk"].iter().any(|c| s.has(id, c));
     }
     parts.iter().any(|(p, _)| owed(s, w, p)) || (is_decision && !s.options(id).iter().any(|(o, _)| selects(s, w, id, o) && !owed(s, w, o)))
 }
@@ -260,7 +250,7 @@ fn formula(k: &Derived, cell: &str, id: &str, w: &World) -> bool {
 
 fn compare(both: &mut Both, one_parent: bool, rng: &mut Rng, seen: &mut Seen, context: &str) {
     let store = both.old.store.clone();
-    let view = leaves_only(&store);
+    let view = store.clone();
     let k = compute(&view);
     let g = both.new.graph();
     let names: Vec<String> = store.entities.keys().cloned().collect();
@@ -291,7 +281,7 @@ fn compare(both: &mut Both, one_parent: bool, rng: &mut Rng, seen: &mut Seen, co
             Cells {
                 name: n.clone(),
                 need: g.get::<Need>(e).unwrap().unwrap().0,
-                open: g.get::<Completion>(e).unwrap().unwrap().open(),
+                open: g.get::<Done>(e).unwrap().unwrap().open(),
                 blocked: g.get::<Blocked>(e).unwrap().unwrap().0,
                 actionable: g.get::<Actionable>(e).unwrap().map(|a| a.0),
             }
