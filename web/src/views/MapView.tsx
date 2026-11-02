@@ -876,7 +876,8 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
             label: e.kind === "label" ? String(e.value) : arranges ? undefined : labelOf(e.kind),
             className: `edge rel-${e.kind} ${arranges ? "" : "free"} ${hot ? "hot" : ""} ${isSel ? "picked" : ""}`,
             animated: e.kind === "depends_on" && hot,
-            markerEnd: arranges ? undefined : { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+            // Into what reads it or holds it: where it sits on the map doesn't say which way a formula reads.
+            markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
             interactionWidth: 16,
             zIndex: hot ? 10 : 0,
           };
