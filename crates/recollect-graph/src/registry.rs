@@ -5,7 +5,7 @@
 //! Registration is explicit. A system is just a function that adds to a `Registry`, so what's
 //! active can be read from one place.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use schemars::JsonSchema;
@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::graph::{Backing, Cell, Component, Cx, Entity, Error, Inputs, Key, Rule, RuleSpec, erase_runtime, erase_typed, typed_backing};
-
 /// How a rule is written down.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SavedRule {
@@ -141,10 +140,16 @@ impl CheckInfo {
 
 type Build = Arc<dyn Fn(&Value) -> Result<Backing, String> + Send + Sync>;
 
+/// How a rule that can fill a workspace's own cells is made for one of them: what it may follow, and
+/// what it works out.
+pub type BuildUnowned = Arc<dyn Fn(&str, &Value) -> Result<(Inputs, Arc<dyn Fn(&Cx) -> Cell<Value> + Send + Sync>), String> + Send + Sync>;
+
 struct Registered {
     info: RuleInfo,
     /// How to make it, for each component it can fill.
     builds: HashMap<String, Build>,
+    /// How to make it for a component no system owns, if it can fill those.
+    unowned: Option<BuildUnowned>,
 }
 
 /// The rules a graph can load, and the defaults they set.
@@ -154,6 +159,8 @@ pub struct Registry {
     pub(crate) defaults: HashMap<String, Backing>,
     pub(crate) declared: HashMap<String, Declared>,
     pub(crate) checks: Vec<CheckInfo>,
+    /// The kind of link from a node to its kind, if nodes can take cells from one.
+    pub(crate) inherits_through: Option<String>,
     build: String,
 }
 
@@ -192,6 +199,7 @@ impl Registry {
                     Ok(Backing::Computed(erase_typed(into_rule(r))))
                 }) as Build,
             )]),
+            unowned: None,
         });
         self
     }
@@ -221,8 +229,35 @@ impl Registry {
             let f = Arc::new(move |cx: &Cx| compute(&params, cx));
             Ok(Backing::Computed(erase_runtime(Rule { name: key.clone(), inputs: inputs.clone(), f, saved: Some(saved) })))
         });
-        self.insert(Registered { info: RuleInfo { key: r.key, output: r.output, also: Vec::new(), inputs: inputs_info(&r.inputs), params: None }, builds: HashMap::from([(output, build)]) });
+        self.insert(Registered { info: RuleInfo { key: r.key, output: r.output, also: Vec::new(), inputs: inputs_info(&r.inputs), params: None }, builds: HashMap::from([(output, build)]), unowned: None });
         self
+    }
+
+    /// Make this key able to fill any component no system owns: the workspace's own cells, such as a
+    /// price or a range. A component a system owns still has to say it can hold this rule.
+    pub fn rule_on_unowned(&mut self, key: &str, build: impl Fn(&str, &Value) -> Result<(Inputs, Arc<dyn Fn(&Cx) -> Cell<Value> + Send + Sync>), String> + Send + Sync + 'static) -> &mut Self {
+        if !self.rules.contains_key(key) {
+            let info = RuleInfo { key: key.to_string(), output: "a workspace's own cell".to_string(), also: Vec::new(), inputs: BTreeMap::new(), params: None };
+            self.insert(Registered { info, builds: HashMap::new(), unowned: None });
+        }
+        self.rules.get_mut(key).expect("inserted above").unowned = Some(Arc::new(build));
+        self
+    }
+
+    /// Nodes take what they don't say about the workspace's own cells from what they link to by this
+    /// kind of link, as an instance does from its kind.
+    pub fn inherit_through(&mut self, kind: &str) -> &mut Self {
+        self.inherits_through = Some(kind.to_string());
+        self
+    }
+
+    /// The components systems say what they are: declared, filled by a rule, or given a default.
+    pub fn owned(&self) -> HashSet<String> {
+        let mut out: HashSet<String> = self.declared.keys().chain(self.defaults.keys()).cloned().collect();
+        for r in self.rules.values() {
+            out.extend(r.builds.keys().cloned());
+        }
+        out
     }
 
     /// Make this key able to fill `C`, built from its parameters. A key can fill several typed
@@ -243,6 +278,7 @@ impl Registry {
             None => self.insert(Registered {
                 info: RuleInfo { key: key.to_string(), output: C::NAME.to_string(), also: Vec::new(), inputs: BTreeMap::new(), params: None },
                 builds: HashMap::from([(C::NAME.to_string(), built)]),
+                unowned: None,
             }),
         }
         self
@@ -318,6 +354,12 @@ impl Registry {
             return broken(Error::UnknownRule(saved.rule.clone()));
         };
         let Some(build) = reg.builds.get(&cell.1) else {
+            if let Some(unowned) = reg.unowned.as_ref().filter(|_| !self.owned().contains(&cell.1)) {
+                return match unowned(&cell.1, &saved.params) {
+                    Ok((inputs, f)) => Backing::Computed(erase_runtime(Rule { name: saved.rule.clone(), inputs, f, saved: Some(saved.clone()) })),
+                    Err(detail) => broken(Error::Malformed { cell: cell.clone(), detail }),
+                };
+            }
             return broken(Error::WrongRule { rule: saved.rule.clone(), component: cell.1.clone(), provides: reg.info.output.clone() });
         };
         build(&saved.params).unwrap_or_else(|detail| broken(Error::Malformed { cell: cell.clone(), detail }))

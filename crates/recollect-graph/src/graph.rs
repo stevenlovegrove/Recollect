@@ -251,7 +251,8 @@ impl RuleSpec {
 }
 
 type AnyValue = Arc<dyn Any + Send + Sync>;
-type EvalFn = dyn Fn(Session, Entity, &Inputs, &str) -> AnyValue + Send + Sync;
+/// It runs for one node, and is written on another if that node takes it from its kind.
+type EvalFn = dyn Fn(Session, Entity, Entity, &Inputs, &str) -> AnyValue + Send + Sync;
 
 pub(crate) struct Erased {
     pub(crate) name: String,
@@ -272,8 +273,8 @@ fn erase<C: Clone + PartialEq + Send + Sync + 'static>(r: Rule<C>, json: fn(&Any
         name: r.name,
         inputs: r.inputs,
         saved: r.saved,
-        eval: Arc::new(move |s, id, inputs, name| {
-            let cx = Cx { s, id, inputs, rule: name };
+        eval: Arc::new(move |s, id, origin, inputs, name| {
+            let cx = Cx { s, id, origin, inputs, rule: name };
             // A rule that panics fails its own cell, not the graph and every thread reading it.
             let result = catch_unwind(AssertUnwindSafe(|| f(&cx))).unwrap_or_else(|p| Err(Error::Failed(format!("rule {name} panicked: {}", panic_message(p)))));
             Arc::new(result) as AnyValue
@@ -341,12 +342,21 @@ struct Engine {
     ran: Vec<Key>,
 }
 
+/// How a node takes the cells it doesn't have from its kind.
+pub(crate) struct Inheriting {
+    /// The kind of link from a node to its kind.
+    pub(crate) through: String,
+    /// What the systems say: a kind only says what the workspace's own cells are.
+    pub(crate) owned: HashSet<String>,
+}
+
 #[derive(Default)]
 pub struct Graph {
     pub(crate) entities: BTreeSet<Entity>,
     pub(crate) cells: HashMap<Entity, BTreeMap<String, Backing>>,
     /// What backs a component on every node that doesn't say otherwise.
     pub(crate) defaults: HashMap<String, Backing>,
+    inheriting: Option<Arc<Inheriting>>,
     pub(crate) links: BTreeMap<(Entity, Entity), BTreeMap<String, Value>>,
     into: HashMap<Entity, BTreeSet<Entity>>,
     from: HashMap<Entity, BTreeSet<Entity>>,
@@ -365,7 +375,8 @@ impl Graph {
 
     /// A graph using these rules, and whatever defaults they set.
     pub fn with_registry(registry: Arc<Registry>) -> Self {
-        let mut g = Graph { defaults: registry.defaults.clone(), registry, ..Self::default() };
+        let inheriting = registry.inherits_through.as_ref().map(|through| Arc::new(Inheriting { through: through.clone(), owned: registry.owned() }));
+        let mut g = Graph { defaults: registry.defaults.clone(), inheriting, registry, ..Self::default() };
         g.revision = 1;
         g
     }
@@ -491,9 +502,53 @@ impl Graph {
             self.forget(e, component);
         }
         let is_new = self.cells.entry(e).or_default().insert(component.to_string(), b).is_none();
-        self.touch(Dep::Backing((e, component.to_string())));
+        self.rebacked(e, component);
         if is_new {
             self.touch(Dep::Scan(component.to_string()));
+        }
+    }
+
+    /// The nodes that take this cell from `e`, because it's their kind or their kind's kind, and that
+    /// don't say it for themselves.
+    fn heirs(&self, e: Entity, component: &str) -> Vec<Entity> {
+        let Some(inh) = self.inheriting.as_ref().filter(|i| !i.owned.contains(component)) else { return Vec::new() };
+        let (mut out, mut seen, mut todo) = (Vec::new(), HashSet::from([e]), vec![e]);
+        while let Some(k) = todo.pop() {
+            for s in self.sources_of(k, &inh.through) {
+                if seen.insert(s) && !self.has_own(s, component) {
+                    out.push(s);
+                    todo.push(s);
+                }
+            }
+        }
+        out
+    }
+
+    /// What backs this cell changed, here and for whatever takes it from here.
+    fn rebacked(&mut self, e: Entity, component: &str) {
+        self.touch(Dep::Backing((e, component.to_string())));
+        let heirs = self.heirs(e, component);
+        if heirs.is_empty() {
+            return;
+        }
+        for h in heirs {
+            // Whether it's now a value or a rule, it isn't an unbroken run of the old one.
+            self.forget(h, component);
+            self.touch(Dep::Backing((h, component.to_string())));
+        }
+        self.touch(Dep::Scan(component.to_string()));
+    }
+
+    /// `e` took a kind, or stopped taking one, so every cell it could take from there may have changed.
+    fn rekinded(&mut self, e: Entity, kind: Entity) {
+        let Some(inh) = self.inheriting.clone() else { return };
+        for c in self.components_of(kind) {
+            if inh.owned.contains(&c) || self.has_own(e, &c) {
+                continue;
+            }
+            self.forget(e, &c);
+            self.rebacked(e, &c);
+            self.touch(Dep::Scan(c));
         }
     }
 
@@ -511,7 +566,7 @@ impl Graph {
         if self.cells.get_mut(&e).and_then(|c| c.remove(component)).is_some() {
             self.revision += 1;
             self.forget(e, component);
-            self.touch(Dep::Backing((e, component.to_string())));
+            self.rebacked(e, component);
             self.touch(Dep::Scan(component.to_string()));
         }
         self
@@ -533,6 +588,9 @@ impl Graph {
         self.from.entry(from).or_default().insert(to);
         self.revision += 1;
         self.touch(Dep::Into(to, c.name.clone()));
+        if self.inheriting.as_ref().is_some_and(|i| i.through == c.name) {
+            self.rekinded(from, to);
+        }
         self.touch(Dep::From(from, c.name));
         self
     }
@@ -554,6 +612,9 @@ impl Graph {
             self.revision += 1;
             self.touch(Dep::Into(to, kind.to_string()));
             self.touch(Dep::From(from, kind.to_string()));
+            if self.inheriting.as_ref().is_some_and(|i| i.through == kind) {
+                self.rekinded(from, to);
+            }
         }
         self
     }
@@ -577,6 +638,7 @@ impl Graph {
             entities: self.entities.clone(),
             cells: self.cells.clone(),
             defaults: self.defaults.clone(),
+            inheriting: self.inheriting.clone(),
             links: self.links.clone(),
             into: self.into.clone(),
             from: self.from.clone(),
@@ -667,19 +729,65 @@ impl Graph {
     }
 
     fn backing(&self, e: Entity, component: &str) -> Option<Backing> {
+        self.backing_at(e, component).map(|(b, _)| b)
+    }
+
+    /// What backs a cell, and the node it's written on: this one, unless it's taken from a kind.
+    fn backing_at(&self, e: Entity, component: &str) -> Option<(Backing, Entity)> {
         if e == Entity::whole() {
-            return self.defaults.get(component).cloned();
+            return self.defaults.get(component).map(|b| (b.clone(), e));
         }
         if !self.entities.contains(&e) {
             return None;
         }
-        self.cells.get(&e).and_then(|c| c.get(component)).or_else(|| self.defaults.get(component)).cloned()
+        if let Some(b) = self.cells.get(&e).and_then(|c| c.get(component)) {
+            return Some((b.clone(), e));
+        }
+        self.from_kind(e, component).or_else(|| self.defaults.get(component).map(|b| (b.clone(), e)))
+    }
+
+    /// The nearest kind that says what this cell is: its kinds first, in the order they were made, then
+    /// theirs.
+    fn from_kind(&self, e: Entity, component: &str) -> Option<(Backing, Entity)> {
+        let inh = self.inheriting.as_ref().filter(|i| !i.owned.contains(component))?;
+        let mut seen = HashSet::from([e]);
+        let mut level = vec![e];
+        while !level.is_empty() {
+            let mut next = Vec::new();
+            for k in level.iter().flat_map(|n| self.targets_of(*n, &inh.through)) {
+                if !seen.insert(k) {
+                    continue;
+                }
+                if let Some(b) = self.cells.get(&k).and_then(|c| c.get(component)) {
+                    return Some((b.clone(), k));
+                }
+                next.push(k);
+            }
+            level = next;
+        }
+        None
+    }
+
+    /// The node a node takes this cell from, if it takes it from a kind.
+    pub fn kind_of(&self, e: Entity, component: &str) -> Option<Entity> {
+        self.backing_at(e, component).map(|(_, at)| at).filter(|at| *at != e)
     }
 
     /// The components a node has a cell for, whichever way each is backed.
     pub fn components_of(&self, e: Entity) -> BTreeSet<String> {
         let own = self.cells.get(&e).into_iter().flat_map(|c| c.keys());
-        own.chain(self.defaults.keys()).cloned().collect()
+        let mut out: BTreeSet<String> = own.chain(self.defaults.keys()).cloned().collect();
+        if let Some(inh) = &self.inheriting {
+            let mut seen = HashSet::from([e]);
+            let mut todo = self.targets_of(e, &inh.through);
+            while let Some(k) = todo.pop() {
+                if seen.insert(k) {
+                    out.extend(self.cells.get(&k).into_iter().flat_map(|c| c.keys()).filter(|c| !inh.owned.contains(*c)).cloned());
+                    todo.extend(self.targets_of(k, &inh.through));
+                }
+            }
+        }
+        out
     }
 
     fn computed_by(&self, e: Entity, component: &str) -> Option<Arc<Erased>> {
@@ -809,7 +917,8 @@ impl Session<'_> {
             engine.reads.push(vec![Dep::Backing(key.clone())]);
             engine.ran.push(key.clone());
         }
-        let value = stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || (r.eval)(*self, key.0, &r.inputs, &r.name));
+        let origin = self.g.backing_at(key.0, &key.1).map_or(key.0, |(_, at)| at);
+        let value = stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || (r.eval)(*self, key.0, origin, &r.inputs, &r.name));
         let mut engine = self.engine.borrow_mut();
         let mut deps = engine.reads.pop().expect("pushed above");
         engine.evaluating.pop();
@@ -833,6 +942,7 @@ impl Session<'_> {
 pub struct Cx<'a> {
     s: Session<'a>,
     id: Entity,
+    origin: Entity,
     inputs: &'a Inputs,
     rule: &'a str,
 }
@@ -841,6 +951,12 @@ impl Cx<'_> {
     /// The node this rule is running for.
     pub fn id(&self) -> Entity {
         self.id
+    }
+
+    /// The node this rule is written on: the same node, or the kind it takes it from. What it may
+    /// follow, it may follow from either.
+    pub fn origin(&self) -> Entity {
+        self.origin
     }
 
     pub fn resource<R: Send + Sync + 'static>(&self) -> Arc<R> {
@@ -853,10 +969,9 @@ impl Cx<'_> {
 
     fn may_read(&self, other: Entity) -> Result<(), Error> {
         let g = self.s.g;
-        let reaches = |i: &Inputs| {
-            i.incoming.iter().any(|k| g.has_link(other, self.id, k)) || i.outgoing.iter().any(|k| g.has_link(self.id, other, k)) || i.scans.iter().any(|c| g.backing(other, c).is_some())
-        };
-        let reached = other == self.id || other == Entity::whole() || reaches(self.inputs) || self.like().is_some_and(|r| reaches(&r.inputs));
+        let from = |at: Entity, i: &Inputs| i.incoming.iter().any(|k| g.has_link(other, at, k)) || i.outgoing.iter().any(|k| g.has_link(at, other, k));
+        let reaches = |i: &Inputs| from(self.id, i) || (self.origin != self.id && from(self.origin, i)) || i.scans.iter().any(|c| g.backing(other, c).is_some());
+        let reached = other == self.id || other == self.origin || other == Entity::whole() || reaches(self.inputs) || self.like().is_some_and(|r| reaches(&r.inputs));
         if reached { Ok(()) } else { Err(self.undeclared(format!("{other}, which no declared link reaches"))) }
     }
 
@@ -950,13 +1065,22 @@ impl Cx<'_> {
     }
 
     pub fn outgoing_runtime(&self, kind: &str) -> Result<Vec<(Entity, Runtime)>, Error> {
+        self.outgoing_from(self.id, kind)
+    }
+
+    /// The same, from where this rule is written: see `origin`.
+    pub fn outgoing_from_origin(&self, kind: &str) -> Result<Vec<(Entity, Runtime)>, Error> {
+        self.outgoing_from(self.origin, kind)
+    }
+
+    fn outgoing_from(&self, at: Entity, kind: &str) -> Result<Vec<(Entity, Runtime)>, Error> {
         if !self.inputs.outgoing.iter().any(|k| k == kind) && !self.like().is_some_and(|r| r.inputs.outgoing.iter().any(|k| k == kind)) {
             return Err(self.undeclared(format!("outgoing {kind} links")));
         }
-        self.s.note(Dep::From(self.id, kind.to_string()));
+        self.s.note(Dep::From(at, kind.to_string()));
         let g = self.s.g;
-        let targets = g.from.get(&self.id).into_iter().flatten();
-        Ok(targets.filter_map(|t| Some((*t, Runtime::new(kind, g.links.get(&(self.id, *t))?.get(kind)?.clone())))).collect())
+        let targets = g.from.get(&at).into_iter().flatten();
+        Ok(targets.filter_map(|t| Some((*t, Runtime::new(kind, g.links.get(&(at, *t))?.get(kind)?.clone())))).collect())
     }
 
     pub fn scan(&self, component: &str) -> Result<Vec<Entity>, Error> {
