@@ -1,0 +1,15 @@
+id: 01a19b54-6dc9-763e-89f5-1586a1ed8508
+components:
+  name: Gets to Edinburgh without stopping
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: car.range >= miles
+links:
+- to: 01a19b54-6dc9-763e-89f5-158080aa2667
+  components:
+    label: car
+- to: 01a19b54-6dc9-763e-89f5-1585be5acc3f
+  components:
+    label: miles

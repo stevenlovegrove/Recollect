@@ -1,4 +1,4 @@
-id: 01a19b3a-498b-746a-99b3-d402d6a9145f
+id: 01a19b54-6dc9-763e-89f5-158080aa2667
 components:
   decision: {}
   name: Which car?
@@ -7,7 +7,7 @@ rules:
     rule: expr@1
     params:
       text: 'pick(o in in.alternative: o.range)'
-  value:
+  yearly_cost:
     rule: expr@1
     params:
-      text: 'pick(o in in.alternative: o.yearly)'
+      text: 'pick(o in in.alternative: o.yearly_cost)'

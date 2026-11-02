@@ -1,0 +1,16 @@
+id: 01a19b54-6dc9-763e-89f5-157fcb155e7a
+components:
+  body: 'What any car costs a year: losing 15% of its value each year it''s kept, running it, and insuring it. Each car says its own price and the rest.'
+  name: Car
+rules:
+  yearly_cost:
+    rule: expr@1
+    params:
+      text: self.price * (1 - 0.85 ^ years) / years + miles * self.cost_per_mile + self.insurance
+links:
+- to: 01a19b54-6dc9-763e-89f5-157a4564068e
+  components:
+    label: years
+- to: 01a19b54-6dc9-763e-89f5-157b50f6a17f
+  components:
+    label: miles

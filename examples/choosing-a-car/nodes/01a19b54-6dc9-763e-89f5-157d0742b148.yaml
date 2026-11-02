@@ -1,9 +1,9 @@
-id: 01a19b3a-498b-746a-99b3-d3ff931094b5
+id: 01a19b54-6dc9-763e-89f5-157d0742b148
 components:
   name: Typical
   value: 10000.0
 links:
-- to: 01a19b3a-498b-746a-99b3-d3fd05c9cd2e
+- to: 01a19b54-6dc9-763e-89f5-157b50f6a17f
   components:
     alternative:
       weight: 2.0

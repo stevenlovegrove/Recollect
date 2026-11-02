@@ -174,17 +174,21 @@ fn choosing_a_car(b: &mut Build) {
         b.set(option, ValueCell::num(miles)).link(option, "Miles a year", Alternative { weight: Some(weight), ..Alternative::default() });
     }
     // What every car has in common: how its price, running cost and insurance make a cost a year.
-    b.set("Car", Body("What a car costs a year: losing 15% of its value each year it's kept, running it, and insuring it.".to_string()));
-    b.formula_on("Car", "yearly", "self.price * (1 - 0.85 ^ years) / years + miles * self.per_mile + self.insurance");
+    b.set("Car", Body("What any car costs a year: losing 15% of its value each year it's kept, running it, and insuring it. Each car says its own price and the rest.".to_string()));
+    b.formula_on("Car", "yearly_cost", "self.price * (1 - 0.85 ^ years) / years + miles * self.cost_per_mile + self.insurance");
     b.label("Car", "Years kept", "years").label("Car", "Miles a year", "miles");
-    b.set("Which car?", Decision::default()).formula("Which car?", "pick(o in in.alternative: o.yearly)");
+    // The decision gives whatever the car it lands on says, so anything can read it.
+    b.set("Which car?", Decision::default());
+    b.formula_on("Which car?", "yearly_cost", "pick(o in in.alternative: o.yearly_cost)");
     b.formula_on("Which car?", "range", "pick(o in in.alternative: o.range)");
     for (car, price, per_mile, insurance, range) in [("Hatchback", 18000.0, 0.12, 500.0, 450.0), ("Estate", 24000.0, 0.13, 550.0, 500.0), ("Electric", 32000.0, 0.05, 600.0, 250.0)] {
-        b.put(car, "price", json!(price)).put(car, "per_mile", json!(per_mile)).put(car, "insurance", json!(insurance)).put(car, "range", json!(range));
+        b.put(car, "price", json!(price)).put(car, "cost_per_mile", json!(per_mile)).put(car, "insurance", json!(insurance)).put(car, "range", json!(range));
         b.link(car, "Car", IsA).link(car, "Which car?", Alternative::default());
     }
-    b.set("To Edinburgh", ValueCell::num(400.0));
-    b.formula("Gets to Edinburgh without stopping", "car.range >= trip").label("Gets to Edinburgh without stopping", "Which car?", "car").label("Gets to Edinburgh without stopping", "To Edinburgh", "trip");
+    b.formula("Yearly cost", "car.yearly_cost").label("Yearly cost", "Which car?", "car");
+    b.set("Miles to Edinburgh", ValueCell::num(400.0));
+    let trip = "Gets to Edinburgh without stopping";
+    b.formula(trip, "car.range >= miles").label(trip, "Which car?", "car").label(trip, "Miles to Edinburgh", "miles");
 }
 
 fn compound_interest(b: &mut Build) {

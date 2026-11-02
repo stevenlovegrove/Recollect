@@ -19,7 +19,7 @@ import ELK from "elkjs/lib/elk.bundled.js";
 import type { GraphNode } from "../api";
 import type { Workspace } from "../workspace";
 import { GLYPH, compColor, dominant, factsOf, isDropped, label as labelOf, nodeColor } from "../theme";
-import { Brackets, CompBadges, cellText, edgeKey, parseEdgeKey, reading, truthWords } from "../bits";
+import { Brackets, CompBadges, casesOf, cellText, edgeKey, parseEdgeKey, reading, truthWords } from "../bits";
 import { DdItem, Dropdown } from "../Dropdown";
 import { Key, isTyping } from "../Shortcuts";
 import type { CtxTarget } from "../ContextMenu";
@@ -55,10 +55,12 @@ type CardData = {
   /** Not needed in any world still in play. */
   out: boolean;
   lines: { name: string; text: string; full: string; trivial: boolean }[];
+  /** The names of what it's a kind of. */
+  kinds: string[];
 };
 
 function Card({ data }: NodeProps<RFNode<CardData>>) {
-  const { node, direction, selected, recent, dim, entering, leaving, linking, out, lines } = data;
+  const { node, direction, selected, recent, dim, entering, leaving, linking, out, lines, kinds } = data;
   const facts = factsOf(node);
   return (
     <div
@@ -69,7 +71,12 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
       <Handle type="source" position={direction === "down" ? Position.Top : Position.Left} />
       <div className="card-top">
         <CompBadges n={node} />
-        {!facts.length && <span className="muted small">note</span>}
+        {kinds.map((k) => (
+          <span key={k} className="cbadge" title="What kind of thing it is">
+            {k}
+          </span>
+        ))}
+        {!facts.length && !kinds.length && <span className="muted small">note</span>}
       </div>
       <div className="card-title">{node.name}</div>
       {lines.map((l) => (
@@ -347,6 +354,13 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
       const words = r && truthWords(c.name, r);
       const reads = !words ? text : "fixed" in words ? words.fixed : `${words.lead} ${text}`;
       out.push({ name: c.name, text: reads, full: reads.length > 400 ? `${reads.slice(0, 400)}…` : reads, trivial: !!r?.never });
+    }
+    // The workspace's own cells that are worked out are what it's for, so they say something too. A kind's
+    // own, with nothing of its own to work them out from, don't.
+    for (const [c, cell] of Object.entries(n.cells)) {
+      if (!cell.workspace || cell.formula === undefined || cell.error || casesOf(cell).every((v) => v === null)) continue;
+      const text = cellText(cell, nameOf);
+      out.push({ name: c, text, full: text, trivial: false });
     }
     return out;
   };
@@ -833,6 +847,11 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
               linking: id === linkDrag?.from || id === linkDrag?.over,
               out: !!reading(node.cells.need)?.never,
               lines: summaryLines(node),
+              kinds: [
+                ...ws.view!.links.filter((l) => l.from === id && l.kind === "is_a").map((l) => ws.byId.get(l.to)?.name ?? ""),
+                // Something other things are a kind of says so, since that's what it's for.
+                ...(ws.view!.links.some((l) => l.to === id && l.kind === "is_a") ? ["kind"] : []),
+              ],
             },
           };
         }),

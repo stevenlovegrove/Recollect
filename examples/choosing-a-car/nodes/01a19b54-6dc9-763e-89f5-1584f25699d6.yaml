@@ -1,0 +1,12 @@
+id: 01a19b54-6dc9-763e-89f5-1584f25699d6
+components:
+  name: Yearly cost
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: car.yearly_cost
+links:
+- to: 01a19b54-6dc9-763e-89f5-158080aa2667
+  components:
+    label: car
