@@ -248,6 +248,12 @@ call     := name "(" (name "in" path ":" expr | expr ("," expr)*)? ")"
 - `=` between truths means "exactly when", which is what `Truthful` is.
 - A plain label must be exactly one node, and that's an error otherwise. As a group, it can be any number, including none, so a total with no lines yet is 0.
 
+## Typing one
+
+The Inspector and the Table have one field for a cell, as in a spreadsheet: `=price * 2` is a formula, and `5`, `true` or `hello` is a value. Clearing it removes the cell, and a leading `'` means take the rest literally, for text that really starts with `=`. The `=` is only how it's typed: what's stored is `price * 2`, so a file or a proposal doesn't have one. Turning a formula back into a value takes its labels with it.
+
+The Inspector asks which node each new name refers to. The Table can use the names a cell already has, and sends you to the Inspector for a new one.
+
 ## The samples, rewritten
 
 | Sample | Today | With expressions |

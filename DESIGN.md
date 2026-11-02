@@ -46,7 +46,7 @@ A system also says, in a catalog, what its components mean to someone looking at
 
 ## Formulas
 
-A spreadsheet and a puzzle aren't separate systems here. Each is nodes with values, some of them formulas, and a puzzle's solutions are the worlds where a `requires` node is true. Because a formula can read a plan's cells and fill its `estimate`, a plan, its costs and its constraints are one graph: `sum(t in with.task: if(t.need, t.estimate, 0))` is its effort in every world, with shared work counted once, and a `requires` node saying `effort <= 6` rules out the options that can't meet it. Claude writes formulas the same way a person does, as reviewable text in a proposal. See [docs/expressions.md](docs/expressions.md).
+A spreadsheet and a puzzle aren't separate systems here. Each is nodes with values, some of them formulas, and a puzzle's solutions are the worlds where a `requires` node is true. Because a formula can read a plan's cells and fill its `estimate`, a plan, its costs and its constraints are one graph: `sum(t in with.task: if(t.need, t.estimate, 0))` is its effort in every world, with shared work counted once, and a `requires` node saying `effort <= 6` rules out the options that can't meet it. Claude writes formulas the same way a person does, as reviewable text in a proposal. A person types them as in a spreadsheet: in the Inspector or the Table, `=` starts a formula and anything else is a value, and a leading `'` means the rest is literal text. See [docs/expressions.md](docs/expressions.md).
 
 ## Views
 
@@ -54,7 +54,7 @@ A spreadsheet and a puzzle aren't separate systems here. Each is nodes with valu
 |---|---|---|
 | **Map** | The graph, laid out by the links that give it shape. What a world rules out dims, and nothing moves | Always |
 | **Outline** | The same structure, coarse to fine | Always |
-| **Table** | Nodes against components. Typed-in numbers edit in place, and what just ran is highlighted | Always |
+| **Table** | Nodes against components. Values and formulas edit in place, as in a spreadsheet, and what just ran is highlighted | Always |
 | **Worlds** | Every open choice and what's still possible. Choices with the same options become a grid, and choices with an `at` are placed on a board. A workspace's own [drawings](docs/drawings.md) can be picked instead, and the choice is remembered | If anything's open, or there's a drawing |
 | **Decisions** | Each decision, what each option needs, and whether it's holding work up. Deciding shows what it would change first | `plan` |
 | **Work** | Tasks by where they stand: can start, depends on a decision, waiting, finished, not needed | `plan` |

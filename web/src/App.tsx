@@ -249,7 +249,7 @@ export function App() {
         {creating ? (
           <NewNodePanel key={`new-${creating.n}`} ws={ws} template={creating} onCreated={(id) => select(id)} onClose={() => setCreating(null)} />
         ) : (
-          selected && ws.byId.has(selected) && <Inspector key={selected} ws={ws} id={selected} onSelect={select} onClose={() => select(null)} onAdd={startNew} command={command} />
+          selected && ws.byId.has(selected) && <Inspector key={selected} ws={ws} id={selected} onSelect={select} onClose={() => select(null)} onAdd={startNew} onShowDecisions={showDecisions} command={command} />
         )}
         {selEdge && <LinkInspector key={selected} ws={ws} edge={selEdge} onSelect={select} onClose={() => select(null)} />}
       </main>

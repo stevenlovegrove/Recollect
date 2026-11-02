@@ -209,7 +209,7 @@ export function Resolved({ ws, cell, component }: { ws: Workspace; cell: Cell; c
   const read = (v: unknown) => (v === null ? "undefined" : (meaning?.(v) ?? displayValue(v, name)));
   const row = (key: number, value: string, when?: Reading) => (
     <div key={key} className="resolved-row">
-      <span className="resolved-eq">=</span> <span className="mono-value">{value}</span>
+      <span className="resolved-eq">→</span> <span className="mono-value">{value}</span>
       {when && (
         <>
           {" "}

@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import type { Cell, GraphNode } from "../api";
 import type { ViewProps } from "./MapView";
-import { Truth, cellText, reading } from "../bits";
+import { Truth, cellText, reading, truthWords } from "../bits";
+import { entryText, parseEntry } from "../cellEntry";
+import { entryOp, holdsFormula } from "../Inspector";
 import { DdItem, Dropdown } from "../Dropdown";
 import { label, nodeColor } from "../theme";
 
@@ -74,27 +76,60 @@ export function TableView({ ws, selected, onSelect }: ViewProps) {
 function TableCell({ ws, node, c, cell }: { ws: ViewProps["ws"]; node: GraphNode; c: string; cell: Cell | undefined }) {
   if (!cell) return null;
   const nameOf = (s: string) => ws.byId.get(s)?.name ?? s;
-  if (cell.error) return <span title={cell.error}>#ERROR</span>;
-  if (cell.source === "stored" && typeof cell.value === "number") {
-    return <NumberCell key={cell.value} value={cell.value} onCommit={(value) => ws.apply([{ op: "set", id: node.id, component: c, value }]).catch((e) => alert(String(e)))} />;
-  }
   const r = reading(cell);
+  // What can hold a formula is typed into, as in a spreadsheet, unless it comes from a rule of the column's.
+  if (holdsFormula(ws, c) && (cell.source === "stored" || cell.formula !== undefined)) {
+    const words = r && truthWords(c, r);
+    const shown = cell.error ? "#ERROR" : !words ? cellText(cell, nameOf) : "fixed" in words ? words.fixed : `${words.lead} ${r!.when}`;
+    return <EntryCell key={`${cell.formula}|${JSON.stringify(cell.value)}|${shown}`} ws={ws} node={node} c={c} cell={cell} shown={shown} />;
+  }
+  if (cell.error) return <span title={cell.error}>#ERROR</span>;
   if (r) return <Truth component={c} r={r} />;
   return <span title={cell.rule}>{cellText(cell, nameOf)}</span>;
 }
 
-function NumberCell({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
-  const [text, setText] = useState(String(value));
+/** Shows what a cell comes to, and what it holds while it's being edited: a value, or `=` and a formula. */
+function EntryCell({ ws, node, c, cell, shown }: { ws: ViewProps["ws"]; node: GraphNode; c: string; cell: Cell; shown: string }) {
+  const [text, setText] = useState<string | null>(null);
+  const [refused, setRefused] = useState<string | null>(cell.error ?? null);
+  const commit = async () => {
+    if (text === null) return;
+    if (text.trim() === entryText(cell)) return setText(null);
+    try {
+      // Names it already has keep their meaning. New ones are said in the inspector, which refusing here points to.
+      await ws.apply([entryOp(node.id, c, parseEntry(text), undefined, cell.formula !== undefined)]);
+      setRefused(null);
+      setText(null);
+    } catch (e) {
+      setRefused(e instanceof Error ? e.message : String(e));
+    }
+  };
   return (
-    <input
-      className="sheet-input"
-      type="number"
-      step="any"
-      value={text}
-      onClick={(e) => e.stopPropagation()}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={() => text !== "" && Number(text) !== value && onCommit(Number(text))}
-      onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-    />
+    <>
+      <input
+        className={`sheet-input ${refused ? "bad" : ""}`}
+        aria-label={`${node.name}: ${label(c)}`}
+        title={cell.formula !== undefined ? `=${cell.formula}` : "A value, or = and a formula"}
+        value={text ?? shown}
+        onClick={(e) => e.stopPropagation()}
+        onFocus={() => setText(entryText(cell))}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            setRefused(null);
+            setText(null);
+          }
+        }}
+      />
+      {refused && (
+        <div className="cell-error small">
+          {refused}
+          {refused.includes("no input called") && ". Say what a new name refers to in the inspector."}
+        </div>
+      )}
+    </>
   );
 }

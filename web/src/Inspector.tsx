@@ -4,6 +4,7 @@ import { linksOf, type Workspace } from "./workspace";
 import { GLYPH, compColor, factsOf, isDropped, label, nodeColor } from "./theme";
 import { DdItemButton, Dropdown } from "./Dropdown";
 import { Brackets, CellValue, CompBadge, NodeChip, Resolved, shownText } from "./bits";
+import { entryText, parseEntry } from "./cellEntry";
 import { Key } from "./Shortcuts";
 import { OpLine } from "./views/HistoryView";
 import { askSure, askWhy } from "./Ask";
@@ -138,6 +139,7 @@ export function Inspector({
   onSelect,
   onClose,
   onAdd,
+  onShowDecisions,
   command,
 }: {
   ws: Workspace;
@@ -145,6 +147,7 @@ export function Inspector({
   onSelect: (id: string) => void;
   onClose: () => void;
   onAdd: (t: Omit<NodeTemplate, "n">) => void;
+  onShowDecisions: (id: string) => void;
   /** Keyboard requests from the app; `n` changes each time one is made. */
   command?: { kind: "edit" | "link"; n: number } | null;
 }) {
@@ -210,7 +213,7 @@ export function Inspector({
         <h4>What it is</h4>
         {stored.length === 0 && others.length === 0 && !computedHere.some(([, cell]) => cell.own) && <p className="muted small">A plain note. Add something to give it behaviour, or leave it as a note.</p>}
         {stored.map((c) => (
-          <FactEditor key={c.name} node={node} info={c} ws={ws} run={run} />
+          <FactEditor key={c.name} node={node} info={c} ws={ws} run={run} onSelect={onSelect} onShowDecisions={onShowDecisions} />
         ))}
         {others.map(([c, cell]) => (
           <div key={c} className="comp">
@@ -248,7 +251,7 @@ export function Inspector({
         <section>
           <h4>Worked out</h4>
           {computedHere.map(([c, cell]) => (
-            <Derived key={c} ws={ws} id={id} c={c} cell={cell} info={ws.info(c)} onSelect={onSelect} run={run} />
+            <Derived key={c} ws={ws} id={id} c={c} cell={cell} info={ws.info(c)} onSelect={onSelect} />
           ))}
         </section>
       )}
@@ -306,14 +309,14 @@ export function Inspector({
 }
 
 /** Edit a stored fact: as a number, as text, or as fields, whichever it is. */
-function FactEditor({ node, info, ws, run }: { node: GraphNode; info: ComponentInfo; ws: Workspace; run: (ops: Op[], why?: string) => Promise<boolean> }) {
+function FactEditor({ node, info, ws, run, onSelect, onShowDecisions }: { node: GraphNode; info: ComponentInfo; ws: Workspace; run: (ops: Op[], why?: string) => Promise<boolean>; onSelect: (id: string) => void; onShowDecisions: (id: string) => void }) {
   const id = node.id;
   const c = info.name;
   const cell = node.cells[c];
   const value = cell.value;
   const set = (v: unknown, why = "") => run([{ op: "set", id, component: c, value: v }], why);
   const rules = ws.view!.rules.filter((r) => r.output === c && !r.key.startsWith("expr@"));
-  const formulaCan = ws.view!.rules.some((r) => r.key.startsWith("expr@") && (r.output === c || r.also?.includes(c)));
+  const formulaCan = holdsFormula(ws, c);
   return (
     <div className="comp" style={{ ["--c" as string]: compColor(c) }}>
       <div className="comp-head">
@@ -330,23 +333,29 @@ function FactEditor({ node, info, ws, run }: { node: GraphNode; info: ComponentI
         <div className="comp-body small">
           {(value as { chosen?: string }).chosen ? (
             <>
-              Chose <NodeChip ws={ws} id={(value as { chosen: string }).chosen} onSelect={() => {}} />
+              Chose <NodeChip ws={ws} id={(value as { chosen: string }).chosen} onSelect={onSelect} />.{" "}
             </>
           ) : (
-            <span className="muted">Still open. Its options are on the Decisions tab.</span>
+            <span className="muted">Still open. </span>
           )}
+          <span className="muted">
+            Its options are the nodes linked to it by an Alternative link, which you can compare on the{" "}
+            <button className="link" onClick={() => onShowDecisions(id)}>
+              Decisions tab
+            </button>
+            .
+          </span>
+        </div>
+      ) : formulaCan ? (
+        <div className="comp-body">
+          <CellEditor ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} />
         </div>
       ) : value !== null && value !== undefined && (
         <div className="comp-body">
           <ValueEditor key={JSON.stringify(value)} value={value} onCommit={set} />
-          {(rules.length > 0 || formulaCan) && (
+          {rules.length > 0 && (
             <div className="muted small">
               or work it out with{" "}
-              {formulaCan && (
-                <button className="link" onClick={() => run([{ op: "set", id, component: c, formula: typeof value === "string" ? JSON.stringify(value) : String(value) }])}>
-                  a formula
-                </button>
-              )}
               {rules.map((r) => (
                 <button key={r.key} className="link" onClick={() => run([{ op: "set", id, component: c, rule: r.key }])}>
                   {r.key}
@@ -418,6 +427,18 @@ function ValueEditor({ value, onCommit }: { value: unknown; onCommit: (v: unknow
   );
 }
 
+/** Whether a formula can go in this component at all. */
+export function holdsFormula(ws: Workspace, c: string): boolean {
+  return ws.view!.rules.some((r) => r.key.startsWith("expr@") && (r.output === c || r.also?.includes(c)));
+}
+
+/** The change an entry makes. A formula's labels go with it, so a formula replaced by a value takes them along. */
+export function entryOp(id: string, component: string, entry: ReturnType<typeof parseEntry>, labels: Labels | undefined, wasFormula: boolean): Op {
+  if (entry.kind === "formula") return { op: "set", id, component, formula: entry.text, labels };
+  const dropped = wasFormula ? { labels: {} } : {};
+  return entry.kind === "value" ? { op: "set", id, component, value: entry.value, ...dropped } : { op: "set", id, component, ...dropped };
+}
+
 const NOT_NAMES = new Set(["true", "false", "undefined", "self", "in", "out", "with", "if", "defined", "chose", "round", "floor", "ceil", "sum", "product", "all", "any", "count", "pick", "abs", "min", "max", "or", "effort"]);
 
 /** The names a formula uses that have to come from somewhere: its labels. */
@@ -428,9 +449,12 @@ function namesIn(formula: string): string[] {
   return [...new Set(names)].filter((n) => !NOT_NAMES.has(n) && !bound.has(n));
 }
 
-/** A formula, and what its names mean. Hovering over a bracketed part says what that part comes to. */
-function FormulaEditor({ ws, id, c, cell, onSelect }: { ws: Workspace; id: string; c: string; cell: Cell; onSelect: (id: string) => void }) {
-  const formula = cell.formula!;
+/**
+ * A cell as in a spreadsheet: one field, where `=` starts a formula and anything else is a value. A
+ * formula also says what its names mean. Hovering over a bracketed part says what that part comes to.
+ */
+function CellEditor({ ws, id, c, cell, onSelect }: { ws: Workspace; id: string; c: string; cell: Cell; onSelect: (id: string) => void }) {
+  const formula = cell.formula;
   const existing: Labels = {};
   for (const l of ws.view!.links) if (l.from === id && l.kind === "label") (existing[String(l.value)] ??= []).push(l.to);
   const [draft, setDraft] = useState<{ text: string; labels: Labels } | null>(null);
@@ -439,6 +463,7 @@ function FormulaEditor({ ws, id, c, cell, onSelect }: { ws: Workspace; id: strin
   const [refused, setRefused] = useState<string | null>(null);
   const asked = useRef(0);
   const name = (n: string) => ws.byId.get(n)?.name ?? n;
+  const edit = () => setDraft({ text: entryText(cell), labels: existing });
 
   const hold = (text: string | null) => {
     const n = ++asked.current;
@@ -452,12 +477,13 @@ function FormulaEditor({ ws, id, c, cell, onSelect }: { ws: Workspace; id: strin
   };
 
   if (draft) {
-    const uses = namesIn(draft.text);
+    const entry = parseEntry(draft.text);
+    const uses = entry.kind === "formula" ? namesIn(entry.text) : [];
     const unknown = uses.filter((n) => !draft.labels[n]?.length);
     const save = async () => {
       const labels = Object.fromEntries(uses.filter((n) => draft.labels[n]?.length).map((n) => [n, draft.labels[n]]));
       try {
-        await ws.apply([{ op: "set", id, component: c, formula: draft.text.trim(), labels }]);
+        await ws.apply([entryOp(id, c, entry, labels, formula !== undefined)]);
         setRefused(null);
         setDraft(null);
       } catch (e) {
@@ -470,8 +496,9 @@ function FormulaEditor({ ws, id, c, cell, onSelect }: { ws: Workspace; id: strin
           autoFocus
           className="formula-input"
           rows={2}
-          aria-label="Formula"
+          aria-label={`${label(c)}: a value, or = and a formula`}
           value={draft.text}
+          onFocus={(e) => e.currentTarget.setSelectionRange(e.currentTarget.value.length, e.currentTarget.value.length)}
           onChange={(e) => setDraft({ ...draft, text: e.target.value })}
           onKeyDown={(e) => {
             if (e.key === "Escape") {
@@ -484,6 +511,7 @@ function FormulaEditor({ ws, id, c, cell, onSelect }: { ws: Workspace; id: strin
             }
           }}
         />
+        <div className="muted small">A number or text, or start with = for a formula, such as =price * 2.</div>
         {uses.map((n) => (
           <div key={n} className="formula-label">
             <code>{n}</code>
@@ -526,7 +554,7 @@ function FormulaEditor({ ws, id, c, cell, onSelect }: { ws: Workspace; id: strin
           >
             Cancel
           </button>
-          <button className="primary" disabled={unknown.length > 0 || !draft.text.trim()} title={unknown.length ? `Say what ${unknown.join(", ")} refers to` : "⏎"} onClick={save}>
+          <button className="primary" disabled={unknown.length > 0} title={unknown.length ? `Say what ${unknown.join(", ")} refers to` : "⏎"} onClick={save}>
             Save
           </button>
         </div>
@@ -534,11 +562,32 @@ function FormulaEditor({ ws, id, c, cell, onSelect }: { ws: Workspace; id: strin
     );
   }
 
+  if (formula === undefined) {
+    return (
+      <div className="formula-read">
+        <span className="cell-line">
+          <span className="mono-value cell-plain" title="Click to edit" onClick={edit}>
+            {entryText(cell) || <span className="muted">nothing yet</span>}
+          </span>
+          <button className="link small" onClick={edit}>
+            edit
+          </button>
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div className="formula-read">
-      <code className="formula-text" title="Click to edit" onClick={() => setDraft({ text: formula, labels: existing })}>
-        <Brackets text={formula} onHeld={hold} renderText={(t) => <FormulaRefs text={t} labels={existing} ws={ws} onSelect={onSelect} />} />
-      </code>
+      <span className="cell-line">
+        <code className="formula-text" title="Click to edit" onClick={edit}>
+          <span className="resolved-eq">=</span>
+          <Brackets text={formula} onHeld={hold} renderText={(t) => <FormulaRefs text={t} labels={existing} ws={ws} onSelect={onSelect} />} />
+        </code>
+        <button className="link small" onClick={edit}>
+          edit
+        </button>
+      </span>
       <Resolved ws={ws} cell={cell} component={c} />
       {part && (
         <div className="formula-part small">
@@ -591,8 +640,7 @@ function FormulaRefs({ text, labels, ws, onSelect }: { text: string; labels: Lab
   return <>{parts}</>;
 }
 
-function Derived({ ws, id, c, cell, info, onSelect, run }: { ws: Workspace; id: string; c: string; cell: Cell; info: ComponentInfo | undefined; onSelect: (id: string) => void; run: (ops: Op[], why?: string) => Promise<boolean> }) {
-  const canType = cell.own && info && !info.derived;
+function Derived({ ws, id, c, cell, info, onSelect }: { ws: Workspace; id: string; c: string; cell: Cell; info: ComponentInfo | undefined; onSelect: (id: string) => void }) {
   return (
     <div className="derived">
       <span className="derived-k" title={info?.about}>
@@ -600,13 +648,8 @@ function Derived({ ws, id, c, cell, info, onSelect, run }: { ws: Workspace; id: 
         {cell.own && cell.formula === undefined && <span className="muted small"> · {cell.rule}</span>}
       </span>
       <span className="derived-v">
-        {cell.formula !== undefined && cell.own ? <FormulaEditor key={cell.formula} ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} /> : <CellValue ws={ws} cell={cell} onSelect={onSelect} component={c} />}
+        {cell.formula !== undefined && cell.own ? <CellEditor key={cell.formula} ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} /> : <CellValue ws={ws} cell={cell} onSelect={onSelect} component={c} />}
       </span>
-      {canType && (
-        <button className="link small" title="Replace the formula with this number" onClick={() => run([{ op: "set", id, component: c, value: cell.value ?? info.initial ?? null }])}>
-          type over
-        </button>
-      )}
     </div>
   );
 }
