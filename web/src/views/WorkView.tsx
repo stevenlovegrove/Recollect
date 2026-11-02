@@ -14,7 +14,7 @@ const COLUMNS: { standing: Standing; title: string; hint: string }[] = [
 export function WorkView({ ws, selected, onSelect }: ViewProps) {
   const items = ws.plan.work;
   if (!items.length) return <p className="muted pad">No tasks yet. Give a node with no parts a ▸ Task to put it here.</p>;
-  const done = (i: WorkItem) => !!ws.byId.get(i.id)?.cells.done;
+  const done = (i: WorkItem) => ws.byId.get(i.id)?.cells.done?.value === true;
   return (
     <div className="plan">
       <div className="columns">
@@ -33,7 +33,7 @@ export function WorkView({ ws, selected, onSelect }: ViewProps) {
                       checked={done(i)}
                       title={done(i) ? "Mark as not done" : "Mark as done"}
                       onClick={(e) => e.stopPropagation()}
-                      onChange={() => ws.apply([done(i) ? { op: "set", id: i.id, component: "done" } : { op: "set", id: i.id, component: "done", value: null }]).catch((e) => alert(String(e)))}
+                      onChange={() => ws.apply([done(i) ? { op: "set", id: i.id, component: "done" } : { op: "set", id: i.id, component: "done", value: true }]).catch((e) => alert(String(e)))}
                     />{" "}
                     {i.name}
                     {i.estimate !== null && <span className="muted small"> · {i.estimate}d</span>}

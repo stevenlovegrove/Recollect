@@ -221,7 +221,7 @@ A check is an ordinary rule in its own column, on every node, returning what's w
 
 ```rust
 reg.invariant(rule("unknown_cannot_be_done"), |cx| {
-    let both = cx.own::<Unknown>()?.is_some() && cx.own::<Done>()?.is_some();
+    let both = cx.own::<Unknown>()?.is_some() && cx.own_is_stored(Done::NAME);
     Ok(if both { vec!["a gap can't be done: remove it to close it".into()] } else { vec![] })
 });
 reg.notice(rule("decision_without_options").incoming::<Alternative>(), |cx| ...);
@@ -289,9 +289,7 @@ Deliberate, and the only ones the comparison below allows:
 | `Alternative { ruled_out, weight }` | link | Option → decision: OR. Its target must be a decision |
 | `DependsOn { on }` | link | From waits for to. `on: decided` waits for the answer, not the work |
 | `Decision { chosen }` | node | An open question. Holding one value makes "exactly one chosen" unbreakable |
-| `Done` | node | Stated complete. Only counts at a leaf |
-| `Dropped` | node | Deliberately out of the picture |
-| `Task`, `Goal`, `Question`, `Risk` | node | Work of its own, which only `Done` discharges |
+| `Task`, `Goal`, `Question`, `Risk` | node | Work of its own, which `Done` discharges |
 | `Estimate` | node | A task's days, typed in or a formula, so it can differ between worlds |
 | `Unknown` | node | A gap. It can't be done or chosen, so removing it is the claim that it's closed |
 
@@ -305,7 +303,8 @@ A **world** is one way every open decision could land. Each of these is a rule, 
 |---|---|
 | `Choice` | How a decision could land. A chosen one is a constant, and only live options that aren't ruled out are worlds |
 | `Need` | `never` if dropped, `always` with no parents, otherwise any parent it's in play through |
-| `Completion` | `Some(true)` finished, `Some(false)` owed, `None` not in the completion system. See below |
+| `Done` | `Some(true)` finished, `Some(false)` owed, `None` nothing to finish. A default formula, so a node can type over it. See below |
+| `Dropped` | Deliberately out of the picture. A default formula of `false`, so a node can type over it |
 | `Blockers` | What it waits for, by name, with the worlds in which it does: its own dependencies and those of the parents it's in play through |
 | `Blocked` | Any blocker |
 | `Actionable` | For a live task with no live parts: needed, owed and not blocked |
@@ -313,11 +312,11 @@ A **world** is one way every open decision could land. Each of these is a rule, 
 
 `plan::pressure` says whether an open decision is holding work up, and `plan::explain` gives one level of why a node reads as it does. `ViewGraph` in `view.rs` gives filtered, collapsed and scoped views, as pure transforms.
 
-### Completion comes from the leaves
+### Done comes from what's beneath, unless a node says otherwise
 
-Completion is something a node opts into. A leaf is in the system if it holds an obligation, a `Done` or an `Unknown`, and everything above takes the combination of what's beneath it: all its live parts, and a decision's selected option. A decision that lands on nothing is owed. A node with nothing completable beneath it reads `None`, and waiting on it costs nothing.
+Being finishable is something a node opts into. A leaf is in the system if it holds an obligation or an `Unknown`, and everything above takes the combination of what's beneath it: all its live parts, and a decision's selected option. A decision that lands on nothing is owed. A node with nothing completable beneath it reads `None`, and waiting on it costs nothing.
 
-| Situation | `Completion::open()` | `Completion::finished()` |
+| Situation | `Done::open()` | `Done::finished()` |
 |---|---|---|
 | A plain note, or "red" with no work | `never` | `never` |
 | Which colour, red or blue, with a gap | `colour=colour.unknown` | `never` |
@@ -325,11 +324,11 @@ Completion is something a node opts into. A leaf is in the system if it holds an
 | All options finished and the gap closed, undecided | `never` | `always`, and `chosen` is still empty, a separate fact |
 | Chosen, but the option has a gap | `always` | `never` |
 
-**`Done` above a leaf changes nothing**, so there's one source of truth, and `stated_done_with_open_work` reports any disagreement. To finish something early, drop what's left: that's a fact with an author, and `dropped_part_of_live_work` reports it.
+**What a node says for itself replaces this.** That's a value or a formula in the same cell, and removing it brings the formula back, so there's still one place to look. `stated_done_with_open_work` reports a statement that disagrees with what's beneath it. A file or log that wrote `done` or `dropped` with nothing in it reads as true.
 
 ### Scheduling
 
-`schedule.rs` works out dates over the same facts, in every world. A task's estimate is its duration, and it starts once what it depends on has finished and whatever it's in play through has started. `Finish` is 0 where a node isn't needed, so waiting on it costs nothing, and `None` where a gap makes it unknowable. `Slack` comes from following the same links backward. `Dates` says the same for drawing: when it happens, in the worlds that need it.
+`schedule.rs` works out dates over the same facts, in every world, as default formulas with nothing about them that another cell's formula couldn't do. A node can type over any of them, and a date typed in moves whatever follows it. `whole.plan_end` is a cell for the whole graph: only a component's default can fill one, so it's worked out once however many nodes read it. A task's estimate is its duration, and it starts once what it depends on has finished and whatever it's in play through has started. `Finish` is 0 where a node isn't needed, so waiting on it costs nothing, and `None` where a gap makes it unknowable. `Slack` comes from following the same links backward. `Dates` says the same for drawing: when it happens, in the worlds that need it.
 
 ### What a plugin can add
 
@@ -339,11 +338,10 @@ Completion is something a node opts into. A leaf is in the system if it holds an
 
 Each of these is handled explicitly by the comparison below:
 
-- **`Done` above a leaf** overrode what's beneath it there. There's also no separate `all_required_done` column, since nothing stated overrides it any more.
 - **Blocking is only inherited through parents in play.** There, shared work waits on a phase this world isn't doing.
 - **Two routes to the same blocker hold in either.** There, the last one reached replaces the others, so something explicitly waiting for an answer could read as free.
 - **A malformed value is an error in the cells that read it,** rather than being treated as absent.
-- **`Completion` says `None`** where the kernel's `done` said `always` for a node with nothing to do. What depends on it behaves the same.
+- **`Done` says `None`** where the kernel's `done` said `always` for a node with nothing to do. What depends on it behaves the same.
 - **Variables are ordered by creation, not sorted by depth.** A decision's `Choice` reads its own `Need` first, so whatever it's inside gets its variable first and formulas read from the outside in. A decision added above an existing one comes after it until the process restarts. The value is the same either way, only how it prints differs.
 
 ## Worlds, on top

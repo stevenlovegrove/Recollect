@@ -142,12 +142,12 @@ export function App() {
         setCommand((c) => ({ kind: "edit", n: (c?.n ?? 0) + 1 }));
       } else if (selNode && key === "l") setCommand((c) => ({ kind: "link", n: (c?.n ?? 0) + 1 }));
       else if (selNode && ws.info("done") && key === "x") {
-        run([selNode.cells.done ? { op: "set", id: selNode.id, component: "done" } : { op: "set", id: selNode.id, component: "done", value: null }]);
+        run([selNode.cells.done?.own ? { op: "set", id: selNode.id, component: "done" } : { op: "set", id: selNode.id, component: "done", value: true }]);
       } else if (selNode && ws.info("dropped") && (key === "Backspace" || key === "Delete")) {
         if (isDropped(selNode)) run([{ op: "set", id: selNode.id, component: "dropped" }], "brought back");
         else {
           askWhy(`Drop “${selNode.name}”?`, "Drop").then((why) => {
-            if (why !== null) run([{ op: "set", id: selNode.id, component: "dropped", value: null }], why);
+            if (why !== null) run([{ op: "set", id: selNode.id, component: "dropped", value: true }], why);
           });
         }
       } else return;

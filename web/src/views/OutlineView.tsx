@@ -93,7 +93,7 @@ export function OutlineView({ ws, selected, onSelect, onShowDecisions, onContext
     const others = liveParents(id).filter((p) => p !== parent);
     const isCollapsed = collapsed.has(id) || !first;
     const need = reading(n.cells.need);
-    const finished = n.cells.completion?.shown?.kind === "cond" && n.cells.completion.shown.cases.every((c) => c.value === true);
+    const finished = n.cells.done?.shown?.kind === "cond" && n.cells.done.shown.cases.every((c) => c.value === true);
     return (
       <div key={`${parent ?? "root"}/${id}`}>
         <div data-id={id} className={`outline-row ${id === selected ? "selected" : ""} ${ws.recent.has(id) ? "recent" : ""} ${isDropped(n) ? "dead" : ""} ${finished ? "resolved" : ""} ${need?.never ? "out" : ""}`} style={{ paddingLeft: 12 + depth * 22 }}>

@@ -384,6 +384,32 @@ async fn going_back_and_changing_something_starts_a_branch_and_loses_nothing() {
 }
 
 #[tokio::test]
+async fn a_worked_out_cell_can_be_typed_over_and_comes_back() {
+    let c = Client::new();
+    c.open("calibration").await;
+    let done = c.post("/api/ops", json!({ "ops": [{ "op": "add_node", "id": "new:t", "name": "Mine", "components": { "task": {} } }] })).await;
+    let t = done["created"]["new:t"].as_str().unwrap().to_string();
+    let cell = |v: &Value| v["nodes"].as_array().unwrap().iter().find(|n| n["id"] == t.as_str()).unwrap()["cells"]["done"].clone();
+
+    let shown = cell(&c.view(json!({})).await);
+    assert_eq!((&shown["own"], shown["value"].is_null()), (&json!(false), false), "a task says it's owed before anyone has said anything: {shown}");
+    assert_eq!(shown["value"], json!(false));
+    assert!(shown["formula"].as_str().unwrap().contains("is_leaf"), "and what it's worked out by: {shown}");
+
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": t, "component": "done", "value": true }] })).await;
+    let shown = cell(&c.view(json!({})).await);
+    assert_eq!((&shown["own"], &shown["value"]), (&json!(true), &json!(true)));
+
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": t, "component": "done", "formula": "1 < 2" }] })).await;
+    let shown = cell(&c.view(json!({})).await);
+    assert_eq!((&shown["own"], &shown["formula"], &shown["value"]), (&json!(true), &json!("1 < 2"), &json!(true)));
+
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": t, "component": "done" }] })).await;
+    let shown = cell(&c.view(json!({})).await);
+    assert_eq!((&shown["own"], &shown["value"]), (&json!(false), &json!(false)), "and without it, it's worked out again");
+}
+
+#[tokio::test]
 async fn a_new_workspace_starts_empty_and_an_old_one_is_not_touched() {
     let c = Client::new();
     let dir = tempfile::tempdir().unwrap();

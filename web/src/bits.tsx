@@ -163,7 +163,7 @@ export function Truth({ component, r }: { component: string; r: Reading }) {
 
 /** What a value means, for the few that aren't plain. */
 const MEANING: Record<string, (v: unknown) => string | undefined> = {
-  completion: (v) => (v === true ? "finished" : v === false ? "still owed" : "nothing to finish"),
+  done: (v) => (v === true ? "finished" : v === false ? "still owed" : "nothing to finish"),
 };
 
 /** A cell in full: every case it has among the worlds in play. */

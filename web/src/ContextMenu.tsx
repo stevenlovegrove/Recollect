@@ -81,7 +81,7 @@ export function ContextMenu({ ws, target, selected, onSelect, onClose }: { ws: W
             className="ctx-item"
             title={dropped ? "Bring it back" : "Take it out of the picture, and keep it"}
             onClick={async () => {
-              if (await run([dropped ? { op: "set", id, component: "dropped" } : { op: "set", id, component: "dropped", value: null }])) onClose();
+              if (await run([dropped ? { op: "set", id, component: "dropped" } : { op: "set", id, component: "dropped", value: true }])) onClose();
             }}
           >
             <span className="ctx-check" />

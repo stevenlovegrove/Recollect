@@ -21,8 +21,10 @@ In a planning workspace, structure is coarse to fine. `part_of` links point chil
 `decision` node's options are ordinary nodes linked to it by `alternative`, and only the option taken is needed, so work that several \
 options share is simply part_of each of them, and is safe to do before deciding. Finding that overlap is worth effort. `depends_on` is \
 ordering, inherited by what's inside. An `unknown` node is a gap: it says something here isn't specified yet, and removing it is the \
-claim that it's closed. `done` only counts at a leaf: above that, completion is derived from what's beneath, so to finish something \
-early, drop what's left. `dropped` means deliberately out of the picture.\n\
+claim that it's closed. `done` is true or false, and is worked out from what's beneath unless a node says otherwise. A stated `done` \
+that disagrees with what's beneath gets a notice, so to finish something early, say so and drop what's left. \
+`dropped` means deliberately out of the picture. Any cell a formula can fill can be typed over like this, and \
+removing what was typed brings back what it's worked out to.\n\
 \n\
 Values that depend on open decisions are exact: each is the set of worlds where it holds, shown as a formula such as `calib∈{cad,free}`. \
 A world is one way every open choice could land. Tools that take a `world` read everything as it would be with those choices pinned, \

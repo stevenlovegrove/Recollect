@@ -14,7 +14,7 @@ const HELP: Record<string, string> = {
   blocking_decision: "Safe work has run out: decide, or find work the options share.",
   decision_without_options: "An open decision with nothing left to choose from.",
   one_option_left: "A decision that isn't really one any more.",
-  stated_done_with_open_work: "Done only counts at a leaf: above that, it's worked out from what's beneath.",
+  stated_done_with_open_work: "Marked done, while what's beneath it is still open. What it says for itself is what counts.",
   dropped_part_of_live_work: "Dropped from something still in play, which no longer requires it.",
   undeveloped_goal: "Goals with nothing decomposing or serving them yet.",
   risk_without_target: "Risks not linked to what they threaten.",

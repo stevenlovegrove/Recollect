@@ -137,7 +137,7 @@ This has three consequences:
 | `oversized_task` notice | `d > 5` | Fires if it's over 5 in any world, and says in which |
 | The Work tab | One number | A range, which `casesText` already gives |
 
-**Not every fact can be a formula.** What makes the worlds themselves can't depend on them: `Domain`, a decision's options, `Alternative`. Neither can `done` or `dropped`, which are statements about what happened. A component opts in only if varying per world makes sense for it, and a formula that's undefined in some world is an error for a component that can't represent that, naming the worlds.
+**Not every fact can be a formula.** What makes the worlds themselves can't depend on them: `Domain`, a decision's options, `Alternative`. A component opts in only if varying per world makes sense for it, and a formula that's undefined in some world is an error for a component that can't represent that, naming the worlds.
 
 An estimate that reads a date which depends on that task is a loop, and is reported as one.
 
@@ -161,19 +161,22 @@ Errors in the cell are for what's wrong in every world: text that doesn't parse,
 
 A function isn't called. It's expanded into the formula before evaluation, with its arguments substituted, so it holds no state and adds no new meaning. Only a small core is evaluated:
 
-- Operators, `if`, `defined`, `chose`, and `round`, `floor` and `ceil`
+- Operators, `if`, `defined`, `has`, `chose`, `max`, `min`, and `round`, `floor` and `ceil`
 - Group expansion, which turns `x in G: e` into one copy of `e` per node in `G`
 
 The rest of the library is written in that core:
 
 ```
 abs(x)                 = if(x < 0, -x, x)
-min(a, b)              = if(a < b, a, b)
 or(x, fallback)        = if(defined(x), x, fallback)
 sum(x in G: e)         = e[x₁] + e[x₂] + … + 0
 all(x in G: e)         = e[x₁] && e[x₂] && … && true
+max(x in G: e, start)  = max(max(start, e[x₁]), e[x₂]) …
 pick(o in G: e)        = if(chose(self, o₁), e[o₁], if(chose(self, o₂), e[o₂], … undefined))
+pick(o in G: e, other) = the same, with other in place of undefined
 ```
+
+`has(n.cell)` says whether a node has a cell at all, which is different from that cell being undefined: a task with no estimate and one whose estimate can't be worked out aren't the same thing. `max` and `min` over a group have to say where to begin, because an unknown could be the biggest, so undefined can't stand for an empty group. `whole.cell` reads a cell about the whole graph, which only a component's default can fill.
 
 `sum(line)` is short for `sum(x in line: x)`. Group membership comes from the graph, so groups expand at evaluation through ordinary reads, and a new line reruns the total. `all` keeps the order of its group, because the zebra puzzle's speed depends on clues being combined first.
 
@@ -234,7 +237,7 @@ term     := unary (("*" | "/") unary)*
 unary    := "-" unary | atom
 atom     := number | string | "true" | "false" | "undefined" | path | call | "(" expr ")"
 path     := name ("." name)*
-call     := name "(" (name "in" path ":" expr | expr ("," expr)*)? ")"
+call     := name "(" (name "in" path ":" expr ("," expr)? | expr ("," expr)*)? ")"
 ```
 
 | Form | Means |
@@ -281,7 +284,7 @@ The Inspector asks which node each new name refers to. The Table can use the nam
 |---|---|---|
 | **Formula** | One node's specific logic, with no build | `prev * (1 + rate)` |
 | **Macro** | Logic shared between formulas, in the graph | `effort(t)` |
-| **System** | Structure across the whole graph, with invariants | `need`, `completion` |
+| **System** | Structure across the whole graph, with invariants | `need`, `choice` |
 | **Plugin** (not built) | Packaged components and rules someone else wrote | A TypeScript system |
 
 ## How it fits the longer term
@@ -324,7 +327,7 @@ A cell's formula and its expansion are its explanation. With a parsed formula, t
 
 ### Plugins
 
-Macros and any-cell formulas cover much of what people would write a plugin for. A workspace could also add a derived column to every node once defaults can be formulas, which is only a small step from decision 5.
+Macros and any-cell formulas cover much of what people would write a plugin for. Defaults can be formulas now, which is how dates and `done` are written, but only a system can set one so far. A workspace adding its own column is a small step from here.
 
 ### Sharing between machines
 
@@ -373,7 +376,7 @@ If one needs new Rust, that's the finding, and it goes in this document.
 
 1. **Should `requires` narrow the plan's views?** Say a budget node rules out free-form. It could dim that option on the Decisions tab and hide its work, or only show it on the Worlds tab with a notice saying why. It does only the Worlds tab today.
 2. **Is keeping `Domain` consistent enough?** It's the one place an option isn't a node. The alternative is making every option a node and having the map collapse them, which costs 125 nodes on the zebra puzzle.
-3. **Should a formula be able to make a whole column?** A default that's a formula would give a workspace a derived column on every node, which is a small step from here.
+3. **Should a workspace be able to make a whole column?** A system can, with `formulas::defaults_to`. Letting a workspace do it needs somewhere for a default to live that isn't Rust.
 
 ## What changed in building it
 

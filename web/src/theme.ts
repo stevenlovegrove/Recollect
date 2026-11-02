@@ -28,7 +28,6 @@ const LABEL: Record<string, string> = {
   part_of: "part of",
   depends_on: "depends on",
   need: "Needed",
-  completion: "Completion",
   blocked: "Waiting",
   blockers: "Waits for",
   actionable: "Can start",
@@ -56,6 +55,6 @@ export function dominant(n: GraphNode): string {
 
 export const nodeColor = (n: GraphNode) => compColor(dominant(n));
 
-export const isDropped = (n: GraphNode) => "dropped" in n.cells;
+export const isDropped = (n: GraphNode) => n.cells.dropped?.value === true;
 
 export const pct = (x: number) => `${Math.round(x * 100)}%`;

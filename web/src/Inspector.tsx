@@ -185,7 +185,7 @@ export function Inspector({
   const { outgoing, incoming } = linksOf(view, id);
   const facts = factsOf(node);
   const stored = view.components.filter((c) => c.on === "node" && !["name", "body"].includes(c.name) && node.cells[c.name]?.source === "stored");
-  const computedHere = Object.entries(node.cells).filter(([c, cell]) => cell.source === "rule" && !ws.info(c)?.quiet);
+  const computedHere = Object.entries(node.cells).filter(([c, cell]) => cell.source === "rule" && (cell.own || !ws.info(c)?.quiet));
   const missing = view.components.filter((c) => c.on === "node" && !c.derived && !node.cells[c.name]);
   const others = Object.entries(node.cells).filter(([c, cell]) => cell.source === "stored" && !view.components.some((x) => x.name === c) && c !== "name" && c !== "body");
 
@@ -286,7 +286,7 @@ export function Inspector({
                 if (isDropped(node)) run([{ op: "set", id, component: "dropped" }], "brought back");
                 else {
                   const why = await askWhy(`Drop “${node.name}”?`, "Drop");
-                  if (why !== null) run([{ op: "set", id, component: "dropped", value: null }], why);
+                  if (why !== null) run([{ op: "set", id, component: "dropped", value: true }], why);
                 }
               }}
             >
@@ -324,7 +324,7 @@ function FactEditor({ node, info, ws, run, onSelect, onShowDecisions }: { node: 
           {GLYPH[c] && <span className="glyph">{GLYPH[c]}</span>} {label(c)}
         </span>
         {(
-          <button className="icon small" title={`Remove ${label(c).toLowerCase()}`} onClick={() => run([{ op: "set", id, component: c }])}>
+          <button className="icon small" title={info.derived ? "Go back to working this out" : `Remove ${label(c).toLowerCase()}`} onClick={() => run([{ op: "set", id, component: c }])}>
             ×
           </button>
         )}
@@ -439,7 +439,7 @@ export function entryOp(id: string, component: string, entry: ReturnType<typeof 
   return entry.kind === "value" ? { op: "set", id, component, value: entry.value, ...dropped } : { op: "set", id, component, ...dropped };
 }
 
-const NOT_NAMES = new Set(["true", "false", "undefined", "self", "in", "out", "with", "if", "defined", "chose", "round", "floor", "ceil", "sum", "product", "all", "any", "count", "pick", "abs", "min", "max", "or", "effort"]);
+const NOT_NAMES = new Set(["true", "false", "undefined", "self", "in", "out", "with", "if", "defined", "chose", "round", "floor", "ceil", "sum", "product", "all", "any", "count", "pick", "abs", "min", "max", "or", "effort", "has", "whole", "is_leaf", "done_beneath", "days"]);
 
 /** The names a formula uses that have to come from somewhere: its labels. */
 function namesIn(formula: string): string[] {
@@ -453,11 +453,15 @@ function namesIn(formula: string): string[] {
  * A cell as in a spreadsheet: one field, where `=` starts a formula and anything else is a value. A
  * formula also says what its names mean. Hovering over a bracketed part says what that part comes to.
  */
-function CellEditor({ ws, id, c, cell, onSelect }: { ws: Workspace; id: string; c: string; cell: Cell; onSelect: (id: string) => void }) {
+function CellEditor({ ws, id, c, cell, onSelect, opening, onClosed }: { ws: Workspace; id: string; c: string; cell: Cell; onSelect: (id: string) => void; opening?: boolean; onClosed?: () => void }) {
   const formula = cell.formula;
   const existing: Labels = {};
   for (const l of ws.view!.links) if (l.from === id && l.kind === "label") (existing[String(l.value)] ??= []).push(l.to);
-  const [draft, setDraft] = useState<{ text: string; labels: Labels } | null>(null);
+  const [draft, setOpenDraft] = useState<{ text: string; labels: Labels } | null>(opening ? { text: entryText(cell), labels: existing } : null);
+  const setDraft = (d: { text: string; labels: Labels } | null) => {
+    setOpenDraft(d);
+    if (!d) onClosed?.();
+  };
   const [part, setPart] = useState<{ text: string; reads: string } | null>(null);
   const [expansion, setExpansion] = useState<string | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
@@ -640,7 +644,11 @@ function FormulaRefs({ text, labels, ws, onSelect }: { text: string; labels: Lab
   return <>{parts}</>;
 }
 
+/** A cell that's worked out. Anything a formula can fill can be typed over, and that's undone by taking it away again. */
 function Derived({ ws, id, c, cell, info, onSelect }: { ws: Workspace; id: string; c: string; cell: Cell; info: ComponentInfo | undefined; onSelect: (id: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const canEdit = holdsFormula(ws, c);
+  const ownFormula = cell.formula !== undefined && cell.own;
   return (
     <div className="derived">
       <span className="derived-k" title={info?.about}>
@@ -648,8 +656,26 @@ function Derived({ ws, id, c, cell, info, onSelect }: { ws: Workspace; id: strin
         {cell.own && cell.formula === undefined && <span className="muted small"> · {cell.rule}</span>}
       </span>
       <span className="derived-v">
-        {cell.formula !== undefined && cell.own ? <CellEditor key={cell.formula} ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} /> : <CellValue ws={ws} cell={cell} onSelect={onSelect} component={c} />}
+        {ownFormula ? (
+          <CellEditor key={cell.formula} ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} />
+        ) : editing ? (
+          <CellEditor ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} opening onClosed={() => setEditing(false)} />
+        ) : (
+          <span className="cell-line">
+            <CellValue ws={ws} cell={cell} onSelect={onSelect} component={c} />
+            {canEdit && (
+              <button className="link small" title={cell.formula ? `Worked out by =${cell.formula}` : undefined} onClick={() => setEditing(true)}>
+                edit
+              </button>
+            )}
+          </span>
+        )}
       </span>
+      {ownFormula && info?.derived && (
+        <button className="icon small" title="Go back to working this out" onClick={() => ws.apply([entryOp(id, c, parseEntry(""), undefined, true)]).catch((e) => alert(String(e)))}>
+          ×
+        </button>
+      )}
     </div>
   );
 }

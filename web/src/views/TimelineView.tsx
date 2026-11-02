@@ -93,7 +93,7 @@ export function TimelineView({ ws, selected, onSelect }: ViewProps) {
           const isSummary = !n.cells.task || g.links.some((l) => ws.arranging.includes(l.kind) && l.to === n.id);
           const out = !here.length;
           const someWorldsOnly = !out && !reading(n.cells.need)?.always;
-          const done = n.cells.done !== undefined;
+          const done = n.cells.done?.value === true;
           return (
             <g key={`${n.id}-${i}`} className={`timeline-row ${selected === n.id ? "selected" : ""}`} onClick={() => onSelect(n.id)}>
               <rect x={0} y={y - 4} width={W} height={RH} className="row-hit" />

@@ -41,12 +41,14 @@ A system also says, in a catalog, what its components mean to someone looking at
 - **`decision` and `alternative`:** a decision's options are ordinary nodes, linked to it. Only the option taken is needed.
 - **Shared work is just two parents.** Work under two options is `part_of` each, and is safe to do before deciding. Finding that overlap is a big part of the value.
 - **`unknown`:** a gap. It says something here isn't specified yet, it can't be done or chosen, and removing it is the claim that it's closed, which has an author and a reason like anything else.
-- **`done` only counts at a leaf.** Above that, completion is worked out from what's beneath, so there's one source of truth. A node reads as finished, still owed, or not in the system at all, which is what a plain note is. To finish something early, drop what's left.
+- **`done` is a cell, worked out unless a node says otherwise.** It comes from what's beneath, and reads as finished, still owed, or undefined for something with nothing to finish, which is what a plain note is. Typing over it replaces that, with `true`, `false` or a formula, and removing what was typed brings it back. If what it says disagrees with what's beneath, that's a notice. `dropped` works the same way.
 - **Blocking is only inherited through parents in play,** so shared work doesn't wait on a phase this world isn't doing.
 
 ## Formulas
 
 A spreadsheet and a puzzle aren't separate systems here. Each is nodes with values, some of them formulas, and a puzzle's solutions are the worlds where a `requires` node is true. Because a formula can read a plan's cells and fill its `estimate`, a plan, its costs and its constraints are one graph: `sum(t in with.task: if(t.need, t.estimate, 0))` is its effort in every world, with shared work counted once, and a `requires` node saying `effort <= 6` rules out the options that can't meet it. Claude writes formulas the same way a person does, as reviewable text in a proposal. A person types them as in a spreadsheet: in the Inspector or the Table, `=` starts a formula and anything else is a value, and a leading `'` means the rest is literal text. See [docs/expressions.md](docs/expressions.md).
+
+A cell is a typed value or a formula, and that's the same whether a person wrote it or a system did. A system can give a component a default formula for every node, which is how dates and `done` work, so what's worked out can be read, overridden and restored like anything else. Some cells stay as compiled rules: what makes worlds, such as `choice`, and for now `need`, the blocking cells and `scope`.
 
 ## Views
 
@@ -97,7 +99,7 @@ The first version had its own model, and these didn't survive the move to the en
 
 - **Option scopes on `part_of`, and options as a map on the choice.** Options are nodes, which is what lets them have their own evidence and risks.
 - **Robustness as a number.** It assumed paths were independent, which gave wrong answers. Probability is now worked out exactly from the formula, and only where someone gives weights.
-- **Status (`live`, `parked`, `dropped`, `superseded`) and per-component states.** `dropped` and `done` are facts, and a `supersedes` link says the rest.
+- **Status (`live`, `parked`, `dropped`, `superseded`) and per-component states.** `dropped` and `done` are cells, and a `supersedes` link says the rest.
 - **Tags, aliases, wikilinks and `created_by`.** A name is a component, and the log says who did what.
 - **`merge_nodes`.** It can come back as a proposal that moves links, with no special op.
 - **`outcome`, `actionable`, `uncertain`, `principle` and `artifact`, with presets.** Now `goal`, `task` and `question`, with `constrains` for a principle. Confidence on a question went too.
