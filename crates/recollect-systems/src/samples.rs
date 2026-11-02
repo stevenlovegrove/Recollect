@@ -25,7 +25,7 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "critical-path", title: "Critical path", about: "A plain schedule with no decisions: dates go forward over the dependencies, and slack comes from following them backward.", group: "plan", systems: &["plan", "schedule"], build: critical_path },
     Sample { name: "invoice", title: "Invoice", about: "Two lines, a subtotal, tax and a total. Edit a number and only what it reaches reruns.", group: "sheet", systems: &[], build: invoice },
     Sample { name: "trip-budget", title: "Trip budget", about: "A budget with decisions left open: the total is exact in every world, and so is what would put it over.", group: "sheet", systems: &["plan"], build: trip_budget },
-    Sample { name: "choosing-a-car", title: "Choosing a car", about: "Three cars of one kind, what each costs a year over mileage you can only guess at, and which can get to Edinburgh without stopping.", group: "sheet", systems: &["plan"], build: choosing_a_car },
+    Sample { name: "choosing-a-car", title: "Choosing a car", about: "Petrol and electric cars, what each costs a year over mileage you can only guess at, and which can get to Edinburgh without stopping. A kind says what a mile costs, so a car only says its mpg.", group: "sheet", systems: &["plan"], build: choosing_a_car },
     Sample { name: "compound-interest", title: "Compound interest", about: "Ten years chained together, sharing one rate cell.", group: "sheet", systems: &[], build: compound_interest },
     Sample { name: "fibonacci", title: "Fibonacci", about: "Each cell adds the two before it. Cells that are shared run once, so 80 terms take 79 formula runs.", group: "sheet", systems: &[], build: fibonacci },
     Sample { name: "australia", title: "Colouring Australia", about: "Each region is a choice and each border a constraint. There are 18 colourings. Pin a region and see what that forces.", group: "puzzle", systems: &[], build: australia },
@@ -36,7 +36,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "3";
+pub const FORMAT: &str = "4";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -173,19 +173,32 @@ fn choosing_a_car(b: &mut Build) {
     for (option, miles, weight) in [("Light use", 6000.0, 1.0), ("Typical", 10000.0, 2.0), ("Heavy", 16000.0, 1.0)] {
         b.set(option, ValueCell::num(miles)).link(option, "Miles a year", Alternative { weight: Some(weight), ..Alternative::default() });
     }
-    // What every car has in common: how its price, running cost and insurance make a cost a year.
-    b.set("Car", Body("What any car costs a year: losing 15% of its value each year it's kept, running it, and insuring it. Each car says its own price and the rest.".to_string()));
-    b.formula_on("Car", "yearly_cost", "self.price * (1 - 0.85 ^ years) / years + miles * self.cost_per_mile + self.insurance");
-    b.label("Car", "Years kept", "years").label("Car", "Miles a year", "miles");
+    // What a mile costs follows from what a car runs on, so each kind says how, and each car only says
+    // how far it goes on a litre or a kilowatt-hour.
+    b.set("Fuel price", ValueCell::num(1.45)).set("Electricity price", ValueCell::num(0.28));
+    b.set("Petrol car", Body("A mile costs the fuel it burns: a gallon is 4.546 litres. Each says its own mpg.".to_string()));
+    b.formula_on("Petrol car", "cost_per_mile", "fuel * 4.546 / self.mpg").label("Petrol car", "Fuel price", "fuel");
+    b.set("Electric car", Body("A mile costs the electricity it takes. Each says its own kWh a mile.".to_string()));
+    b.formula_on("Electric car", "cost_per_mile", "power * self.kwh_per_mile").label("Electric car", "Electricity price", "power");
     // The decision gives whatever the car it lands on says, so anything can read it.
     b.set("Which car?", Decision::default());
-    b.formula_on("Which car?", "yearly_cost", "pick(o in in.alternative: o.yearly_cost)");
-    b.formula_on("Which car?", "range", "pick(o in in.alternative: o.range)");
-    for (car, price, per_mile, insurance, range) in [("Hatchback", 18000.0, 0.12, 500.0, 450.0), ("Estate", 24000.0, 0.13, 550.0, 500.0), ("Electric", 32000.0, 0.05, 600.0, 250.0)] {
-        b.put(car, "price", json!(price)).put(car, "cost_per_mile", json!(per_mile)).put(car, "insurance", json!(insurance)).put(car, "range", json!(range));
-        b.link(car, "Car", IsA).link(car, "Which car?", Alternative::default());
+    for cell in ["price", "cost_per_mile", "insurance", "range"] {
+        b.formula_on("Which car?", cell, &format!("pick(o in in.alternative: o.{cell})"));
     }
-    b.formula("Yearly cost", "car.yearly_cost").label("Yearly cost", "Which car?", "car");
+    let cars: [(&str, &str, &str, f64, f64, f64, f64); 4] = [
+        ("Hatchback", "Petrol car", "mpg", 52.0, 18000.0, 500.0, 550.0),
+        ("Estate", "Petrol car", "mpg", 44.0, 24000.0, 550.0, 600.0),
+        ("Electric", "Electric car", "kwh_per_mile", 0.28, 32000.0, 600.0, 250.0),
+        // A petrol car whose maker gives its cost a mile, which says so for itself and isn't worked out.
+        ("Hybrid", "Petrol car", "cost_per_mile", 0.09, 26000.0, 550.0, 650.0),
+    ];
+    for (car, kind, cell, v, price, insurance, range) in cars {
+        b.put(car, cell, json!(v)).put(car, "price", json!(price)).put(car, "insurance", json!(insurance)).put(car, "range", json!(range));
+        b.link(car, kind, IsA).link(car, "Which car?", Alternative::default());
+    }
+    // Losing 15% of its value each year it's kept, running it, and insuring it.
+    b.formula("Yearly cost", "car.price * (1 - 0.85 ^ years) / years + miles * car.cost_per_mile + car.insurance");
+    b.label("Yearly cost", "Which car?", "car").label("Yearly cost", "Years kept", "years").label("Yearly cost", "Miles a year", "miles");
     b.set("Miles to Edinburgh", ValueCell::num(400.0));
     let trip = "Gets to Edinburgh without stopping";
     b.formula(trip, "car.range >= miles").label(trip, "Which car?", "car").label(trip, "Miles to Edinburgh", "miles");

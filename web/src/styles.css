@@ -393,6 +393,10 @@ pre {
 .react-flow__handle {
   opacity: 0;
 }
+/* A link that doesn't shape the map runs across it, so it's dashed to tell it from one that does. */
+.edge.free path.react-flow__edge-path {
+  stroke-dasharray: 5 4;
+}
 .edge.rel-contradicts path.react-flow__edge-path {
   stroke: var(--danger);
 }

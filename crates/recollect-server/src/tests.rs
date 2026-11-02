@@ -664,7 +664,8 @@ async fn held_out_tiers_and_a_loan_with_a_macro() {
 }
 
 /// Choosing a car: what each costs a year with mileage you can only guess at, and which can make a trip
-/// you'd like to take without stopping.
+/// you'd like to take without stopping. What a mile costs follows from what a car runs on, so a kind says
+/// how, and each car only says its mpg.
 #[tokio::test]
 async fn held_out_choosing_a_car() {
     let c = Client::new();
@@ -672,20 +673,31 @@ async fn held_out_choosing_a_car() {
     c.post("/api/workspaces/new", json!({ "path": dir.path().join("car"), "name": "Car", "systems": ["plan"] })).await;
     let option = |id: &str, name: &str, of: &str, value: f64, weight: f64| json!({ "op": "add_node", "id": id, "name": name, "components": { "value": value }, "links": [{ "to": of, "kind": "alternative", "value": { "weight": weight } }] });
     // A car says what it is, and its kind says what follows from that.
-    let car = |id: &str, name: &str, price: f64, per_mile: f64, insurance: f64, range: f64| {
-        json!({ "op": "add_node", "id": id, "name": name, "components": { "price": price, "per_mile": per_mile, "insurance": insurance, "range": range },
-            "links": [{ "to": "new:which", "kind": "alternative", "value": {} }, { "to": "new:kind", "kind": "is_a" }] })
+    let car = |id: &str, name: &str, kind: &str, cell: &str, v: f64, price: f64, insurance: f64, range: f64| {
+        json!({ "op": "add_node", "id": id, "name": name, "components": { cell: v, "price": price, "insurance": insurance, "range": range },
+            "links": [{ "to": "new:which", "kind": "alternative", "value": {} }, { "to": kind, "kind": "is_a" }] })
     };
-    let cost = "self.price * (1 - 0.85 ^ years) / years + miles * self.per_mile + self.insurance";
+    let pick = |cell: &str| json!({ "op": "set", "id": "new:which", "component": cell, "formula": format!("pick(o in in.alternative: o.{cell})") });
+    let petrol = "fuel * 4.546 / self.mpg";
     let done = c.post("/api/ops", json!({ "ops": [
         { "op": "add_node", "id": "new:years", "name": "Years kept", "components": { "value": 5 } },
         { "op": "add_node", "id": "new:miles", "name": "Miles a year", "components": { "decision": {}, "uncertain": null }, "formula": "pick(in.alternative)" },
         option("new:light", "Light use", "new:miles", 6000.0, 1.0), option("new:typical", "Typical", "new:miles", 10000.0, 2.0), option("new:heavy", "Heavy", "new:miles", 16000.0, 1.0),
-        { "op": "add_node", "id": "new:kind", "name": "Car", "components": { "value": 1, "task": {} }, "links": [{ "to": "new:years", "kind": "label", "value": "years" }, { "to": "new:miles", "kind": "label", "value": "miles" }] },
-        { "op": "set", "id": "new:kind", "component": "yearly", "formula": cost },
-        { "op": "add_node", "id": "new:which", "name": "Which car?", "components": { "decision": {} }, "formula": "pick(o in in.alternative: o.yearly)" },
-        { "op": "set", "id": "new:which", "component": "range", "formula": "pick(o in in.alternative: o.range)" },
-        car("new:hatch", "Hatchback", 18000.0, 0.12, 500.0, 450.0), car("new:estate", "Estate", 24000.0, 0.13, 550.0, 500.0), car("new:ev", "Electric", 32000.0, 0.05, 600.0, 250.0),
+        { "op": "add_node", "id": "new:fuel", "name": "Fuel price", "components": { "value": 1.45 } },
+        { "op": "add_node", "id": "new:power", "name": "Electricity price", "components": { "value": 0.28 } },
+        { "op": "add_node", "id": "new:petrol", "name": "Petrol car", "components": { "value": 1, "task": {} }, "links": [{ "to": "new:fuel", "kind": "label", "value": "fuel" }] },
+        { "op": "set", "id": "new:petrol", "component": "cost_per_mile", "formula": petrol },
+        { "op": "add_node", "id": "new:electric", "name": "Electric car", "links": [{ "to": "new:power", "kind": "label", "value": "power" }] },
+        { "op": "set", "id": "new:electric", "component": "cost_per_mile", "formula": "power * self.kwh_per_mile" },
+        { "op": "add_node", "id": "new:which", "name": "Which car?", "components": { "decision": {} } },
+        pick("price"), pick("cost_per_mile"), pick("insurance"), pick("range"),
+        car("new:hatch", "Hatchback", "new:petrol", "mpg", 52.0, 18000.0, 500.0, 550.0),
+        car("new:estate", "Estate", "new:petrol", "mpg", 44.0, 24000.0, 550.0, 600.0),
+        car("new:ev", "Electric", "new:electric", "kwh_per_mile", 0.28, 32000.0, 600.0, 250.0),
+        // Its maker gives its cost a mile, so it says that for itself rather than an mpg.
+        car("new:hybrid", "Hybrid", "new:petrol", "cost_per_mile", 0.09, 26000.0, 550.0, 650.0),
+        { "op": "add_node", "id": "new:cost", "name": "Yearly cost", "formula": "car.price * (1 - 0.85 ^ years) / years + miles * car.cost_per_mile + car.insurance",
+            "labels": { "car": "new:which", "years": "new:years", "miles": "new:miles" } },
         { "op": "add_node", "id": "new:trip", "name": "To Edinburgh", "components": { "value": 400 } },
         { "op": "add_node", "id": "new:reaches", "name": "Gets to Edinburgh without stopping", "formula": "car.range >= trip", "labels": { "car": "new:which", "trip": "new:trip" } },
     ] })).await;
@@ -697,63 +709,69 @@ async fn held_out_choosing_a_car() {
         }
     }
 
-    // What each car costs a year, over the mileage you might do. It doesn't depend on which car is chosen,
-    // so the expected value is that car's alone.
-    let expected = |v: &Value, name: &str| -> f64 {
-        let cases = cell(v, name, "yearly")["shown"]["cases"].as_array().unwrap_or_else(|| panic!("{name}: {}", cell(v, name, "yearly"))).clone();
-        cases.iter().map(|c| c["value"].as_f64().unwrap() * c["when"]["prob"].as_f64().unwrap()).sum()
-    };
-    // Mileage is 10,500 on average: 6,000, 10,000 twice as likely, and 16,000.
-    let by_hand = |price: f64, per_mile: f64, insurance: f64| price * (1.0 - 0.85f64.powf(5.0)) / 5.0 + 10_500.0 * per_mile + insurance;
-    for (name, want) in [("Hatchback", by_hand(18000.0, 0.12, 500.0)), ("Estate", by_hand(24000.0, 0.13, 550.0)), ("Electric", by_hand(32000.0, 0.05, 600.0))] {
-        assert!((expected(&v, name) - want).abs() < 1e-6, "{name}: {} and {want}", expected(&v, name));
-    }
-    let hatch = cell(&v, "Hatchback", "yearly");
-    assert_eq!((&hatch["own"], &hatch["kind"], &hatch["formula"]), (&json!(false), &json!(ids("new:kind")), &json!(cost)), "it's the kind's, and says so: {hatch}");
+    // Each car's cost a mile is its kind's, worked out from its own mpg, unless it says otherwise.
+    let per_mile = |v: &Value, name: &str| cell(v, name, "cost_per_mile")["value"].as_f64().unwrap_or_else(|| panic!("{name}: {}", cell(v, name, "cost_per_mile")));
+    let by_mpg = |fuel: f64, mpg: f64| fuel * 4.546 / mpg;
+    assert!((per_mile(&v, "Hatchback") - by_mpg(1.45, 52.0)).abs() < 1e-9 && (per_mile(&v, "Estate") - by_mpg(1.45, 44.0)).abs() < 1e-9);
+    assert!((per_mile(&v, "Electric") - 0.28 * 0.28).abs() < 1e-9 && per_mile(&v, "Hybrid") == 0.09);
+    let hatch = cell(&v, "Hatchback", "cost_per_mile");
+    assert_eq!((&hatch["own"], &hatch["kind"], &hatch["formula"]), (&json!(false), &json!(ids("new:petrol")), &json!(petrol)), "it's the kind's, and says so: {hatch}");
+    assert_eq!((&cell(&v, "Hybrid", "cost_per_mile")["own"], &cell(&v, "Hybrid", "cost_per_mile")["kind"]), (&json!(true), &json!(ids("new:petrol"))), "and one of its own says which kind it'd go back to");
     let cells = node(&v, "Hatchback")["cells"].as_object().unwrap();
     assert!(!cells.contains_key("value") && !cells.contains_key("task"), "and what a system says is the system's, not the kind's: {cells:?}");
 
+    // What each car would cost a year, over the mileage you might do.
+    let which = ids("new:which");
+    let expected = |v: &Value| -> f64 {
+        let cases = cell(v, "Yearly cost", "value")["shown"]["cases"].as_array().unwrap_or_else(|| panic!("{}", cell(v, "Yearly cost", "value"))).clone();
+        cases.iter().map(|c| c["value"].as_f64().unwrap() * c["when"]["prob"].as_f64().unwrap()).sum()
+    };
+    // Mileage is 10,500 on average: 6,000, 10,000 twice as likely, and 16,000.
+    let by_hand = |price: f64, per_mile: f64, insurance: f64, miles: f64| price * (1.0 - 0.85f64.powf(5.0)) / 5.0 + miles * per_mile + insurance;
+    let cars = [("new:hatch", by_hand(18000.0, by_mpg(1.45, 52.0), 500.0, 10_500.0)), ("new:estate", by_hand(24000.0, by_mpg(1.45, 44.0), 550.0, 10_500.0)), ("new:ev", by_hand(32000.0, 0.28 * 0.28, 600.0, 10_500.0)), ("new:hybrid", by_hand(26000.0, 0.09, 550.0, 10_500.0))];
+    for (car, want) in cars {
+        let got = expected(&c.view(json!({ &which: ids(car) })).await);
+        assert!((got - want).abs() < 1e-6, "{car}: {got} and {want}");
+    }
+
     // The decision's range is whichever car it lands on, so anything can read it.
-    assert_eq!(when(&v, "Gets to Edinburgh without stopping", "value"), "Which car?∈{Hatchback,Estate}");
+    assert_eq!(when(&v, "Gets to Edinburgh without stopping", "value"), "Which car?∈{Hatchback,Estate,Hybrid}");
 
     // How far you drive isn't yours to choose, and which car is. A view says which each cell differs
     // over, so what's expected can average over one and never the other.
     let mut uncertain: Vec<(String, bool)> = v["worlds"]["vars"].as_array().unwrap().iter().map(|x| (x["name"].as_str().unwrap().to_string(), x["uncertain"].as_bool().unwrap())).collect();
     uncertain.sort();
     assert_eq!(uncertain, vec![("Miles a year".to_string(), true), ("Which car?".to_string(), false)]);
-    assert_eq!(cell(&v, "Hatchback", "yearly")["vars"], json!([ids("new:miles")]), "a car's own cost differs only with the mileage");
-    let mut both = vec![ids("new:miles"), ids("new:which")];
+    assert_eq!(cell(&v, "Hatchback", "cost_per_mile")["vars"], Value::Null, "a car's own cost a mile differs over nothing");
+    let mut both = vec![ids("new:miles"), which.clone()];
     both.sort();
-    assert_eq!(cell(&v, "Which car?", "value")["vars"], json!(both), "the chosen car's differs with both");
-    assert!(cell(&c.view(json!({ ids("new:which"): ids("new:hatch") })).await, "Which car?", "value")["vars"] == json!([ids("new:miles")]), "until the car is pinned");
+    assert_eq!(cell(&v, "Yearly cost", "value")["vars"], json!(both), "the chosen car's cost a year differs with both");
+    assert_eq!(cell(&c.view(json!({ &which: ids("new:hatch") })).await, "Yearly cost", "value")["vars"], json!([ids("new:miles")]), "until the car is pinned");
 
-    // What each car costs as the mileage goes from a little to a lot, which is the same as typing each in,
-    // with nothing changed.
-    let read = |name: &str| json!({ "node": ids(name), "component": "yearly" });
-    let swept = c.post("/api/sweep", json!({ "set": { "node": ids("new:miles"), "component": "value" }, "values": [8000, 20000], "read": [read("new:hatch"), read("new:ev")] })).await;
+    // What the hatchback and the electric car cost as fuel gets dearer, which is the same as typing each
+    // price in, with nothing changed. Every petrol car reads the one price through its kind.
+    let read = json!([{ "node": ids("new:hatch"), "component": "cost_per_mile" }, { "node": ids("new:ev"), "component": "cost_per_mile" }]);
+    let swept = c.post("/api/sweep", json!({ "set": { "node": ids("new:fuel"), "component": "value" }, "values": [1.45, 3.0], "read": read })).await;
     let at = |i: usize, j: usize| swept[i]["cells"][j]["value"].as_f64().unwrap_or_else(|| panic!("{swept}"));
-    let by_miles = |price: f64, per_mile: f64, insurance: f64, miles: f64| price * (1.0 - 0.85f64.powf(5.0)) / 5.0 + miles * per_mile + insurance;
-    for (i, miles) in [8000.0, 20000.0].into_iter().enumerate() {
-        assert!((at(i, 0) - by_miles(18000.0, 0.12, 500.0, miles)).abs() < 1e-6 && (at(i, 1) - by_miles(32000.0, 0.05, 600.0, miles)).abs() < 1e-6, "{swept}");
-        assert_eq!(swept[i]["cells"][0]["vars"], Value::Null, "with the mileage typed in, nothing's left to differ over");
+    for (i, fuel) in [1.45, 3.0].into_iter().enumerate() {
+        assert!((at(i, 0) - by_mpg(fuel, 52.0)).abs() < 1e-9 && (at(i, 1) - 0.28 * 0.28).abs() < 1e-9, "{swept}");
     }
-    assert_eq!(cell(&c.view(json!({})).await, "Hatchback", "yearly")["vars"], json!([ids("new:miles")]), "and nothing was changed");
+    let pinned = c.post("/api/sweep", json!({ "set": { "node": ids("new:miles"), "component": "value" }, "values": [20000], "read": [{ "node": ids("new:cost"), "component": "value" }], "world": { &which: ids("new:ev") } })).await;
+    assert!((pinned[0]["cells"][0]["value"].as_f64().unwrap() - by_hand(32000.0, 0.28 * 0.28, 600.0, 20_000.0)).abs() < 1e-6, "{pinned}");
+    assert!((per_mile(&c.view(json!({})).await, "Hatchback") - by_mpg(1.45, 52.0)).abs() < 1e-9, "and nothing was changed");
 
-    // A car can say otherwise for itself, such as needing a charger at home, and goes back to its kind's
-    // when that's taken away.
-    let ev = ids("new:ev");
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": ev, "component": "yearly", "formula": format!("{cost} + 200"), "labels": { "years": ids("new:years"), "miles": ids("new:miles") } }] })).await;
-    let v = c.view(json!({})).await;
-    assert!((expected(&v, "Electric") - by_hand(32000.0, 0.05, 600.0) - 200.0).abs() < 1e-6);
-    assert_eq!((&cell(&v, "Electric", "yearly")["own"], &cell(&v, "Electric", "yearly")["kind"]), (&json!(true), &json!(ids("new:kind"))), "and still says which kind it'd go back to");
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": ev, "component": "yearly", "labels": {} }] })).await;
-    let v = c.view(json!({})).await;
-    assert!((expected(&v, "Electric") - by_hand(32000.0, 0.05, 600.0)).abs() < 1e-6);
+    // A car can say otherwise for itself, and goes back to its kind's when that's taken away.
+    let hatch = ids("new:hatch");
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": hatch, "component": "cost_per_mile", "value": 0.2 }] })).await;
+    assert_eq!(per_mile(&c.view(json!({})).await, "Hatchback"), 0.2);
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": hatch, "component": "cost_per_mile", "labels": {} }] })).await;
+    assert!((per_mile(&c.view(json!({})).await, "Hatchback") - by_mpg(1.45, 52.0)).abs() < 1e-9);
 
-    // And the kind changes every car at once.
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": ids("new:kind"), "component": "yearly", "formula": format!("{cost} + 100") }] })).await;
+    // And the kind changes every car of that kind at once, but not one that says its own.
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": ids("new:petrol"), "component": "cost_per_mile", "formula": "fuel * 4.5 / self.mpg" }] })).await;
     let v = c.view(json!({})).await;
-    assert!((expected(&v, "Hatchback") - by_hand(18000.0, 0.12, 500.0) - 100.0).abs() < 1e-6);
+    assert!((per_mile(&v, "Hatchback") - 1.45 * 4.5 / 52.0).abs() < 1e-9 && (per_mile(&v, "Estate") - 1.45 * 4.5 / 44.0).abs() < 1e-9);
+    assert_eq!(per_mile(&v, "Hybrid"), 0.09);
 }
 
 #[tokio::test]

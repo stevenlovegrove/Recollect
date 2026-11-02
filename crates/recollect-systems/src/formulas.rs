@@ -1171,8 +1171,8 @@ pub fn describe(c: &mut Catalog) {
     c.internal::<TryExpansion>();
     let label = c.arranging::<Label>("The name a formula on this node uses for that one.", json!(""));
     label.reversed = true;
-    // A kind is something its instances read from, so like what a formula reads, it goes beneath them.
-    let kind = c.arranging::<IsA>("What kind of thing this is: it takes any cell of its own it doesn't say from there.", Value::Null);
-    kind.reversed = true;
+    // A kind is where a formula is written, not a step its numbers go through, so it doesn't shape a map.
+    // What its formulas read goes beneath the nodes they run for instead.
+    c.link::<IsA>("What kind of thing this is: it takes any cell of its own it doesn't say from there.", Value::Null);
     c.constraint_on(requirement);
 }

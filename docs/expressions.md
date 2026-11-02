@@ -386,19 +386,22 @@ A workspace's own cells, like a car's `price` or `range`, are any components no 
 When several nodes are the same kind of thing, a node for the kind says what they have in common. Each links to it by `is_a`, and takes any of those cells it doesn't say for itself from it:
 
 ```
-Car:        yearly = self.price * (1 - 0.85 ^ years) / years + miles * self.per_mile + self.insurance
-Hatchback:  is_a Car, price 18000, per_mile 0.12, insurance 500
+Petrol car:  cost_per_mile = fuel * 4.546 / self.mpg      (fuel labels Fuel price)
+Hatchback:   is_a Petrol car, mpg 52, price 18000
+Hybrid:      is_a Petrol car, cost_per_mile 0.09, price 26000
 ```
 
-- **A value is taken as it is, and a formula runs for each node of that kind.** `self` is the hatchback, so it's the hatchback's price.
-- **Names are labelled once, on the kind.** A formula taken from a kind may follow links from where it's written as well as from the node it runs for, so `miles` doesn't need a link from every car.
-- **A node's own word wins,** and taking it away brings the kind's back, as for a default. An electric car can add a charger to its own `yearly`.
+- **A value is taken as it is, and a formula runs for each node of that kind.** `self` is the hatchback, so it's the hatchback's mpg.
+- **Names are labelled once, on the kind.** A formula taken from a kind may follow links from where it's written as well as from the node it runs for, so `fuel` doesn't need a link from every car.
+- **A node's own word wins,** and taking it away brings the kind's back, as for a default. The hybrid's maker gives its cost a mile, so it says that for itself.
 - **A kind can have a kind.** The nearest that says something is the one used: a node's kinds in the order they were made, then theirs. A loop of kinds goes round once and stops.
 - **What a system owns stays the system's.** A kind can't give its instances a name, make them done or make them tasks.
 
 It's in the engine, rather than written as a default rule, because which cells a node has depends on its kind, and memos have to follow changes to the kind. Changing a kind's cell reaches everything that takes it, however far down, and linking or unlinking a kind reaches every cell the node could take from it. `tests/kinds.rs` checks this against a newly built graph through random edits.
 
-A decision can give any cell of whichever option it lands on: `range` on "Which car?" is `pick(o in in.alternative: o.range)`, and a constraint reads `car.range >= trip`.
+On a map, `is_a` is dashed and doesn't decide what goes above what. A kind is where a formula is written, not a step its numbers go through, so what the kind's formulas read goes beneath each node they run for: Fuel price sits under the petrol cars.
+
+A decision can give any cell of whichever option it lands on: `range` on "Which car?" is `pick(o in in.alternative: o.range)`, and a constraint reads `car.range >= trip`. That's how a car's figures reach what's worked out from the one chosen: "Yearly cost" reads `car.price`, `car.cost_per_mile` and `car.insurance` the same way.
 
 ## Comparing options
 

@@ -679,13 +679,19 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
     const seen = new Set<string>();
     // A link's other kinds decide for it, so a label on a `part_of` doesn't pull it the other way.
     const others = new Set(g.links.filter((e) => e.kind !== "label" && shapes(relOf(e))).map((e) => `${e.from}|${e.to}`));
-    return g.links.filter((e) => {
+    // A formula taken from a kind reads what the kind labels, so that goes beneath the node it runs for too.
+    const taken = g.nodes.flatMap((n) =>
+      [...new Set(Object.values(n.cells).filter((c) => !c.own && c.kind && c.formula).map((c) => c.kind!))].flatMap((k) =>
+        g.links.filter((l) => l.from === k && l.kind === "label").map((l) => ({ ...l, from: n.id })),
+      ),
+    );
+    return [...g.links, ...taken].filter((e) => {
       const key = `${e.from}|${e.to}`;
       if (!shapes(relOf(e)) || !visible.has(e.from) || !visible.has(e.to) || seen.has(key) || (e.kind === "label" && others.has(key))) return false;
       seen.add(key);
       return true;
     });
-  }, [g.links, shapes, visible]);
+  }, [g.nodes, g.links, shapes, visible]);
   const layoutLinks = layoutEdges;
   const structureKey = useMemo(
     () =>

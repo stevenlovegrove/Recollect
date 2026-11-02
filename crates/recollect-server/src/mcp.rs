@@ -29,8 +29,9 @@ removing what was typed brings back what it's worked out to.\n\
 A workspace can have cells of its own, such as `price` or `range`, which hold a value or a formula like any other. When several nodes \
 are the same kind of thing, make a node for the kind and link each to it by `is_a`: they take whatever of those cells they don't say \
 for themselves from it, and a formula on the kind runs for each of them, with `self` meaning that node and its other names labelled \
-once on the kind. A car's price goes on the car, and how a price becomes a cost a year goes on Car. A decision can give any cell of \
-whichever option it lands on, as `range` = `pick(o in in.alternative: o.range)`. Mark a decision `uncertain` when it isn't anyone's \
+once on the kind. A car's mpg goes on the car, and how mpg and the fuel price make a cost a mile goes on Petrol car. A decision can \
+give any cell of whichever option it lands on, as `range` = `pick(o in in.alternative: o.range)`, so what's worked out from the \
+chosen option reads it there, as `car.range >= trip`. Mark a decision `uncertain` when it isn't anyone's \
 to choose, such as how far someone will drive: its weights then say how likely each option is, and what's expected averages over it.\n\
 \n\
 Values that depend on open decisions are exact: each is the set of worlds where it holds, shown as a formula such as `calib∈{cad,free}`. \

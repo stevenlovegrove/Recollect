@@ -1,9 +1,9 @@
-id: 01a19b54-6dc9-763e-89f5-157cb93416f9
+id: 01a19e82-1d0b-7382-afe4-f71cf8dbc13e
 components:
   name: Light use
   value: 6000.0
 links:
-- to: 01a19b54-6dc9-763e-89f5-157b50f6a17f
+- to: 01a19e82-1d0b-7382-afe4-f71b2ce35029
   components:
     alternative:
       weight: 1.0
