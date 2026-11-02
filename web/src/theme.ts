@@ -45,6 +45,9 @@ export function factsOf(n: GraphNode): string[] {
     .map(([c]) => c);
 }
 
+/** Says nothing but words: no facts, and no cells of the workspace's own, like a car's price or a kind's formula. */
+export const isNote = (n: GraphNode) => !factsOf(n).length && !Object.values(n.cells).some((c) => c.workspace && c.own);
+
 const ORDER = ["goal", "decision", "risk", "question", "unknown", "requires", "domain", "task", "macro", "value"];
 
 /** The component that best characterises a node, for colouring. */

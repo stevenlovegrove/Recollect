@@ -18,7 +18,7 @@ import {
 import ELK from "elkjs/lib/elk.bundled.js";
 import type { GraphNode } from "../api";
 import type { Workspace } from "../workspace";
-import { GLYPH, compColor, dominant, factsOf, isDropped, label as labelOf, nodeColor } from "../theme";
+import { GLYPH, compColor, dominant, factsOf, isDropped, isNote, label as labelOf, nodeColor } from "../theme";
 import { Brackets, CompBadges, casesOf, cellText, edgeKey, parseEdgeKey, reading, truthWords } from "../bits";
 import { DdItem, Dropdown } from "../Dropdown";
 import { Key, isTyping } from "../Shortcuts";
@@ -61,7 +61,6 @@ type CardData = {
 
 function Card({ data }: NodeProps<RFNode<CardData>>) {
   const { node, direction, selected, recent, dim, entering, leaving, linking, out, lines, kinds } = data;
-  const facts = factsOf(node);
   return (
     <div
       className={["card", isDropped(node) && "dead", out && "out", selected && "selected", recent && "recent", dim && "dim", entering && "entering", leaving && "leaving", linking && "linking"].filter(Boolean).join(" ")}
@@ -76,7 +75,7 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
             {k}
           </span>
         ))}
-        {!facts.length && !kinds.length && <span className="muted small">note</span>}
+        {isNote(node) && !kinds.length && <span className="muted small">note</span>}
       </div>
       <div className="card-title">{node.name}</div>
       {lines.map((l) => (
@@ -591,7 +590,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
 
   const factsFor = (n: GraphNode): Filter[] => {
     const f = factsOf(n);
-    return f.length ? f : ["none"];
+    return f.length ? f : isNote(n) ? ["none"] : ["own"];
   };
   const present = useMemo(() => {
     const p = new Map<Filter, number>();
@@ -957,7 +956,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
           </div>
           {present.map(([f, n]) => (
             <DdItem key={f} checked={!hiddenFacts.has(f)} onChange={() => setHiddenFacts(toggle(hiddenFacts, f))} color={compColor(f)}>
-              <span className="dd-label">{f === "none" ? "· notes" : `${GLYPH[f] ?? ""} ${labelOf(f)}`}</span>
+              <span className="dd-label">{f === "none" ? "· notes" : f === "own" ? "· only their own cells" : `${GLYPH[f] ?? ""} ${labelOf(f)}`}</span>
               <span className="muted">{n}</span>
             </DdItem>
           ))}

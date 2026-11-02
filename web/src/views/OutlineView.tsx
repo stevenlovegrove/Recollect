@@ -4,7 +4,7 @@ import type { CtxTarget } from "../ContextMenu";
 import type { GraphNode } from "../api";
 import type { ViewProps } from "./MapView";
 import { CompBadges, Truth, cellText, reading } from "../bits";
-import { factsOf, isDropped, label, nodeColor } from "../theme";
+import { isDropped, isNote, label, nodeColor } from "../theme";
 
 /**
  * Coarse to fine: the links that give the graph its shape, with whatever they point at on top. A
@@ -176,7 +176,7 @@ export function OutlineView({ ws, selected, onSelect, onShowDecisions, onContext
                   {n.name}
                 </button>
                 <CompBadges n={n} />
-                {!factsOf(n).length && <span className="muted small">note</span>}
+                {isNote(n) && <span className="muted small">note</span>}
                 {(notes.get(n.id) ?? []).map((a) => (
                   <button key={a.kind + a.id} className="annotation" onClick={() => onSelect(a.id)}>
                     {label(a.kind)} {ws.byId.get(a.id)?.name.slice(0, 28)}

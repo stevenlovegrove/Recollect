@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, type Cell, type ComponentInfo, type EventView, type GraphNode, type Labels, type Link, type Op } from "./api";
 import { linksOf, type Workspace } from "./workspace";
-import { GLYPH, compColor, factsOf, isDropped, label, nodeColor } from "./theme";
+import { GLYPH, compColor, factsOf, isDropped, isNote, label, nodeColor } from "./theme";
 import { DdItemButton, Dropdown } from "./Dropdown";
 import { Brackets, CellValue, CompBadge, NodeChip, Resolved, TickBox, casesOf, shownText } from "./bits";
 import { entryText, parseEntry } from "./cellEntry";
@@ -207,7 +207,7 @@ export function Inspector({
           {kinds.map((k) => (
             <NodeChip key={k} ws={ws} id={k} onSelect={onSelect} />
           ))}
-          {!facts.length && !kinds.length && <span className="muted">note</span>}
+          {isNote(node) && !kinds.length && <span className="muted">note</span>}
         </div>
         <button className="icon" onClick={onClose} title="Close (esc)">
           ×
