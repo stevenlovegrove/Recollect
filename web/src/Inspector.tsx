@@ -3,7 +3,7 @@ import { api, type Cell, type ComponentInfo, type EventView, type GraphNode, typ
 import { linksOf, type Workspace } from "./workspace";
 import { GLYPH, compColor, factsOf, isDropped, label, nodeColor } from "./theme";
 import { DdItemButton, Dropdown } from "./Dropdown";
-import { Brackets, CellValue, CompBadge, NodeChip, Resolved, TickBox, shownText } from "./bits";
+import { Brackets, CellValue, CompBadge, NodeChip, Resolved, TickBox, casesOf, shownText } from "./bits";
 import { entryText, parseEntry } from "./cellEntry";
 import { Key } from "./Shortcuts";
 import { OpLine } from "./views/HistoryView";
@@ -188,15 +188,27 @@ export function Inspector({
   const typedOver = (c: string) => !!ws.info(c)?.derived && holdsFormula(ws, c);
   const shows = (c: string, cell: Cell) => cell.own || !ws.info(c)?.quiet;
   const stored = view.components.filter((c) => c.on === "node" && !["name", "body"].includes(c.name) && node.cells[c.name]?.source === "stored" && !typedOver(c.name));
-  const ticks = Object.entries(node.cells).filter(([c, cell]) => typedOver(c) && ws.info(c)?.truth && shows(c, cell));
-  const computedHere = Object.entries(node.cells).filter(([c, cell]) => (cell.source === "rule" || typedOver(c)) && shows(c, cell) && !ticks.some(([t]) => t === c));
+  // A tick with nothing to say, such as done on something with nothing to finish, isn't worth showing.
+  const ticks = Object.entries(node.cells).filter(([c, cell]) => typedOver(c) && ws.info(c)?.truth && shows(c, cell) && (cell.own || casesOf(cell).some((v) => v !== null)));
+  const kinds = view.links.filter((l) => l.from === id && l.kind === "is_a").map((l) => l.to);
+  // The workspace's own cells, which no system says anything about: typed in here, or taken from its kind.
+  const ownCells = Object.entries(node.cells).filter(([, cell]) => cell.workspace);
+  const computedHere = Object.entries(node.cells).filter(([c, cell]) => !cell.workspace && (cell.source === "rule" || typedOver(c)) && shows(c, cell) && !(typedOver(c) && ws.info(c)?.truth));
   const missing = view.components.filter((c) => c.on === "node" && !c.derived && !node.cells[c.name]);
-  const others = Object.entries(node.cells).filter(([c, cell]) => cell.source === "stored" && !view.components.some((x) => x.name === c) && c !== "name" && c !== "body");
+  const [naming, setNaming] = useState(false);
 
   return (
     <aside className="inspector">
       <div className="insp-head" style={{ borderColor: nodeColor(node) }}>
-        <div className="insp-kind">{facts.length ? facts.map((c) => <CompBadge key={c} c={c} />) : <span className="muted">note</span>}</div>
+        <div className="insp-kind">
+          {facts.map((c) => (
+            <CompBadge key={c} c={c} />
+          ))}
+          {kinds.map((k) => (
+            <NodeChip key={k} ws={ws} id={k} onSelect={onSelect} />
+          ))}
+          {!facts.length && !kinds.length && <span className="muted">note</span>}
+        </div>
         <button className="icon" onClick={onClose} title="Close (esc)">
           ×
         </button>
@@ -215,43 +227,39 @@ export function Inspector({
 
       <section>
         <h4>What it is</h4>
-        {stored.length === 0 && others.length === 0 && ticks.length === 0 && !computedHere.some(([, cell]) => cell.own) && <p className="muted small">A plain note. Add something to give it behaviour, or leave it as a note.</p>}
+        {stored.length === 0 && ownCells.length === 0 && ticks.length === 0 && !computedHere.some(([, cell]) => cell.own) && <p className="muted small">A plain note. Add something to give it behaviour, or leave it as a note.</p>}
         {ticks.map(([c, cell]) => (
           <TickRow key={c} ws={ws} id={id} c={c} cell={cell} info={ws.info(c)} onSelect={onSelect} />
         ))}
         {stored.map((c) => (
           <FactEditor key={c.name} node={node} info={c} ws={ws} run={run} onSelect={onSelect} onShowDecisions={onShowDecisions} />
         ))}
-        {others.map(([c, cell]) => (
-          <div key={c} className="comp">
-            <div className="comp-head">
-              <span className="comp-name" title="No active system says what this means. It's kept as it is.">
-                {c}
-              </span>
-              {(
-                <button className="icon small" title={`Remove ${c}`} onClick={() => run([{ op: "set", id, component: c }])}>
-                  ×
-                </button>
-              )}
-            </div>
-            <div className="comp-body">
-              <CellValue ws={ws} cell={cell} onSelect={onSelect} />
-            </div>
-          </div>
-        ))}
-        {missing.length > 0  && (
-          <Dropdown label={<>＋ Add</>}>
-            {missing.map((c) => (
-              <DdItemButton key={c.name} color={compColor(c.name)} onClick={() => run([{ op: "set", id, component: c.name, value: c.initial ?? null }])}>
-                <span className="dd-glyph">{GLYPH[c.name] ?? "·"}</span>
-                <span>
-                  <b>{label(c.name)}</b>
-                  <span className="dd-desc">{c.about}</span>
-                </span>
-              </DdItemButton>
+        {ownCells.length > 0 && (
+          <div className="own-cells">
+            {ownCells.map(([c, cell]) => (
+              <OwnCell key={c} ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} />
             ))}
-          </Dropdown>
+          </div>
         )}
+        {naming && <NewCell ws={ws} taken={Object.keys(node.cells)} onName={(c) => run([{ op: "set", id, component: c, value: null }]).then(() => setNaming(false))} onCancel={() => setNaming(false)} />}
+        <Dropdown label={<>＋ Add</>}>
+          {missing.map((c) => (
+            <DdItemButton key={c.name} color={compColor(c.name)} onClick={() => run([{ op: "set", id, component: c.name, value: c.initial ?? null }])}>
+              <span className="dd-glyph">{GLYPH[c.name] ?? "·"}</span>
+              <span>
+                <b>{label(c.name)}</b>
+                <span className="dd-desc">{c.about}</span>
+              </span>
+            </DdItemButton>
+          ))}
+          <DdItemButton color="var(--c-none)" onClick={() => setNaming(true)}>
+            <span className="dd-glyph">＋</span>
+            <span>
+              <b>A cell of its own…</b>
+              <span className="dd-desc">Such as a price or a range: a value, or a formula. Give a kind one, and everything of that kind has it.</span>
+            </span>
+          </DdItemButton>
+        </Dropdown>
       </section>
 
       {computedHere.length > 0 && (
@@ -434,9 +442,79 @@ function ValueEditor({ value, onCommit }: { value: unknown; onCommit: (v: unknow
   );
 }
 
-/** Whether a formula can go in this component at all. */
+/** Whether a formula can go in this component at all. A workspace's own cells can always hold one. */
 export function holdsFormula(ws: Workspace, c: string): boolean {
-  return ws.view!.rules.some((r) => r.key.startsWith("expr@") && (r.output === c || r.also?.includes(c)));
+  return !ws.info(c) || ws.view!.rules.some((r) => r.key.startsWith("expr@") && (r.output === c || r.also?.includes(c)));
+}
+
+/** One of the workspace's own cells: typed in here, or taken from its kind until this node says otherwise. */
+function OwnCell({ ws, id, c, cell, onSelect }: { ws: Workspace; id: string; c: string; cell: Cell; onSelect: (id: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const ownFormula = cell.formula !== undefined && cell.own;
+  const kindName = cell.kind ? (ws.byId.get(cell.kind)?.name ?? "its kind") : null;
+  return (
+    <div className="derived">
+      <code className="derived-k own-cell-k" title="What a formula calls it">
+        {c}
+      </code>
+      <span className="derived-v">
+        {ownFormula ? (
+          <CellEditor key={cell.formula} ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} />
+        ) : editing ? (
+          <CellEditor ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} opening onClosed={() => setEditing(false)} />
+        ) : (
+          <span className="cell-line">
+            <CellValue ws={ws} cell={cell} onSelect={onSelect} component={c} />
+            {cell.kind && !cell.own && (
+              <span className="muted small">
+                {" "}
+                from <NodeChip ws={ws} id={cell.kind} onSelect={onSelect} />
+              </span>
+            )}
+            <button className="link small" title={cell.formula ? `=${cell.formula}` : undefined} onClick={() => setEditing(true)}>
+              edit
+            </button>
+          </span>
+        )}
+      </span>
+      {cell.own && (
+        <button className="icon small" title={kindName ? `Go back to ${kindName}’s` : `Remove ${c}`} onClick={() => ws.apply([entryOp(id, c, parseEntry(""), undefined, ownFormula)]).catch((e) => alert(String(e)))}>
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Naming a new cell of the node's own. It has to read as a name, since that's what formulas call it. */
+function NewCell({ ws, taken, onName, onCancel }: { ws: Workspace; taken: string[]; onName: (c: string) => void; onCancel: () => void }) {
+  const [name, setName] = useState("");
+  const c = name.trim();
+  const problem = !c ? null : !/^[\p{L}_][\p{L}\p{N}_]*$/u.test(c) ? "A name is letters, digits and _, and starts with a letter" : ws.info(c) ? `${c} is a system's, not the workspace's` : taken.includes(c) ? "It already has that" : NOT_NAMES.has(c) ? `${c} means something in a formula already` : null;
+  return (
+    <div className="new-cell">
+      <input
+        autoFocus
+        placeholder="What it's called, such as price"
+        aria-label="New cell's name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            onCancel();
+          } else if (e.key === "Enter" && c && !problem) onName(c);
+        }}
+      />
+      {problem && <div className="muted small">{problem}</div>}
+      <div className="row end">
+        <button onClick={onCancel}>Cancel</button>
+        <button className="primary" disabled={!c || !!problem} onClick={() => onName(c)}>
+          Add
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /** The change an entry makes. A formula's labels go with it, so a formula replaced by a value takes them along. */
@@ -462,8 +540,10 @@ function namesIn(formula: string): string[] {
  */
 function CellEditor({ ws, id, c, cell, onSelect, opening, onClosed }: { ws: Workspace; id: string; c: string; cell: Cell; onSelect: (id: string) => void; opening?: boolean; onClosed?: () => void }) {
   const formula = cell.formula;
+  // A formula taken from a kind has its names labelled there, and typing over it starts from those.
+  const labelledOn = !cell.own && cell.kind ? cell.kind : id;
   const existing: Labels = {};
-  for (const l of ws.view!.links) if (l.from === id && l.kind === "label") (existing[String(l.value)] ??= []).push(l.to);
+  for (const l of ws.view!.links) if (l.from === labelledOn && l.kind === "label") (existing[String(l.value)] ??= []).push(l.to);
   const [draft, setOpenDraft] = useState<{ text: string; labels: Labels } | null>(opening ? { text: entryText(cell), labels: existing } : null);
   const setDraft = (d: { text: string; labels: Labels } | null) => {
     setOpenDraft(d);

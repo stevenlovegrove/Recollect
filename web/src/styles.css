@@ -2164,6 +2164,17 @@ input.sheet-input {
 .tick-row {
   padding: 4px 0 8px;
 }
+.own-cells {
+  margin: 4px 0 10px;
+}
+.own-cell-k {
+  color: var(--text);
+}
+.new-cell {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
 .tick-line {
   display: flex;
   flex-wrap: wrap;

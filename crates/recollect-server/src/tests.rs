@@ -722,7 +722,7 @@ async fn held_out_choosing_a_car() {
     c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": ev, "component": "yearly", "formula": format!("{cost} + 200"), "labels": { "years": ids("new:years"), "miles": ids("new:miles") } }] })).await;
     let v = c.view(json!({})).await;
     assert!((expected(&v, "Electric") - by_hand(32000.0, 0.05, 600.0) - 200.0).abs() < 1e-6);
-    assert_eq!(cell(&v, "Electric", "yearly")["own"], true);
+    assert_eq!((&cell(&v, "Electric", "yearly")["own"], &cell(&v, "Electric", "yearly")["kind"]), (&json!(true), &json!(ids("new:kind"))), "and still says which kind it'd go back to");
     c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": ev, "component": "yearly", "labels": {} }] })).await;
     let v = c.view(json!({})).await;
     assert!((expected(&v, "Electric") - by_hand(32000.0, 0.05, 600.0)).abs() < 1e-6);

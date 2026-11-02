@@ -1,0 +1,9 @@
+id: 01a19b32-8fe4-767b-b40d-df00a19b2b33
+components:
+  decision: {}
+  name: Miles a year
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: pick(in.alternative)

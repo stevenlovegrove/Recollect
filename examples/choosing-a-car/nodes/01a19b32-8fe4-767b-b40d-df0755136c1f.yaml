@@ -1,0 +1,14 @@
+id: 01a19b32-8fe4-767b-b40d-df0755136c1f
+components:
+  insurance: 550.0
+  name: Estate
+  per_mile: 0.13
+  price: 24000.0
+  range: 500.0
+links:
+- to: 01a19b32-8fe4-767b-b40d-df046946fe9c
+  components:
+    is_a: null
+- to: 01a19b32-8fe4-767b-b40d-df05c46ca69d
+  components:
+    alternative: {}

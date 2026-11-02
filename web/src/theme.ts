@@ -36,12 +36,12 @@ const LABEL: Record<string, string> = {
 
 export const label = (c: string) => LABEL[c] ?? (c[0]?.toUpperCase() ?? "") + c.slice(1).replace(/_/g, " ");
 
-/** The stored facts that say what a node is, which is what its badges show. */
+/** The stored facts that say what a node is, which is what its badges show. A price says nothing about that. */
 const IGNORED = ["name", "body", "sources", "estimate"];
 
 export function factsOf(n: GraphNode): string[] {
   return Object.entries(n.cells)
-    .filter(([c, cell]) => !IGNORED.includes(c) && (cell.own || cell.source === "stored"))
+    .filter(([c, cell]) => !IGNORED.includes(c) && !cell.workspace && (cell.own || cell.source === "stored"))
     .map(([c]) => c);
 }
 

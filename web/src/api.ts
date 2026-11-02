@@ -18,6 +18,10 @@ export interface Cell {
   source: "stored" | "rule";
   rule?: string;
   own: boolean;
+  /** The kind that says what it is, if one does. It's taken from there unless `own`. */
+  kind?: string;
+  /** One of the workspace's own cells, such as a price, which no system says anything about. */
+  workspace?: boolean;
   /** The formula, if one backs it. */
   formula?: string;
   value?: unknown;

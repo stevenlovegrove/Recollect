@@ -773,6 +773,12 @@ impl Graph {
         self.backing_at(e, component).map(|(_, at)| at).filter(|at| *at != e)
     }
 
+    /// The kind that says what this cell is, whether or not the node says otherwise: what it would
+    /// take it from without its own.
+    pub fn kind_beneath(&self, e: Entity, component: &str) -> Option<Entity> {
+        self.from_kind(e, component).map(|(_, k)| k)
+    }
+
     /// The components a node has a cell for, whichever way each is backed.
     pub fn components_of(&self, e: Entity) -> BTreeSet<String> {
         let own = self.cells.get(&e).into_iter().flat_map(|c| c.keys());

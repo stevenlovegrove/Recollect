@@ -28,9 +28,12 @@ pub struct CellView {
     pub rule: Option<String>,
     /// Whether this node says so itself, rather than taking the default for every node.
     pub own: bool,
-    /// The kind it's taken from, if it is.
+    /// The kind that says what it is, if one does. It's taken from there unless `own`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<Entity>,
+    /// One of the workspace's own cells, such as a price, which no system says anything about.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub workspace: bool,
     /// The formula, if one backs it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub formula: Option<String>,
@@ -204,8 +207,9 @@ fn cell_view(g: &Graph, catalog: &Catalog, e: Entity, c: &str, picks: &Picks, la
     let source = if rule.is_some() { "rule" } else { "stored" };
     let own = g.has_own(e, c);
     let formula = g.saved_rule(e, c).filter(|r| r.rule == EXPR).and_then(|r| formula_text(&r.params).ok().map(String::from));
-    let kind = g.kind_of(e, c);
-    let cell = |value, shown, error| CellView { source, rule: rule.clone(), own, kind, formula: formula.clone(), value, shown, error };
+    let kind = g.kind_beneath(e, c);
+    let workspace = catalog.is_own_cell(c) && c != recollect_graph::Name::NAME;
+    let cell = |value, shown, error| CellView { source, rule: rule.clone(), own, kind, workspace, formula: formula.clone(), value, shown, error };
     if let Some(shown) = catalog.shown(g, e, c) {
         return match shown {
             Ok(None) => None,

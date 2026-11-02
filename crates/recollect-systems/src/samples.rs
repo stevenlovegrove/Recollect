@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use recollect_graph::{Component, Entity, Name, Op, Storage};
 use serde_json::{Value, json};
 
-use crate::formulas::{At, Domain, EXPR, Label, Requires, ValueCell};
+use crate::formulas::{At, Domain, EXPR, IsA, Label, Requires, ValueCell};
 use crate::notes::{Body, Drawing};
 use crate::plan::{Alternative, Decision, DependsOn, Done, Estimate, Goal, PartOf, Task, Unknown};
 
@@ -25,6 +25,7 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "critical-path", title: "Critical path", about: "A plain schedule with no decisions: dates go forward over the dependencies, and slack comes from following them backward.", group: "plan", systems: &["plan", "schedule"], build: critical_path },
     Sample { name: "invoice", title: "Invoice", about: "Two lines, a subtotal, tax and a total. Edit a number and only what it reaches reruns.", group: "sheet", systems: &[], build: invoice },
     Sample { name: "trip-budget", title: "Trip budget", about: "A budget with decisions left open: the total is exact in every world, and so is what would put it over.", group: "sheet", systems: &["plan"], build: trip_budget },
+    Sample { name: "choosing-a-car", title: "Choosing a car", about: "Three cars of one kind, what each costs a year over mileage you can only guess at, and which can get to Edinburgh without stopping.", group: "sheet", systems: &["plan"], build: choosing_a_car },
     Sample { name: "compound-interest", title: "Compound interest", about: "Ten years chained together, sharing one rate cell.", group: "sheet", systems: &[], build: compound_interest },
     Sample { name: "fibonacci", title: "Fibonacci", about: "Each cell adds the two before it. Cells that are shared run once, so 80 terms take 79 formula runs.", group: "sheet", systems: &[], build: fibonacci },
     Sample { name: "australia", title: "Colouring Australia", about: "Each region is a choice and each border a constraint. There are 18 colourings. Pin a region and see what that forces.", group: "puzzle", systems: &[], build: australia },
@@ -85,6 +86,20 @@ impl Build {
     pub fn formula(&mut self, name: &str, text: &str) -> &mut Self {
         let e = self.e(name);
         self.ops.push(Op::set_rule(e, ValueCell::NAME, EXPR, json!({ "text": text })));
+        self
+    }
+
+    /// One of the workspace's own cells, as a value.
+    pub fn put(&mut self, name: &str, component: &str, v: Value) -> &mut Self {
+        let e = self.e(name);
+        self.ops.push(Op::set_runtime(e, component, v));
+        self
+    }
+
+    /// Any cell that can hold a formula, as one.
+    pub fn formula_on(&mut self, name: &str, component: &str, text: &str) -> &mut Self {
+        let e = self.e(name);
+        self.ops.push(Op::set_rule(e, component, EXPR, json!({ "text": text })));
         self
     }
 
@@ -149,6 +164,26 @@ fn trip_budget(b: &mut Build) {
     }
     b.formula("Trip", "travel + stay").label("Trip", "Travel", "travel").label("Trip", "Stay", "stay");
     b.formula("Over £200", "trip > 200").label("Over £200", "Trip", "trip");
+}
+
+fn choosing_a_car(b: &mut Build) {
+    b.set("Years kept", ValueCell::num(5.0));
+    b.set("Miles a year", Decision::default()).formula("Miles a year", "pick(in.alternative)");
+    for (option, miles, weight) in [("Light use", 6000.0, 1.0), ("Typical", 10000.0, 2.0), ("Heavy", 16000.0, 1.0)] {
+        b.set(option, ValueCell::num(miles)).link(option, "Miles a year", Alternative { weight: Some(weight), ..Alternative::default() });
+    }
+    // What every car has in common: how its price, running cost and insurance make a cost a year.
+    b.set("Car", Body("What a car costs a year: losing 15% of its value each year it's kept, running it, and insuring it.".to_string()));
+    b.formula_on("Car", "yearly", "self.price * (1 - 0.85 ^ years) / years + miles * self.per_mile + self.insurance");
+    b.label("Car", "Years kept", "years").label("Car", "Miles a year", "miles");
+    b.set("Which car?", Decision::default()).formula("Which car?", "pick(o in in.alternative: o.yearly)");
+    b.formula_on("Which car?", "range", "pick(o in in.alternative: o.range)");
+    for (car, price, per_mile, insurance, range) in [("Hatchback", 18000.0, 0.12, 500.0, 450.0), ("Estate", 24000.0, 0.13, 550.0, 500.0), ("Electric", 32000.0, 0.05, 600.0, 250.0)] {
+        b.put(car, "price", json!(price)).put(car, "per_mile", json!(per_mile)).put(car, "insurance", json!(insurance)).put(car, "range", json!(range));
+        b.link(car, "Car", IsA).link(car, "Which car?", Alternative::default());
+    }
+    b.set("To Edinburgh", ValueCell::num(400.0));
+    b.formula("Gets to Edinburgh without stopping", "car.range >= trip").label("Gets to Edinburgh without stopping", "Which car?", "car").label("Gets to Edinburgh without stopping", "To Edinburgh", "trip");
 }
 
 fn compound_interest(b: &mut Build) {

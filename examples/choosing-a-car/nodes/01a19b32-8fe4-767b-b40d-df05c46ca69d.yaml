@@ -1,0 +1,13 @@
+id: 01a19b32-8fe4-767b-b40d-df05c46ca69d
+components:
+  decision: {}
+  name: Which car?
+rules:
+  range:
+    rule: expr@1
+    params:
+      text: 'pick(o in in.alternative: o.range)'
+  value:
+    rule: expr@1
+    params:
+      text: 'pick(o in in.alternative: o.yearly)'
