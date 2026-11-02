@@ -67,6 +67,13 @@ impl Entity {
     pub(crate) fn nil() -> Self {
         Entity(Uuid::nil())
     }
+
+    /// Where a cell about the graph as a whole lives, so it's worked out once however many nodes read
+    /// it. It isn't a node: it has no links and nothing can be stored on it, and only a component's
+    /// default can fill it.
+    pub fn whole() -> Self {
+        Self::nil()
+    }
 }
 
 impl Default for Entity {
@@ -660,6 +667,9 @@ impl Graph {
     }
 
     fn backing(&self, e: Entity, component: &str) -> Option<Backing> {
+        if e == Entity::whole() {
+            return self.defaults.get(component).cloned();
+        }
         if !self.entities.contains(&e) {
             return None;
         }
@@ -846,7 +856,7 @@ impl Cx<'_> {
         let reaches = |i: &Inputs| {
             i.incoming.iter().any(|k| g.has_link(other, self.id, k)) || i.outgoing.iter().any(|k| g.has_link(self.id, other, k)) || i.scans.iter().any(|c| g.backing(other, c).is_some())
         };
-        let reached = other == self.id || reaches(self.inputs) || self.like().is_some_and(|r| reaches(&r.inputs));
+        let reached = other == self.id || other == Entity::whole() || reaches(self.inputs) || self.like().is_some_and(|r| reaches(&r.inputs));
         if reached { Ok(()) } else { Err(self.undeclared(format!("{other}, which no declared link reaches"))) }
     }
 

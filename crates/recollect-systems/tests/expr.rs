@@ -62,6 +62,25 @@ fn arithmetic_and_logic_with_no_worlds_are_ordinary() {
 }
 
 #[test]
+fn has_says_whether_a_node_has_a_cell_and_folds_begin_where_they_are_told() {
+    let mut g = N::with(sheet);
+    g.set("a", ValueCell::num(3.0)).set("b", ValueCell::num(7.0)).set("gap", ValueCell::plain(Val::Undefined));
+    g.formula("has", "has(x.value)").input("has", "a", "x");
+    g.formula("hasnt", "has(x.nothing_like_this)").input("hasnt", "a", "x");
+    g.set("own", Domain(vec!["only".to_string()])).formula("own", "has(self.domain)");
+    g.formula("top", "max(x in line: x, 0)").input("top", "a", "line").input("top", "b", "line");
+    g.formula("low", "min(x in line: x, 5)").input("low", "a", "line").input("low", "b", "line");
+    g.formula("nothing", "max(x in line: x, 9)");
+    g.formula("unknown", "max(x in line: x, 0)").input("unknown", "a", "line").input("unknown", "gap", "line");
+    let plain = |n: &str| value(&g, n).0.0.cases()[0].1.clone();
+    assert_eq!((plain("has"), plain("hasnt"), plain("own")), (Val::Bool(true), Val::Bool(false), Val::Bool(true)));
+    assert_eq!((plain("top"), plain("low"), plain("nothing")), (Val::Num(7.0), Val::Num(3.0), Val::Num(9.0)));
+    assert_eq!(plain("unknown"), Val::Undefined, "an unknown could be the biggest");
+    assert!(just_error("has(1)").contains("has needs a node and a cell"));
+    assert!(just_error("whole").contains("whole needs to say which cell"));
+}
+
+#[test]
 fn undefined_spreads_and_logic_is_three_valued() {
     for undefined in ["1 / 0", "undefined + 1", "0 / 0", "1 < undefined", "undefined = 1", "!undefined", "if(undefined, 1, 2)", "true && undefined", "false || undefined", "(1 / 0) = (1 / 0)"] {
         assert_eq!(just(undefined), Val::Undefined, "{undefined}");

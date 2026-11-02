@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 
 use crate::expr::{self, BinOp, CORE, Expr, Type, Val, inputs_of};
 use crate::plan::{Choice, Need};
-use crate::schedule::{Finish, LatestFinish, LatestStart, Start};
+use crate::schedule::{Finish, LatestFinish, LatestStart, PlanEnd, Start};
 use crate::{Catalog, Shown};
 
 /// The rule. Its meaning is fixed by this key, so a change in meaning needs a new one.
@@ -104,7 +104,7 @@ pub struct TryExpansion(pub String);
 fn component_type(component: &str) -> Type {
     match component {
         "need" | "actionable" | "blocked" | "completion" | "requires" => Type::Bool,
-        "estimate" | "start" | "finish" | "latest_start" | "latest_finish" | "slack" => Type::Number,
+        "estimate" | "start" | "finish" | "latest_start" | "latest_finish" | "slack" | "plan_end" => Type::Number,
         "name" | "body" | "choice" => Type::Text,
         _ => Type::Any,
     }
@@ -342,6 +342,8 @@ impl<'c, 'a> Expander<'c, 'a> {
         match root.as_str() {
             "self" if rest.is_empty() => failed("self needs to say which cell, such as self.need"),
             "self" => Ok(self.read(self.cx.id(), rest)),
+            "whole" if rest.is_empty() => failed("whole needs to say which cell, such as whole.plan_end"),
+            "whole" => Ok(self.read(Entity::whole(), rest)),
             "in" | "out" | "with" => failed(format!("{}.… is a group of nodes, so it needs something like sum({}.…)", root, root)),
             _ => match self.labels.get(root).map(Vec::as_slice) {
                 None | Some([]) => failed(format!("no input called {root}")),
@@ -689,6 +691,7 @@ fn read_cell(cx: &Cx, node: Entity, component: &str, fields: &[String]) -> Resul
         Finish::NAME => number_cell(cx.get::<Finish>(node)?.map(|c| c.0)),
         LatestStart::NAME => number_cell(cx.get::<LatestStart>(node)?.map(|c| c.0)),
         LatestFinish::NAME => number_cell(cx.get::<LatestFinish>(node)?.map(|c| c.0)),
+        PlanEnd::NAME => number_cell(cx.get::<PlanEnd>(node)?.map(|c| c.0)),
         _ => match cx.get_runtime(node, component)? {
             None => Ev::Data(pure(Val::Undefined)),
             Some(r) => from_json(r.value).map_err(|detail| Error::Malformed { cell: (node, component.to_string()), detail })?,

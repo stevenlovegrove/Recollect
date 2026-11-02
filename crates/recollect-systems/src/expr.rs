@@ -135,7 +135,7 @@ impl BinOp {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Expr {
     Lit(Val),
-    /// `rate`, `rate.finish`, `self.need`.
+    /// `rate`, `rate.finish`, `self.need`, `whole.plan_end`.
     Path(Vec<String>),
     Call(String, Vec<Expr>),
     /// `sum(x in group: body)`. A group is `in.kind`, `out.kind`, `with.component`, or a name.
@@ -167,11 +167,6 @@ const LIBRARY: &[(&str, &[&str], &str)] = &[
     // How long this node takes. With no estimate that's nothing, and an estimate a formula can't
     // work out makes the dates unknowable.
     ("days", &[], "if(has(self.estimate), self.estimate, 0)"),
-    // When the last task finishes.
-    ("plan_end", &[], "max(t in with.task: t.finish, 0)"),
-    // How late this could finish, given what has to follow it. `end` stands for no limit, because
-    // nothing here can be later than that anyway.
-    ("latest_given", &["end"], "min(p in out.part_of: if(p.need, p.latest_finish, end), min(d in out.alternative: if(d.need && chose(d, self), d.latest_finish, end), min(x in in.depends_on: if(x.need, x.latest_start, end), end)))"),
 ];
 
 pub struct LibraryMacro {
@@ -535,7 +530,7 @@ pub fn parse(text: &str) -> Result<Expr, String> {
 pub fn is_name(s: &str) -> bool {
     let mut chars = s.chars();
     let starts = chars.next().is_some_and(|c| c.is_alphabetic() || c == '_');
-    starts && chars.all(|c| c.is_alphanumeric() || c == '_') && !matches!(s, "true" | "false" | "undefined" | "self" | "in" | "out" | "with")
+    starts && chars.all(|c| c.is_alphanumeric() || c == '_') && !matches!(s, "true" | "false" | "undefined" | "self" | "whole" | "in" | "out" | "with")
 }
 
 #[cfg(test)]
@@ -563,6 +558,19 @@ mod tests {
         assert_eq!(parse("sum(in.part_of.days)").unwrap(), parse("sum(it in in.part_of: it.days)").unwrap());
         assert!(parse("sum(1, 2)").is_err());
         assert!(parse("abs(x in y: x)").is_err());
+    }
+
+    #[test]
+    fn max_and_min_are_two_numbers_or_a_group_from_somewhere() {
+        assert!(matches!(parse("max(a, b)").unwrap(), Expr::Call(..)), "a name could be a number");
+        assert_eq!(parse("max(out.dep.finish, 0)").unwrap(), parse("max(it in out.dep: it.finish, 0)").unwrap());
+        assert!(matches!(parse("min(x in line: x, 1)").unwrap(), Expr::Fold { start: Some(_), .. }));
+        assert!(parse("max(x in line: x)").unwrap_err().contains("somewhere to begin"));
+        assert!(parse("max(out.dep.finish)").unwrap_err().contains("somewhere to begin"));
+        assert!(matches!(parse("pick(x in line: x, 0)").unwrap(), Expr::Fold { start: Some(_), .. }), "what it gives if nothing's chosen");
+        assert!(matches!(parse("pick(x in line: x)").unwrap(), Expr::Fold { start: None, .. }));
+        assert!(parse("sum(x in line: x, 0)").is_err(), "a sum already has somewhere to begin");
+        assert!(parse("sum(line, 0)").is_err());
     }
 
     #[test]
@@ -594,6 +602,6 @@ mod tests {
     #[test]
     fn labels_have_to_read_as_names() {
         assert!(is_name("rate") && is_name("rate_2"));
-        assert!(!is_name("2rate") && !is_name("a b") && !is_name("") && !is_name("self") && !is_name("in") && !is_name("true"));
+        assert!(!is_name("2rate") && !is_name("a b") && !is_name("") && !is_name("self") && !is_name("whole") && !is_name("in") && !is_name("true"));
     }
 }

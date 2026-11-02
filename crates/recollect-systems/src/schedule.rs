@@ -37,6 +37,10 @@ pub struct LatestFinish(pub Worldly<Option<f64>>);
 #[component]
 pub struct Slack(pub Worldly<Option<f64>>);
 
+/// When the last task finishes, for the graph as a whole.
+#[component]
+pub struct PlanEnd(pub Worldly<Option<f64>>);
+
 /// When something happens, in one world.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Span {
@@ -57,7 +61,11 @@ const START: &str = "max(p in out.part_of: if(p.need, p.start, 0), max(d in out.
 /// costs nothing.
 const FINISH: &str = "if(!self.need, 0, max(max(p in in.part_of: p.finish, if(has(self.unknown), undefined, if(is_leaf(), self.start + days(), self.start))), pick(o in in.alternative: o.finish, 0)))";
 
-const LATEST_FINISH: &str = "latest_given(plan_end())";
+const PLAN_END: &str = "max(t in with.task: t.finish, 0)";
+
+/// How late it could finish, given what has to follow it. The end of the plan stands for no limit,
+/// because nothing can be later than that anyway.
+const LATEST_FINISH: &str = "min(p in out.part_of: if(p.need, p.latest_finish, whole.plan_end), min(d in out.alternative: if(d.need && chose(d, self), d.latest_finish, whole.plan_end), min(x in in.depends_on: if(x.need, x.latest_start, whole.plan_end), whole.plan_end)))";
 
 /// A summary has to start in time for whichever part has to start first. With nothing inside it to
 /// run out of time, it's only as constrained as its own end.
@@ -83,6 +91,7 @@ fn number<C: Component>(reg: &mut Registry, wrap: fn(Cond<Val>) -> Result<C, Err
 pub fn install(reg: &mut Registry) {
     number::<Start>(reg, |c| number_cases(c, "a start").map(Start), START);
     number::<Finish>(reg, |c| number_cases(c, "a finish").map(Finish), FINISH);
+    number::<PlanEnd>(reg, |c| number_cases(c, "the end of a plan").map(PlanEnd), PLAN_END);
     number::<LatestFinish>(reg, |c| number_cases(c, "a latest finish").map(LatestFinish), LATEST_FINISH);
     number::<LatestStart>(reg, |c| number_cases(c, "a latest start").map(LatestStart), LATEST_START);
     number::<Slack>(reg, |c| number_cases(c, "slack").map(Slack), SLACK);
@@ -96,4 +105,5 @@ pub fn describe(c: &mut Catalog) {
     c.worldly::<Dates>("When it happens, in the worlds that need it.", |d| Shown::cond(&d.0)).quiet = true;
     c.internal::<LatestStart>();
     c.internal::<LatestFinish>();
+    c.internal::<PlanEnd>();
 }

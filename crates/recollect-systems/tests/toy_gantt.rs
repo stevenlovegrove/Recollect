@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 
 mod support;
 
-use recollect_graph::worlds::Cond;
-use recollect_graph::{Compute, Cx, Error, Registry, component, rule};
+use recollect_graph::worlds::{Cond, Worldly};
+use recollect_graph::{Compute, Cx, Entity, Error, Registry, component, rule};
 use serde_json::json;
 use recollect_systems::formulas::EXPR;
 use recollect_systems::plan::{self, Alternative, Decision, Estimate, Need, Task, Unknown};
@@ -281,6 +281,51 @@ fn memoisation_holds_across_worlds_too() {
     let ran = g.ran_cells();
     assert!(!ran.iter().any(|r| r.contains("export") || r.contains("search") || r.contains("static")), "other approaches don't run: {ran:?}");
     assert!(!ran.iter().any(|r| r.starts_with("need") || r.starts_with("choice")), "what's needed didn't change: {ran:?}");
+}
+
+#[test]
+fn any_date_can_be_typed_over_and_comes_back_when_that_goes() {
+    let mut g = calibration();
+    let cad = g.id("cad");
+    g.set("calib", Decision { chosen: Some(cad) });
+    let end = |g: &N| *g.get::<WorldFinish>("calib").unwrap().unwrap().0.0.at(&BTreeMap::new());
+    assert_eq!(end(&g), Some(5.0));
+
+    // Pinning when something starts moves everything that follows it, as a formula would.
+    g.set("static", WorldStart(Worldly::plain(Some(10.0))));
+    assert_eq!(end(&g), Some(15.0), "static from 10 for 2, then export for 3");
+    g.assert_round_trips();
+
+    let e = g.id("static");
+    g.g.set_rule(e, "start", EXPR, json!({ "text": "4 + 1" }));
+    assert_eq!(end(&g), Some(10.0));
+    g.assert_round_trips();
+
+    g.g.remove_named(e, "start");
+    assert_eq!(end(&g), Some(5.0), "and without it, the default is back");
+}
+
+#[test]
+fn a_date_of_the_wrong_type_is_refused_by_its_cell() {
+    let mut g = calibration();
+    let e = g.id("static");
+    g.g.set_rule(e, "start", EXPR, json!({ "text": "true" }));
+    let err = format!("{:?}", g.get::<WorldStart>("static").unwrap_err());
+    assert!(err.contains("holds a number"), "{err}");
+}
+
+/// Worked out once for the graph, not once for every node that wants it.
+#[test]
+fn the_end_of_the_plan_is_worked_out_once() {
+    let g = calibration();
+    for t in ["imu", "static", "export"] {
+        g.get::<WorldSlack>(t).unwrap();
+    }
+    let ran = g.g.take_ran();
+    let ends = ran.iter().filter(|(_, c)| c == "plan_end").count();
+    assert_eq!(ends, 1, "{ran:?}");
+    assert!(ran.iter().filter(|(_, c)| c == "plan_end").all(|(e, _)| *e == Entity::whole()));
+    assert!(!g.g.entities().any(|e| e == Entity::whole()), "and it isn't a node");
 }
 
 // ---------- the two parts check each other ----------
