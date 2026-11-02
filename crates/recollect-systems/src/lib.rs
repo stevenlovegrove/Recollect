@@ -71,6 +71,9 @@ pub struct ComponentInfo {
     pub arranges: bool,
     /// For a link that gives a graph its shape: what it points at goes beneath, not above.
     pub reversed: bool,
+    /// A link that says what comes first. It isn't containment, so it's no use to a tree, but a map
+    /// can be laid out by it.
+    pub orders: bool,
     /// Worth showing on a node's card.
     pub summary: bool,
     /// What a new one starts as.
@@ -100,7 +103,7 @@ pub struct Catalog {
 
 impl Catalog {
     fn add(&mut self, name: &str, on: &'static str, about: &str) -> &mut ComponentInfo {
-        let info = ComponentInfo { name: name.to_string(), system: self.current.clone(), on, about: about.to_string(), derived: false, internal: false, quiet: false, arranges: false, reversed: false, summary: false, initial: None };
+        let info = ComponentInfo { name: name.to_string(), system: self.current.clone(), on, about: about.to_string(), derived: false, internal: false, quiet: false, arranges: false, reversed: false, orders: false, summary: false, initial: None };
         self.components.entry(name.to_string()).or_insert(info)
     }
 

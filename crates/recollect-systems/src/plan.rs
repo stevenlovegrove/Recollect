@@ -663,7 +663,7 @@ pub fn describe(c: &mut Catalog) {
     c.fact::<Decision>("An open question with options, and which one was taken, if any.", json!({}));
     c.arranging::<PartOf>("Part of that: all of a node's parts are needed.", Value::Null);
     c.arranging::<Alternative>("One way of doing that decision: only the option taken is needed.", json!({}));
-    c.link::<DependsOn>("Waits for that.", json!({}));
+    c.link::<DependsOn>("Waits for that.", json!({})).orders = true;
     c.worldly::<Need>("The worlds where this is part of what's being attempted.", |n| Shown::Bool(n.0.clone())).summary = true;
     c.worldly::<Completion>("Per world: finished, still owed, or nothing to finish.", |v| Shown::cond(&v.0));
     c.worldly::<Choice>("What this decision could land on.", |v| Shown::cond(&v.0));

@@ -25,6 +25,8 @@ export interface Workspace {
   arranging: string[];
   /** Which end of a link goes on top, if it gives the graph its shape at all. */
   shape: (l: Link) => { parent: string; child: string } | null;
+  /** Which end of any link comes first, if a map were laid out by it. */
+  ends: (l: Link) => { parent: string; child: string };
   /** The kind of link that makes a node part of another, if this workspace has one. */
   partKind: string | undefined;
   /** A component's meaning, if a system says. */
@@ -131,7 +133,8 @@ export function useWorkspace(): Workspace {
   const arranging = useMemo(() => (view?.components ?? []).filter((c) => c.arranges).map((c) => c.name), [view?.components]);
   const reversed = useMemo(() => (view?.components ?? []).filter((c) => c.reversed).map((c) => c.name), [view?.components]);
   const partKind = arranging.includes("part_of") ? "part_of" : arranging.find((k) => !reversed.includes(k));
-  const shape = useCallback((l: Link) => (!arranging.includes(l.kind) ? null : reversed.includes(l.kind) ? { parent: l.from, child: l.to } : { parent: l.to, child: l.from }), [arranging, reversed]);
+  const ends = useCallback((l: Link) => (reversed.includes(l.kind) ? { parent: l.from, child: l.to } : { parent: l.to, child: l.from }), [reversed]);
+  const shape = useCallback((l: Link) => (arranging.includes(l.kind) ? ends(l) : null), [arranging, ends]);
   const infoMap = useMemo(() => new Map((view?.components ?? []).map((c) => [c.name, c])), [view?.components]);
   const info = useCallback((name: string) => infoMap.get(name), [infoMap]);
 
@@ -171,7 +174,7 @@ export function useWorkspace(): Workspace {
     await api.create(path, name, systems);
   }, []);
 
-  return { view, nothingOpen, byId, plan, proposals, available, connected, error, recent, recentCells, world, pin, setWorld, checkout, arranging, shape, partKind, info, refresh, apply, openSample, openPath, create };
+  return { view, nothingOpen, byId, plan, proposals, available, connected, error, recent, recentCells, world, pin, setWorld, checkout, arranging, shape, ends, partKind, info, refresh, apply, openSample, openPath, create };
 }
 
 /** Links touching a node, in each direction. */

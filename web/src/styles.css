@@ -343,6 +343,8 @@ pre {
   --xy-minimap-mask-stroke-width: 1.5;
   --xy-controls-button-background-color: var(--panel);
   --xy-controls-button-color: var(--text);
+  --xy-controls-button-background-color-hover: var(--panel-2);
+  --xy-controls-button-color-hover: var(--text);
   --xy-controls-button-border-color: var(--border);
   --xy-edge-label-background-color: var(--bg);
   --xy-edge-label-color: var(--muted);
@@ -1155,6 +1157,15 @@ table.matrix tr.done td.t {
 }
 .dd-sub {
   padding-left: 22px;
+}
+.dd-columns {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  padding: 0 6px 2px;
+}
+.dd-item .dd-layout {
+  margin-left: 6px;
 }
 .dd-sub code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

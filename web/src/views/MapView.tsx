@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   ControlButton,
@@ -10,6 +10,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useUpdateNodeInternals,
   type Edge as RFEdge,
   type Node as RFNode,
   type NodeProps,
@@ -39,8 +40,12 @@ function nodeHeight(n: GraphNode) {
   return 50 + Math.ceil(n.name.length / 29) * 17;
 }
 
+/** Which way a map reads: what comes first goes at the top, or on the left. */
+type Direction = "down" | "right";
+
 type CardData = {
   node: GraphNode;
+  direction: Direction;
   selected: boolean;
   recent: boolean;
   dim: boolean;
@@ -53,15 +58,15 @@ type CardData = {
 };
 
 function Card({ data }: NodeProps<RFNode<CardData>>) {
-  const { node, selected, recent, dim, entering, leaving, linking, out, lines } = data;
+  const { node, direction, selected, recent, dim, entering, leaving, linking, out, lines } = data;
   const facts = factsOf(node);
   return (
     <div
       className={["card", isDropped(node) && "dead", out && "out", selected && "selected", recent && "recent", dim && "dim", entering && "entering", leaving && "leaving", linking && "linking"].filter(Boolean).join(" ")}
       style={{ borderLeftColor: nodeColor(node), width: W }}
     >
-      {/* Links point child → parent, and parents sit above: leave from the top. */}
-      <Handle type="source" position={Position.Top} />
+      {/* Links point child → parent, and parents come first: leave from that side. */}
+      <Handle type="source" position={direction === "down" ? Position.Top : Position.Left} />
       <div className="card-top">
         <CompBadges n={node} />
         {!facts.length && <span className="muted small">note</span>}
@@ -72,7 +77,7 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
           <span className="card-foot-k" title={`${labelOf(l.name)}: ${l.full}`}>{labelOf(l.name)}</span> <span className="card-foot-v"><Brackets text={l.text} /></span>
         </div>
       ))}
-      <Handle type="target" position={Position.Bottom} />
+      <Handle type="target" position={direction === "down" ? Position.Bottom : Position.Right} />
     </div>
   );
 }
@@ -168,10 +173,47 @@ const ANIM_MS = 600;
 const FIT_MS = 450;
 const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
+/** How this map is laid out, per workspace and per browser. It's fine if it can't be remembered. */
+type LayoutPref = { direction: Direction; layoutBy: Record<string, boolean> };
+
+function loadLayoutPref(dir: string): LayoutPref {
+  try {
+    return { direction: "down", layoutBy: {}, ...JSON.parse(localStorage.getItem(`recollect.layout:${dir}`) ?? "{}") };
+  } catch {
+    return { direction: "down", layoutBy: {} };
+  }
+}
+
+function saveLayoutPref(dir: string, pref: LayoutPref) {
+  try {
+    localStorage.setItem(`recollect.layout:${dir}`, JSON.stringify(pref));
+  } catch {
+    /* it just won't be remembered */
+  }
+}
+
 const LABEL_REL = "label:";
 
 /** What the Links menu filters a link by. */
 const relOf = (e: { kind: string; value: unknown }) => (e.kind === "label" ? `${LABEL_REL}${String(e.value)}` : e.kind);
+
+/** Whether a kind of link shapes the layout, inside a row whose own tick says whether it's shown. */
+function LayoutTick({ on, name, onChange }: { on: boolean; name: string; onChange: (on: boolean) => void }) {
+  return (
+    <input
+      type="checkbox"
+      className="dd-layout"
+      checked={on}
+      aria-label={`Lay out by ${name}`}
+      title={`Lay out by ${name}`}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        e.preventDefault();
+        onChange(e.target.checked);
+      }}
+    />
+  );
+}
 
 type LinkDrag = { from: string; start: XY; end: XY; over: string | null };
 type LinkDrop = { from: string; to: string; at: XY };
@@ -261,6 +303,14 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
   const g = ws.view!;
   const [hiddenFacts, setHiddenFacts] = useState<Set<Filter>>(new Set());
   const [hiddenRels, setHiddenRels] = useState<Set<string>>(new Set());
+  const [layoutPref, setLayoutPrefState] = useState<LayoutPref>(() => loadLayoutPref(g.workspace.dir));
+  const setLayoutPref = (next: LayoutPref) => {
+    setLayoutPrefState(next);
+    saveLayoutPref(g.workspace.dir, next);
+    refit.current = true;
+  };
+  const refit = useRef(false);
+  const updateNodeInternals = useUpdateNodeInternals();
   const [showDead, setShowDead] = useState(false);
   const [focus, setFocus] = useState(0);
   const [query, setQuery] = useState("");
@@ -541,6 +591,12 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
     for (const e of g.links) counts.set(relOf(e), (counts.get(relOf(e)) ?? 0) + 1);
     return [...counts].sort((a, b) => a[0].localeCompare(b[0]));
   }, [g.links]);
+  // A system says which links shape a map, and you can say otherwise.
+  const shapes = useCallback(
+    (rel: string) => layoutPref.layoutBy[rel] ?? (rel.startsWith(LABEL_REL) ? ws.arranging.includes("label") : !!(ws.arranging.includes(rel) || ws.info(rel)?.orders)),
+    [layoutPref, ws.arranging, ws.info],
+  );
+  const setShapes = (rels: string[], on: boolean) => setLayoutPref({ ...layoutPref, layoutBy: { ...layoutPref.layoutBy, ...Object.fromEntries(rels.map((r) => [r, on])) } });
   const labelRels = rels.filter(([r]) => r.startsWith(LABEL_REL));
   const kindRels = rels.filter(([r]) => !r.startsWith(LABEL_REL));
 
@@ -608,23 +664,24 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
   const layoutEdges = useMemo(() => {
     const seen = new Set<string>();
     // A link's other kinds decide for it, so a label on a `part_of` doesn't pull it the other way.
-    const others = new Set(g.links.filter((e) => e.kind !== "label" && ws.arranging.includes(e.kind)).map((e) => `${e.from}|${e.to}`));
+    const others = new Set(g.links.filter((e) => e.kind !== "label" && shapes(relOf(e))).map((e) => `${e.from}|${e.to}`));
     return g.links.filter((e) => {
       const key = `${e.from}|${e.to}`;
-      if (!ws.shape(e) || !visible.has(e.from) || !visible.has(e.to) || seen.has(key) || (e.kind === "label" && others.has(key))) return false;
+      if (!shapes(relOf(e)) || !visible.has(e.from) || !visible.has(e.to) || seen.has(key) || (e.kind === "label" && others.has(key))) return false;
       seen.add(key);
       return true;
     });
-  }, [g.links, ws.arranging, ws.shape, visible]);
+  }, [g.links, shapes, visible]);
   const layoutLinks = layoutEdges;
   const structureKey = useMemo(
     () =>
       JSON.stringify([
         [...visible].sort(),
-        layoutEdges.map((e) => [e.from, e.to]),
+        layoutEdges.map((e) => [e.from, e.to, e.kind]),
         g.nodes.filter((n) => visible.has(n.id)).map((n) => [n.name.length, factsOf(n).length]),
+        layoutPref.direction,
       ]),
-    [visible, layoutEdges, g.nodes],
+    [visible, layoutEdges, g.nodes, layoutPref.direction],
   );
 
   useEffect(() => {
@@ -635,7 +692,8 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
         id: "root",
         layoutOptions: {
           "elk.algorithm": "layered",
-          "elk.direction": "UP",
+          // Edges go from child to parent, and parents come first.
+          "elk.direction": layoutPref.direction === "down" ? "UP" : "LEFT",
           "elk.layered.spacing.nodeNodeBetweenLayers": "60",
           "elk.spacing.nodeNode": "26",
           "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
@@ -644,7 +702,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
         },
         children: nodes.map((n) => ({ id: n.id, width: W, height: nodeHeight(n) })),
         edges: layoutEdges.map((e, i) => {
-          const { parent, child } = ws.shape(e)!;
+          const { parent, child } = ws.ends(e);
           return { id: `s${i}`, sources: [child], targets: [parent] };
         }),
       })
@@ -653,6 +711,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
         const target = new Map((res.children ?? []).map((c) => [c.id, { x: c.x ?? 0, y: c.y ?? 0 }]));
         const ids = nodes.map((n) => n.id);
         setLayout({ ids, target });
+        updateNodeInternals(ids);
         cancelAnimationFrame(anim.current);
         const from = posRef.current;
 
@@ -732,7 +791,11 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
             entering.current = new Set();
             leaving.current = new Map();
             setPos(new Map(next));
-            ensureVisible(selectedRef.current);
+            // Choosing another layout is a new picture, so show all of it. Nothing else re-fits.
+            if (refit.current) {
+              refit.current = false;
+              requestAnimationFrame(() => fitView({ padding: 0.08, duration: FIT_MS }));
+            } else ensureVisible(selectedRef.current);
           }
         };
         anim.current = requestAnimationFrame(step);
@@ -761,6 +824,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
             selected: id === selected,
             data: {
               node,
+              direction: layoutPref.direction,
               selected: id === selected,
               recent: ws.recent.has(id),
               dim: !matches(node),
@@ -773,7 +837,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
           };
         }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [layout, pos, ws.byId, ws.recent, selected, q, linkDrag?.from, linkDrag?.over],
+    [layout, pos, ws.byId, ws.recent, selected, q, linkDrag?.from, linkDrag?.over, layoutPref.direction],
   );
 
   const rfEdges: RFEdge[] = useMemo(
@@ -785,11 +849,11 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
           const isSel = key === selected;
           const hot = isSel || selected === e.from || selected === e.to;
           const arranges = ws.arranging.includes(e.kind);
-          const ends = ws.shape(e);
+          const ends = ws.ends(e);
           return {
             id: key,
-            source: ends ? ends.child : e.from,
-            target: ends ? ends.parent : e.to,
+            source: ends.child,
+            target: ends.parent,
             label: e.kind === "label" ? String(e.value) : arranges ? undefined : labelOf(e.kind),
             className: `edge rel-${e.kind} ${arranges ? "" : "free"} ${hot ? "hot" : ""} ${isSel ? "picked" : ""}`,
             animated: e.kind === "depends_on" && hot,
@@ -798,7 +862,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
             zIndex: hot ? 10 : 0,
           };
         }),
-    [g.links, ws.arranging, ws.shape, visible, hiddenRels, selected],
+    [g.links, ws.arranging, ws.ends, visible, hiddenRels, selected],
   );
 
   const shownCount = present.filter(([f]) => !hiddenFacts.has(f)).length;
@@ -883,16 +947,21 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
               <button className="link" onClick={() => setHiddenRels(new Set())}>
                 all
               </button>
-              <button className="link" onClick={() => setHiddenRels(new Set(rels.map(([r]) => r).filter((r) => !r.startsWith(LABEL_REL) && !ws.arranging.includes(r))))}>
-                structure only
+              <button className="link" onClick={() => setHiddenRels(new Set(rels.map(([r]) => r).filter((r) => !shapes(r))))}>
+                layout only
               </button>
             </span>
+          </div>
+          <div className="dd-columns muted">
+            <span>show</span>
+            <span>layout</span>
           </div>
           {kindRels.map(([r, n]) => (
             <DdItem key={r} checked={!hiddenRels.has(r)} onChange={() => setHiddenRels(toggle(hiddenRels, r))} title={ws.info(r)?.about}>
               <span className={`dd-swatch rel-${r}`} />
               <span className="dd-label">{labelOf(r)}</span>
               <span className="muted">{n}</span>
+              <LayoutTick on={shapes(r)} name={labelOf(r)} onChange={(on) => setShapes([r], on)} />
             </DdItem>
           ))}
           {labelRels.length > 0 && (
@@ -912,6 +981,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
               <span className="dd-swatch rel-label" />
               <span className="dd-label">Label</span>
               <span className="muted">{labelRels.reduce((sum, [, n]) => sum + n, 0)}</span>
+              <LayoutTick on={labelRels.every(([r]) => shapes(r))} name="every label" onChange={(on) => setShapes(labelRels.map(([r]) => r), on)} />
             </DdItem>
           )}
           {labelRels.map(([r, n]) => (
@@ -920,9 +990,10 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
                 <code>{r.slice(LABEL_REL.length)}</code>
               </span>
               <span className="muted">{n}</span>
+              <LayoutTick on={shapes(r)} name={r.slice(LABEL_REL.length)} onChange={(on) => setShapes([r], on)} />
             </DdItem>
           ))}
-          <div className="dd-note muted">Hiding links never moves nodes.</div>
+          <div className="dd-note muted">Hiding links never moves nodes. Only the layout ticks do.</div>
         </Dropdown>
         <label className="toggle" title="Show only the neighbourhood of the selected node">
           focus
@@ -988,6 +1059,13 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
           >
             <Background gap={24} size={1} />
             <Controls showInteractive={false} fitViewOptions={{ padding: 0.08, duration: FIT_MS }}>
+              <ControlButton
+                title={layoutPref.direction === "down" ? "Reading top to bottom. Click for left to right" : "Reading left to right. Click for top to bottom"}
+                aria-label={layoutPref.direction === "down" ? "Lay out left to right" : "Lay out top to bottom"}
+                onClick={() => setLayoutPref({ ...layoutPref, direction: layoutPref.direction === "down" ? "right" : "down" })}
+              >
+                {layoutPref.direction === "down" ? "↓" : "→"}
+              </ControlButton>
               <ControlButton
                 className={mini.open ? "mini-toggle on" : "mini-toggle"}
                 title={mini.open ? "Hide the minimap (m)" : "Show the minimap (m)"}

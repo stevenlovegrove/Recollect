@@ -33,7 +33,7 @@ A node has no kind. It's a bag of components, and a link is a bag of kinds. A **
 | `plan` | `task`, `estimate`, `goal`, `question`, `risk`, `unknown`, `done`, `dropped`, `decision`, with `part_of`, `alternative` and `depends_on`. Works out what's needed, completion, blocking, what can start, scope and pressure |
 | `schedule` | Dates and slack in every world, from `plan`'s facts. A task's estimate is its duration |
 
-A system also says, in a catalog, what its components mean to someone looking at them: what each is for, which links give the graph its shape, and what's worth putting on a card. The app reads that rather than knowing any of it, so a plugin's components get the same treatment. A component no system knows about is kept and shown as it is.
+A system also says, in a catalog, what its components mean to someone looking at them: what each is for, which links give the graph its shape, which say what comes first, and what's worth putting on a card. A map is laid out by both kinds, and a tree like the Outline only by shape, because waiting for something isn't being part of it. The app reads that rather than knowing any of it, so a plugin's components get the same treatment. A component no system knows about is kept and shown as it is.
 
 ## The plan model
 
@@ -52,7 +52,7 @@ A spreadsheet and a puzzle aren't separate systems here. Each is nodes with valu
 
 | Tab | Shows | When |
 |---|---|---|
-| **Map** | The graph, laid out by the links that give it shape. What a world rules out dims, and nothing moves | Always |
+| **Map** | The graph, laid out by the links that give it shape or say what comes first, reading down or across. The Links menu chooses which links shape it, each remembered per workspace in that browser. What a world rules out dims, and nothing moves | Always |
 | **Outline** | The same structure, coarse to fine | Always |
 | **Table** | Nodes against components. Values and formulas edit in place, as in a spreadsheet, and what just ran is highlighted | Always |
 | **Worlds** | Every open choice and what's still possible. Choices with the same options become a grid, and choices with an `at` are placed on a board. A workspace's own [drawings](docs/drawings.md) can be picked instead, and the choice is remembered | If anything's open, or there's a drawing |

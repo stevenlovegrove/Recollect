@@ -49,6 +49,8 @@ export interface ComponentInfo {
   arranges: boolean;
   /** For a link that arranges: what it points at goes beneath, not above. */
   reversed: boolean;
+  /** A link that says what comes first, which a map can be laid out by. */
+  orders: boolean;
   summary: boolean;
   initial: unknown;
 }
