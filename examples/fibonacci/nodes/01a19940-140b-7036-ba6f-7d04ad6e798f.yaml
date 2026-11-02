@@ -1,0 +1,15 @@
+id: 01a19940-140b-7036-ba6f-7d04ad6e798f
+components:
+  name: f66
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: a + b
+links:
+- to: 01a19940-140b-7036-ba6f-7d02ab8ab137
+  components:
+    label: b
+- to: 01a19940-140b-7036-ba6f-7d03387f2cea
+  components:
+    label: a

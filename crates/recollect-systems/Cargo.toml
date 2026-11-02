@@ -1,0 +1,16 @@
+[package]
+name = "recollect-systems"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "What a workspace can be made of: planning, scheduling, spreadsheets and puzzles, all written with the API a plugin uses."
+
+[dependencies]
+stacker = "0.1"
+recollect-graph = { path = "../recollect-graph" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+recollect-kernel = { path = "../recollect-kernel" }
+tempfile.workspace = true

@@ -1,0 +1,3 @@
+name = "Fibonacci"
+about = "Each cell adds the two before it. Cells that are shared run once, so 80 terms take 79 formula runs."
+systems = []

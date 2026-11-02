@@ -1,0 +1,15 @@
+id: 01a19940-17d8-70db-9c6e-aa37693db602
+components:
+  name: Coffee ≠ Milk
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: a != b
+links:
+- to: 01a19940-17d8-70db-9c6e-aa002520eda0
+  components:
+    label: a
+- to: 01a19940-17d8-70db-9c6e-aa025a07f8c4
+  components:
+    label: b

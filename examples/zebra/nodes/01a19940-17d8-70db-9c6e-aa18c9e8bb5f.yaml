@@ -1,0 +1,15 @@
+id: 01a19940-17d8-70db-9c6e-aa18c9e8bb5f
+components:
+  name: The Englishman ≠ The Spaniard
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: a != b
+links:
+- to: 01a19940-17d8-70db-9c6e-a9f11be6a311
+  components:
+    label: a
+- to: 01a19940-17d8-70db-9c6e-a9f22a0f7534
+  components:
+    label: b

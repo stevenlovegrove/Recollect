@@ -1,0 +1,15 @@
+id: 01a19940-17d8-70db-9c6e-aa259b6db909
+components:
+  name: Red house ≠ Blue house
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: a != b
+links:
+- to: 01a19940-17d8-70db-9c6e-a9f6f6044d11
+  components:
+    label: a
+- to: 01a19940-17d8-70db-9c6e-a9faa7bda02f
+  components:
+    label: b

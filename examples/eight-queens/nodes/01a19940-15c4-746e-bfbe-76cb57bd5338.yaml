@@ -1,0 +1,15 @@
+id: 01a19940-15c4-746e-bfbe-76cb57bd5338
+components:
+  name: Row 3 clear of Row 7
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: a != b && abs(a - b) != 4
+links:
+- to: 01a19940-15c4-746e-bfbe-76b595b058ff
+  components:
+    label: a
+- to: 01a19940-15c4-746e-bfbe-76b9a626d6e1
+  components:
+    label: b

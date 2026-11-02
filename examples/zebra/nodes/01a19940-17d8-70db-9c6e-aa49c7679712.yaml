@@ -1,0 +1,15 @@
+id: 01a19940-17d8-70db-9c6e-aa49c7679712
+components:
+  name: Lucky Strike ≠ Parliament
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: a != b
+links:
+- to: 01a19940-17d8-70db-9c6e-aa08dbab66ce
+  components:
+    label: a
+- to: 01a19940-17d8-70db-9c6e-aa097464ffc3
+  components:
+    label: b

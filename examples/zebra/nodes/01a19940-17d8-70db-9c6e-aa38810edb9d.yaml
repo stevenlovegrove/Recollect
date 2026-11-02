@@ -1,0 +1,15 @@
+id: 01a19940-17d8-70db-9c6e-aa38810edb9d
+components:
+  name: Coffee ≠ Juice
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: a != b
+links:
+- to: 01a19940-17d8-70db-9c6e-aa002520eda0
+  components:
+    label: a
+- to: 01a19940-17d8-70db-9c6e-aa03ea83290d
+  components:
+    label: b

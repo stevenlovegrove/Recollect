@@ -1,0 +1,12 @@
+id: 01a19940-1392-7011-9c30-e8743799616c
+components:
+  name: Over £200
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: trip > 200
+links:
+- to: 01a19940-1392-7011-9c30-e873b776e757
+  components:
+    label: trip

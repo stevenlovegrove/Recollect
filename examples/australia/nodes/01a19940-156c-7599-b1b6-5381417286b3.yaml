@@ -1,0 +1,15 @@
+id: 01a19940-156c-7599-b1b6-5381417286b3
+components:
+  name: Northern Territory ≠ South Australia
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: a != b
+links:
+- to: 01a19940-156c-7599-b1b6-5378e5c4ea09
+  components:
+    label: a
+- to: 01a19940-156c-7599-b1b6-537903b2df28
+  components:
+    label: b

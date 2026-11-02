@@ -1,0 +1,13 @@
+id: 01a19940-17b4-73e7-8d26-5652b4642152
+components:
+  name: The island
+  requires: null
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: all(constraint)
+links:
+- to: 01a19940-17b4-73e7-8d26-5656d28233c5
+  components:
+    label: constraint

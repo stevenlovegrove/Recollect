@@ -1,0 +1,15 @@
+id: 01a19940-1677-7677-a4fe-5bb4ab3fdecb
+components:
+  name: Cell C3 ≠ Cell D3
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: a != b
+links:
+- to: 01a19940-1677-7677-a4fe-5b808f6d7109
+  components:
+    label: a
+- to: 01a19940-1677-7677-a4fe-5b84b2d1dc83
+  components:
+    label: b

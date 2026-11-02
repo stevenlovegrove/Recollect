@@ -1,0 +1,15 @@
+id: 01a19940-17d8-70db-9c6e-aa0baa5a60a3
+components:
+  name: The Spaniard = Dog
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: a = b
+links:
+- to: 01a19940-17d8-70db-9c6e-a9f22a0f7534
+  components:
+    label: a
+- to: 01a19940-17d8-70db-9c6e-a9fb5cea0512
+  components:
+    label: b

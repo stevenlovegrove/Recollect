@@ -1,0 +1,15 @@
+id: 01a19940-17d8-70db-9c6e-aa1e1c5b7f9c
+components:
+  name: The Spaniard ≠ The Japanese
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: a != b
+links:
+- to: 01a19940-17d8-70db-9c6e-a9f22a0f7534
+  components:
+    label: a
+- to: 01a19940-17d8-70db-9c6e-a9f580180b93
+  components:
+    label: b

@@ -1,0 +1,5 @@
+id: 01a19940-12ef-7089-b84f-9a6b430ad124
+components:
+  body: Done when the reprojection error stays under a pixel on held-out scenes.
+  goal: null
+  name: Calibrate the lidar and camera

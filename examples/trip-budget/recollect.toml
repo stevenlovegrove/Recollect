@@ -1,0 +1,3 @@
+name = "Trip budget"
+about = "A budget with decisions left open: the total is exact in every world, and so is what would put it over."
+systems = ["plan"]

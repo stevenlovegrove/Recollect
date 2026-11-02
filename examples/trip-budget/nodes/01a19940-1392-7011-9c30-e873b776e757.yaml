@@ -1,0 +1,15 @@
+id: 01a19940-1392-7011-9c30-e873b776e757
+components:
+  name: Trip
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: travel + stay
+links:
+- to: 01a19940-1392-7011-9c30-e86d312176bd
+  components:
+    label: travel
+- to: 01a19940-1392-7011-9c30-e870513e0284
+  components:
+    label: stay

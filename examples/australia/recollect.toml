@@ -1,0 +1,3 @@
+name = "Colouring Australia"
+about = "Each region is a choice and each border a constraint. There are 18 colourings. Pin a region and see what that forces."
+systems = []

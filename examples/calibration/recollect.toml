@@ -1,0 +1,3 @@
+name = "Calibration plan"
+about = "Three ways to calibrate, plus a gap for what nobody has thought of. The decision is held open, and every value is the exact set of worlds where it's true."
+systems = ["plan", "schedule"]

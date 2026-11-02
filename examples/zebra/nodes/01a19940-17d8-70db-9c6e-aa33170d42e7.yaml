@@ -1,0 +1,15 @@
+id: 01a19940-17d8-70db-9c6e-aa33170d42e7
+components:
+  name: Fox ≠ Horse
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: a != b
+links:
+- to: 01a19940-17d8-70db-9c6e-a9fdcd42b024
+  components:
+    label: a
+- to: 01a19940-17d8-70db-9c6e-a9fe7b04e788
+  components:
+    label: b

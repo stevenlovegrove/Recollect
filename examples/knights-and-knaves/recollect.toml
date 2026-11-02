@@ -1,0 +1,3 @@
+name = "Knights and knaves"
+about = "A says “we are both knaves”. Knights always tell the truth, and knaves always lie."
+systems = []

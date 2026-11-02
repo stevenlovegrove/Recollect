@@ -1,0 +1,15 @@
+id: 01a19940-1354-73eb-89e7-a1b0b99e3054
+components:
+  name: Gears
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: quantity * price
+links:
+- to: 01a19940-1354-73eb-89e7-a1aef1c11382
+  components:
+    label: quantity
+- to: 01a19940-1354-73eb-89e7-a1af2bd1359e
+  components:
+    label: price

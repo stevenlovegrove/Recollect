@@ -1,0 +1,8 @@
+id: 01a19940-1392-7011-9c30-e872f2817d6d
+components:
+  name: Hotel
+  value: 150.0
+links:
+- to: 01a19940-1392-7011-9c30-e870513e0284
+  components:
+    alternative: {}

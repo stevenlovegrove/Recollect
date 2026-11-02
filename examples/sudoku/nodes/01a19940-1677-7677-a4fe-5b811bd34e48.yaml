@@ -1,0 +1,11 @@
+id: 01a19940-1677-7677-a4fe-5b811bd34e48
+components:
+  at:
+    col: 3
+    row: 2
+  domain:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  name: Cell C4

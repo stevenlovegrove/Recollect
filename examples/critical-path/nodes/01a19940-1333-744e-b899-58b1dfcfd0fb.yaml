@@ -1,0 +1,9 @@
+id: 01a19940-1333-744e-b899-58b1dfcfd0fb
+components:
+  estimate: 2.0
+  name: Wire the rooms
+  task: {}
+links:
+- to: 01a19940-1333-744e-b899-58b0955edbe1
+  components:
+    depends_on: {}

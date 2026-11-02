@@ -1,0 +1,15 @@
+id: 01a19940-17d8-70db-9c6e-aa0dab26640f
+components:
+  name: The Ukrainian = Tea
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: a = b
+links:
+- to: 01a19940-17d8-70db-9c6e-a9f3bf5b313b
+  components:
+    label: a
+- to: 01a19940-17d8-70db-9c6e-aa01816aeb33
+  components:
+    label: b

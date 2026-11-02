@@ -1,0 +1,3 @@
+name = "Eight queens"
+about = "One choice per row, and one constraint per pair of rows. There are 92 boards."
+systems = []

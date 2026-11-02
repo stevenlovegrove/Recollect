@@ -1,0 +1,15 @@
+id: 01a19940-156c-7599-b1b6-5387d50afe48
+components:
+  name: New South Wales ≠ Victoria
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: a != b
+links:
+- to: 01a19940-156c-7599-b1b6-537b9003ee96
+  components:
+    label: a
+- to: 01a19940-156c-7599-b1b6-537cfbb97f8b
+  components:
+    label: b

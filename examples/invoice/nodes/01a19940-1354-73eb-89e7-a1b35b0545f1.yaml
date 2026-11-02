@@ -1,0 +1,15 @@
+id: 01a19940-1354-73eb-89e7-a1b35b0545f1
+components:
+  name: Total
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: subtotal + tax
+links:
+- to: 01a19940-1354-73eb-89e7-a1ad199854ad
+  components:
+    label: subtotal
+- to: 01a19940-1354-73eb-89e7-a1b2605107e6
+  components:
+    label: tax

@@ -1,0 +1,15 @@
+id: 01a19940-156c-7599-b1b6-5382bf8c3bdb
+components:
+  name: Northern Territory ≠ Queensland
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: a != b
+links:
+- to: 01a19940-156c-7599-b1b6-5378e5c4ea09
+  components:
+    label: a
+- to: 01a19940-156c-7599-b1b6-537aef6645a4
+  components:
+    label: b
