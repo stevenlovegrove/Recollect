@@ -663,6 +663,51 @@ async fn held_out_tiers_and_a_loan_with_a_macro() {
     assert_eq!(cell(&c.view(json!({})).await, "Payment", "value")["value"], 888.49);
 }
 
+/// Choosing a car: what each costs a year with mileage you can only guess at, and which can make a trip
+/// you'd like to take without stopping.
+#[tokio::test]
+async fn held_out_choosing_a_car() {
+    let c = Client::new();
+    let dir = tempfile::tempdir().unwrap();
+    c.post("/api/workspaces/new", json!({ "path": dir.path().join("car"), "name": "Car", "systems": ["plan"] })).await;
+    let option = |id: &str, name: &str, of: &str, value: f64, weight: f64| json!({ "op": "add_node", "id": id, "name": name, "components": { "value": value }, "links": [{ "to": of, "kind": "alternative", "value": { "weight": weight } }] });
+    let car = |id: &str, name: &str, price: f64, per_mile: f64, insurance: f64, range: f64| {
+        json!({ "op": "add_node", "id": id, "name": name, "components": { "price": price, "per_mile": per_mile, "insurance": insurance, "range": range },
+            "formula": "self.price / years + miles * self.per_mile + self.insurance", "labels": { "years": "new:years", "miles": "new:miles" },
+            "links": [{ "to": "new:car", "kind": "alternative", "value": {} }] })
+    };
+    let done = c.post("/api/ops", json!({ "ops": [
+        { "op": "add_node", "id": "new:years", "name": "Years kept", "components": { "value": 5 } },
+        { "op": "add_node", "id": "new:miles", "name": "Miles a year", "components": { "decision": {} }, "formula": "pick(in.alternative)" },
+        option("new:light", "Light use", "new:miles", 6000.0, 1.0), option("new:typical", "Typical", "new:miles", 10000.0, 2.0), option("new:heavy", "Heavy", "new:miles", 16000.0, 1.0),
+        { "op": "add_node", "id": "new:car", "name": "Which car?", "components": { "decision": {} }, "formula": "pick(in.alternative)" },
+        car("new:hatch", "Hatchback", 18000.0, 0.12, 500.0, 450.0), car("new:estate", "Estate", 24000.0, 0.13, 550.0, 500.0), car("new:ev", "Electric", 32000.0, 0.05, 600.0, 250.0),
+        { "op": "add_node", "id": "new:trip", "name": "To Edinburgh", "components": { "value": 400 } },
+        { "op": "add_node", "id": "new:reaches", "name": "Gets to Edinburgh without stopping",
+          "formula": "if(chose(car, hatch), hatch.range, if(chose(car, estate), estate.range, ev.range)) >= trip",
+          "labels": { "car": "new:car", "hatch": "new:hatch", "estate": "new:estate", "ev": "new:ev", "trip": "new:trip" } },
+    ] })).await;
+    let v = c.view(json!({})).await;
+    for n in v["nodes"].as_array().unwrap() {
+        for (k, cell) in n["cells"].as_object().unwrap() {
+            assert!(cell["error"].is_null(), "{} {k}: {cell}", n["name"]);
+        }
+    }
+
+    // What each car costs a year, over the mileage you might do. It doesn't depend on which car is chosen,
+    // so the expected value is that car's alone.
+    let expected = |name: &str| -> f64 {
+        let cases = cell(&v, name, "value")["shown"]["cases"].as_array().unwrap_or_else(|| panic!("{name}: {}", cell(&v, name, "value"))).clone();
+        cases.iter().map(|c| c["value"].as_f64().unwrap() * c["when"]["prob"].as_f64().unwrap()).sum()
+    };
+    assert!((expected("Hatchback") - 5360.0).abs() < 1e-6, "{}", expected("Hatchback"));
+    assert!((expected("Estate") - 6715.0).abs() < 1e-6, "{}", expected("Estate"));
+    assert!((expected("Electric") - 7525.0).abs() < 1e-6, "{}", expected("Electric"));
+
+    assert_eq!(when(&v, "Gets to Edinburgh without stopping", "value"), "Which car?∈{Hatchback,Estate}");
+    let _ = done;
+}
+
 #[tokio::test]
 async fn part_of_a_formula_can_be_tried_with_nothing_changed() {
     let c = Client::new();

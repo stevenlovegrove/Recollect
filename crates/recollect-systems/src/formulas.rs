@@ -564,7 +564,7 @@ fn type_of(cx: &Cx, part: &Part, types: &[Type], closed: &Closed) -> Result<Type
             let (ta, tb) = (&types[*a], &types[*b]);
             let sym = op.symbol();
             match op {
-                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Max | BinOp::Min => {
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Max | BinOp::Min => {
                     if numberish(ta) && numberish(tb) { Ok(Type::Number) } else { failed(format!("{sym} needs numbers, not {} and {}", ta.word(), tb.word())) }
                 }
                 BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
@@ -815,7 +815,7 @@ fn binary(op: BinOp, a: &Ev, b: &Ev) -> Result<Ev, Error> {
             let (yes, undefined) = e.truth()?;
             Ok(Ev::Truth { yes, undefined })
         }
-        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Max | BinOp::Min => {
+        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Max | BinOp::Min => {
             let wrong = StdCell::new(false);
             let out = zip(&a.data(), &b.data(), |x, y| {
                 numbers(x, y, |x, y| {
@@ -823,6 +823,8 @@ fn binary(op: BinOp, a: &Ev, b: &Ev) -> Result<Ev, Error> {
                         BinOp::Add => x + y,
                         BinOp::Sub => x - y,
                         BinOp::Mul => x * y,
+                        // A negative number to a fractional power isn't a number: NaN, so undefined.
+                        BinOp::Pow => x.powf(y),
                         BinOp::Max => x.max(y),
                         BinOp::Min => x.min(y),
                         _ => x / y,

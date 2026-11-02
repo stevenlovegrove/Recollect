@@ -234,7 +234,8 @@ not      := "!" not | compare
 compare  := sum (("=" | "!=" | "<" | "<=" | ">" | ">=") sum)?
 sum      := term (("+" | "-") term)*
 term     := unary (("*" | "/") unary)*
-unary    := "-" unary | atom
+unary    := "-" unary | power
+power    := atom ("^" unary)?
 atom     := number | string | "true" | "false" | "undefined" | path | call | "(" expr ")"
 path     := name ("." name)*
 call     := name "(" (name "in" path ":" expr ("," expr)? | expr ("," expr)*)? ")"

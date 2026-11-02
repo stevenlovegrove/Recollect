@@ -99,6 +99,7 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    Pow,
     Eq,
     Ne,
     Lt,
@@ -118,6 +119,7 @@ impl BinOp {
             BinOp::Sub => "-",
             BinOp::Mul => "*",
             BinOp::Div => "/",
+            BinOp::Pow => "^",
             BinOp::Eq => "=",
             BinOp::Ne => "!=",
             BinOp::Lt => "<",
@@ -251,7 +253,7 @@ enum Tok {
     Sym(&'static str),
 }
 
-const SYMBOLS: &[&str] = &["&&", "||", "!=", "<=", ">=", "(", ")", ",", ".", ":", "+", "-", "*", "/", "=", "<", ">", "!"];
+const SYMBOLS: &[&str] = &["&&", "||", "!=", "<=", ">=", "(", ")", ",", ".", ":", "+", "-", "*", "/", "^", "=", "<", ">", "!"];
 
 fn tokens(text: &str) -> Result<Vec<(Tok, usize)>, String> {
     let chars: Vec<char> = text.chars().collect();
@@ -416,7 +418,19 @@ impl Parser {
             self.depth -= 1;
             return Ok(e);
         }
-        self.atom()
+        self.power()
+    }
+
+    /// `a ^ b`, from the right as it's usually read, so `2 ^ 3 ^ 2` is `2 ^ 9`, and `-2 ^ 2` is `-(2 ^ 2)`.
+    fn power(&mut self) -> Result<Expr, String> {
+        let base = self.atom()?;
+        if !self.eat("^") {
+            return Ok(base);
+        }
+        self.deeper()?;
+        let e = Expr::Bin(BinOp::Pow, Box::new(base), Box::new(self.unary()?));
+        self.depth -= 1;
+        Ok(e)
     }
 
     fn path_from(&mut self, first: String) -> Result<Vec<String>, String> {
@@ -553,6 +567,11 @@ mod tests {
         assert_eq!(e, Expr::Bin(BinOp::And, Box::new(Expr::Not(Box::new(eq))), Box::new(path("c"))));
         assert_eq!(parse("(a)").unwrap(), path("a"));
         assert_eq!(parse("1 - 2 - 3").unwrap(), Expr::Bin(BinOp::Sub, Box::new(Expr::Bin(BinOp::Sub, Box::new(Expr::Lit(Val::Num(1.0))), Box::new(Expr::Lit(Val::Num(2.0))))), Box::new(Expr::Lit(Val::Num(3.0)))), "left to right");
+        let pow = |a: Expr, b: Expr| Expr::Bin(BinOp::Pow, Box::new(a), Box::new(b));
+        let n = |x: f64| Expr::Lit(Val::Num(x));
+        assert_eq!(parse("2 ^ 3 ^ 2").unwrap(), pow(n(2.0), pow(n(3.0), n(2.0))), "a power from the right");
+        assert_eq!(parse("-a ^ 2").unwrap(), Expr::Neg(Box::new(pow(path("a"), n(2.0)))), "before negating");
+        assert_eq!(parse("a * b ^ -1").unwrap(), Expr::Bin(BinOp::Mul, Box::new(path("a")), Box::new(pow(path("b"), Expr::Neg(Box::new(n(1.0)))))), "and before multiplying");
     }
 
     #[test]

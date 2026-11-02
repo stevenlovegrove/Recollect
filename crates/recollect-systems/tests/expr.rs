@@ -133,7 +133,8 @@ fn number(rng: &mut Rng, depth: usize) -> String {
         };
     }
     let d = depth - 1;
-    match rng.next(9) {
+    match rng.next(10) {
+        8 => format!("({} ^ {})", number(rng, d), number(rng, d)),
         0 => format!("({} + {})", number(rng, d), number(rng, d)),
         1 => format!("({} - {})", number(rng, d), number(rng, d)),
         2 => format!("({} * {})", number(rng, d), number(rng, d)),
@@ -231,6 +232,7 @@ fn plain(e: &Expr, vars: &BTreeMap<&str, Val>) -> Val {
                         BinOp::Sub => finite(x - y),
                         BinOp::Mul => finite(x * y),
                         BinOp::Div => finite(x / y),
+                        BinOp::Pow => finite(x.powf(y)),
                         BinOp::Lt => Bool(x < y),
                         BinOp::Le => Bool(x <= y),
                         BinOp::Gt => Bool(x > y),
