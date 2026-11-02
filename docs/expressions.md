@@ -377,7 +377,28 @@ If one needs new Rust, that's the finding, and it goes in this document.
 
 1. **Should `requires` narrow the plan's views?** Say a budget node rules out free-form. It could dim that option on the Decisions tab and hide its work, or only show it on the Worlds tab with a notice saying why. It does only the Worlds tab today.
 2. **Is keeping `Domain` consistent enough?** It's the one place an option isn't a node. The alternative is making every option a node and having the map collapse them, which costs 125 nodes on the zebra puzzle.
-3. **Should a workspace be able to make a whole column?** A system can, with `formulas::defaults_to`. Letting a workspace do it needs somewhere for a default to live that isn't Rust.
+3. **Should a workspace be able to make a whole column?** A system can, with `formulas::defaults_to`. A workspace does it with a kind: see [Kinds](#kinds). What a kind can't yet do is give its instances a system's cells, such as making each one a task.
+
+## Kinds
+
+A workspace's own cells, like a car's `price` or `range`, are any components no system declares, fills or gives a default to. A formula can fill one like any other cell, and its type is checked as it runs.
+
+When several nodes are the same kind of thing, a node for the kind says what they have in common. Each links to it by `is_a`, and takes any of those cells it doesn't say for itself from it:
+
+```
+Car:        yearly = self.price * (1 - 0.85 ^ years) / years + miles * self.per_mile + self.insurance
+Hatchback:  is_a Car, price 18000, per_mile 0.12, insurance 500
+```
+
+- **A value is taken as it is, and a formula runs for each node of that kind.** `self` is the hatchback, so it's the hatchback's price.
+- **Names are labelled once, on the kind.** A formula taken from a kind may follow links from where it's written as well as from the node it runs for, so `miles` doesn't need a link from every car.
+- **A node's own word wins,** and taking it away brings the kind's back, as for a default. An electric car can add a charger to its own `yearly`.
+- **A kind can have a kind.** The nearest that says something is the one used: a node's kinds in the order they were made, then theirs. A loop of kinds goes round once and stops.
+- **What a system owns stays the system's.** A kind can't give its instances a name, make them done or make them tasks.
+
+It's in the engine, rather than written as a default rule, because which cells a node has depends on its kind, and memos have to follow changes to the kind. Changing a kind's cell reaches everything that takes it, however far down, and linking or unlinking a kind reaches every cell the node could take from it. `tests/kinds.rs` checks this against a newly built graph through random edits.
+
+A decision can give any cell of whichever option it lands on: `range` on "Which car?" is `pick(o in in.alternative: o.range)`, and a constraint reads `car.range >= trip`.
 
 ## What changed in building it
 

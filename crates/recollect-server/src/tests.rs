@@ -671,22 +671,25 @@ async fn held_out_choosing_a_car() {
     let dir = tempfile::tempdir().unwrap();
     c.post("/api/workspaces/new", json!({ "path": dir.path().join("car"), "name": "Car", "systems": ["plan"] })).await;
     let option = |id: &str, name: &str, of: &str, value: f64, weight: f64| json!({ "op": "add_node", "id": id, "name": name, "components": { "value": value }, "links": [{ "to": of, "kind": "alternative", "value": { "weight": weight } }] });
+    // A car says what it is, and its kind says what follows from that.
     let car = |id: &str, name: &str, price: f64, per_mile: f64, insurance: f64, range: f64| {
         json!({ "op": "add_node", "id": id, "name": name, "components": { "price": price, "per_mile": per_mile, "insurance": insurance, "range": range },
-            "formula": "self.price / years + miles * self.per_mile + self.insurance", "labels": { "years": "new:years", "miles": "new:miles" },
-            "links": [{ "to": "new:car", "kind": "alternative", "value": {} }] })
+            "links": [{ "to": "new:which", "kind": "alternative", "value": {} }, { "to": "new:kind", "kind": "is_a" }] })
     };
+    let cost = "self.price * (1 - 0.85 ^ years) / years + miles * self.per_mile + self.insurance";
     let done = c.post("/api/ops", json!({ "ops": [
         { "op": "add_node", "id": "new:years", "name": "Years kept", "components": { "value": 5 } },
         { "op": "add_node", "id": "new:miles", "name": "Miles a year", "components": { "decision": {} }, "formula": "pick(in.alternative)" },
         option("new:light", "Light use", "new:miles", 6000.0, 1.0), option("new:typical", "Typical", "new:miles", 10000.0, 2.0), option("new:heavy", "Heavy", "new:miles", 16000.0, 1.0),
-        { "op": "add_node", "id": "new:car", "name": "Which car?", "components": { "decision": {} }, "formula": "pick(in.alternative)" },
+        { "op": "add_node", "id": "new:kind", "name": "Car", "components": { "value": 1, "task": {} }, "links": [{ "to": "new:years", "kind": "label", "value": "years" }, { "to": "new:miles", "kind": "label", "value": "miles" }] },
+        { "op": "set", "id": "new:kind", "component": "yearly", "formula": cost },
+        { "op": "add_node", "id": "new:which", "name": "Which car?", "components": { "decision": {} }, "formula": "pick(in.alternative)" },
+        { "op": "set", "id": "new:which", "component": "range", "formula": "pick(o in in.alternative: o.range)" },
         car("new:hatch", "Hatchback", 18000.0, 0.12, 500.0, 450.0), car("new:estate", "Estate", 24000.0, 0.13, 550.0, 500.0), car("new:ev", "Electric", 32000.0, 0.05, 600.0, 250.0),
         { "op": "add_node", "id": "new:trip", "name": "To Edinburgh", "components": { "value": 400 } },
-        { "op": "add_node", "id": "new:reaches", "name": "Gets to Edinburgh without stopping",
-          "formula": "if(chose(car, hatch), hatch.range, if(chose(car, estate), estate.range, ev.range)) >= trip",
-          "labels": { "car": "new:car", "hatch": "new:hatch", "estate": "new:estate", "ev": "new:ev", "trip": "new:trip" } },
+        { "op": "add_node", "id": "new:reaches", "name": "Gets to Edinburgh without stopping", "formula": "car.range >= trip", "labels": { "car": "new:which", "trip": "new:trip" } },
     ] })).await;
+    let ids = |k: &str| done["created"][k].as_str().unwrap().to_string();
     let v = c.view(json!({})).await;
     for n in v["nodes"].as_array().unwrap() {
         for (k, cell) in n["cells"].as_object().unwrap() {
@@ -696,16 +699,38 @@ async fn held_out_choosing_a_car() {
 
     // What each car costs a year, over the mileage you might do. It doesn't depend on which car is chosen,
     // so the expected value is that car's alone.
-    let expected = |name: &str| -> f64 {
-        let cases = cell(&v, name, "value")["shown"]["cases"].as_array().unwrap_or_else(|| panic!("{name}: {}", cell(&v, name, "value"))).clone();
+    let expected = |v: &Value, name: &str| -> f64 {
+        let cases = cell(v, name, "yearly")["shown"]["cases"].as_array().unwrap_or_else(|| panic!("{name}: {}", cell(v, name, "yearly"))).clone();
         cases.iter().map(|c| c["value"].as_f64().unwrap() * c["when"]["prob"].as_f64().unwrap()).sum()
     };
-    assert!((expected("Hatchback") - 5360.0).abs() < 1e-6, "{}", expected("Hatchback"));
-    assert!((expected("Estate") - 6715.0).abs() < 1e-6, "{}", expected("Estate"));
-    assert!((expected("Electric") - 7525.0).abs() < 1e-6, "{}", expected("Electric"));
+    // Mileage is 10,500 on average: 6,000, 10,000 twice as likely, and 16,000.
+    let by_hand = |price: f64, per_mile: f64, insurance: f64| price * (1.0 - 0.85f64.powf(5.0)) / 5.0 + 10_500.0 * per_mile + insurance;
+    for (name, want) in [("Hatchback", by_hand(18000.0, 0.12, 500.0)), ("Estate", by_hand(24000.0, 0.13, 550.0)), ("Electric", by_hand(32000.0, 0.05, 600.0))] {
+        assert!((expected(&v, name) - want).abs() < 1e-6, "{name}: {} and {want}", expected(&v, name));
+    }
+    let hatch = cell(&v, "Hatchback", "yearly");
+    assert_eq!((&hatch["own"], &hatch["kind"], &hatch["formula"]), (&json!(false), &json!(ids("new:kind")), &json!(cost)), "it's the kind's, and says so: {hatch}");
+    let cells = node(&v, "Hatchback")["cells"].as_object().unwrap();
+    assert!(!cells.contains_key("value") && !cells.contains_key("task"), "and what a system says is the system's, not the kind's: {cells:?}");
 
+    // The decision's range is whichever car it lands on, so anything can read it.
     assert_eq!(when(&v, "Gets to Edinburgh without stopping", "value"), "Which car?∈{Hatchback,Estate}");
-    let _ = done;
+
+    // A car can say otherwise for itself, such as needing a charger at home, and goes back to its kind's
+    // when that's taken away.
+    let ev = ids("new:ev");
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": ev, "component": "yearly", "formula": format!("{cost} + 200"), "labels": { "years": ids("new:years"), "miles": ids("new:miles") } }] })).await;
+    let v = c.view(json!({})).await;
+    assert!((expected(&v, "Electric") - by_hand(32000.0, 0.05, 600.0) - 200.0).abs() < 1e-6);
+    assert_eq!(cell(&v, "Electric", "yearly")["own"], true);
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": ev, "component": "yearly", "labels": {} }] })).await;
+    let v = c.view(json!({})).await;
+    assert!((expected(&v, "Electric") - by_hand(32000.0, 0.05, 600.0)).abs() < 1e-6);
+
+    // And the kind changes every car at once.
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": ids("new:kind"), "component": "yearly", "formula": format!("{cost} + 100") }] })).await;
+    let v = c.view(json!({})).await;
+    assert!((expected(&v, "Hatchback") - by_hand(18000.0, 0.12, 500.0) - 100.0).abs() < 1e-6);
 }
 
 #[tokio::test]

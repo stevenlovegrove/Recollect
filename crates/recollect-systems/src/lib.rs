@@ -184,7 +184,19 @@ impl Catalog {
 
     /// This cell as a world value, if that's what it is.
     pub fn shown(&self, g: &Graph, e: Entity, name: &str) -> Option<Cell<Shown>> {
-        self.shown.get(name).map(|f| f(g, e))
+        if let Some(f) = self.shown.get(name) {
+            return Some(f(g, e));
+        }
+        // The workspace's own cells read the way a value does, whether typed in or worked out.
+        if self.components.contains_key(name) || self.is_internal(name) {
+            return None;
+        }
+        formulas::shown_unowned(g, e, name)
+    }
+
+    /// Whether this is one of the workspace's own cells, which no system says anything about.
+    pub fn is_own_cell(&self, name: &str) -> bool {
+        !self.components.contains_key(name) && !self.is_internal(name)
     }
 
     /// The worlds that count: those where every constraint holds. `None` if nothing narrows them.

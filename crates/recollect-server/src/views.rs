@@ -28,6 +28,9 @@ pub struct CellView {
     pub rule: Option<String>,
     /// Whether this node says so itself, rather than taking the default for every node.
     pub own: bool,
+    /// The kind it's taken from, if it is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<Entity>,
     /// The formula, if one backs it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub formula: Option<String>,
@@ -201,7 +204,8 @@ fn cell_view(g: &Graph, catalog: &Catalog, e: Entity, c: &str, picks: &Picks, la
     let source = if rule.is_some() { "rule" } else { "stored" };
     let own = g.has_own(e, c);
     let formula = g.saved_rule(e, c).filter(|r| r.rule == EXPR).and_then(|r| formula_text(&r.params).ok().map(String::from));
-    let cell = |value, shown, error| CellView { source, rule: rule.clone(), own, formula: formula.clone(), value, shown, error };
+    let kind = g.kind_of(e, c);
+    let cell = |value, shown, error| CellView { source, rule: rule.clone(), own, kind, formula: formula.clone(), value, shown, error };
     if let Some(shown) = catalog.shown(g, e, c) {
         return match shown {
             Ok(None) => None,

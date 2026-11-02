@@ -26,6 +26,12 @@ that disagrees with what's beneath gets a notice, so to finish something early, 
 `dropped` means deliberately out of the picture. Any cell a formula can fill can be typed over like this, and \
 removing what was typed brings back what it's worked out to.\n\
 \n\
+A workspace can have cells of its own, such as `price` or `range`, which hold a value or a formula like any other. When several nodes \
+are the same kind of thing, make a node for the kind and link each to it by `is_a`: they take whatever of those cells they don't say \
+for themselves from it, and a formula on the kind runs for each of them, with `self` meaning that node and its other names labelled \
+once on the kind. A car's price goes on the car, and how a price becomes a cost a year goes on Car. A decision can give any cell of \
+whichever option it lands on, as `range` = `pick(o in in.alternative: o.range)`.\n\
+\n\
 Values that depend on open decisions are exact: each is the set of worlds where it holds, shown as a formula such as `calib∈{cad,free}`. \
 A world is one way every open choice could land. Tools that take a `world` read everything as it would be with those choices pinned, \
 keyed by choice and option, by name or handle. That's how to answer what-if questions, and it's the same code as really deciding.\n\

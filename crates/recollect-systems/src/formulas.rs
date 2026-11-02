@@ -67,6 +67,11 @@ pub struct At {
 #[component]
 pub struct Label(pub String);
 
+/// Link: what kind of thing this is. A node takes any of the workspace's own cells it doesn't say for
+/// itself from its kind, and a formula taken that way reads what the kind has labelled.
+#[component("is_a")]
+pub struct IsA;
+
 /// Only the worlds where this node's value is true count.
 #[component]
 pub struct Requires;
@@ -198,7 +203,10 @@ struct Expander<'c, 'a> {
 impl<'c, 'a> Expander<'c, 'a> {
     fn new(cx: &'c Cx<'a>) -> Result<Self, Error> {
         let mut labels: BTreeMap<String, Vec<Entity>> = BTreeMap::new();
-        for (to, Label(name)) in cx.outgoing::<Label>()? {
+        // Names are what the node the formula's written on has labelled, which is a kind's for a
+        // formula taken from one.
+        for (to, label) in cx.outgoing_from_origin(Label::NAME)? {
+            let Label(name) = label.decode().map_err(|e| Error::Malformed { cell: (cx.origin(), Label::NAME.to_string()), detail: e.to_string() })?;
             labels.entry(name).or_default().push(to);
         }
         Ok(Expander { cx, labels, parts: RefCell::new(Vec::new()), steps: StdCell::new(0) })
@@ -998,6 +1006,33 @@ fn value_cell(c: Cond<Val>) -> Result<ValueCell, Error> {
     Ok(ValueCell(Worldly(c)))
 }
 
+/// A formula on one of the workspace's own cells, such as a price or a range, which no system says
+/// anything about. Its type is checked as it runs.
+#[allow(clippy::type_complexity)]
+fn build_unowned(_component: &str, params: &Value) -> Result<(Inputs, std::sync::Arc<dyn Fn(&Cx) -> Cell<Value> + Send + Sync>), String> {
+    let text = formula_text(params)?.to_string();
+    let e = expr::parse(&text)?;
+    let inputs = inputs_of(&e);
+    Ok((
+        inputs,
+        std::sync::Arc::new(move |cx: &Cx| {
+            let c = work_out(cx, &e, &Type::Any).map_err(|err| in_text(err, &text))?;
+            Ok(Some(serde_json::to_value(Worldly(c)).expect("values serialise")))
+        }),
+    ))
+}
+
+/// One of the workspace's own cells as a world value, if it holds what a formula would.
+pub(crate) fn shown_unowned(g: &Graph, e: Entity, component: &str) -> Option<Cell<Shown>> {
+    let r = match g.get_runtime(e, component) {
+        Ok(Some(r)) => r,
+        Ok(None) => return Some(Ok(None)),
+        Err(err) => return Some(Err(err)),
+    };
+    let w: Worldly<Val> = serde_json::from_value(r.value).ok()?;
+    Some(Ok(Some(shown_of(&ValueCell(w)))))
+}
+
 /// A choice's value, for a node with a domain. If its options are all numbers, it reads as numbers.
 #[recollect_graph::rule("formulas/choice")]
 pub struct ChoiceOf;
@@ -1093,9 +1128,11 @@ pub fn install(reg: &mut Registry) {
     fills::<ValueCell>(reg, Type::Any, value_cell);
     fills::<TryValue>(reg, Type::Any, |c| Ok(TryValue(Worldly(c))));
     reg.rule_on::<TryExpansion>(EXPR, build_expansion);
+    reg.rule_on_unowned(EXPR, build_unowned);
     reg.set_default(ChoiceOf).set_default(TypeOf).set_default(MacroOf);
     reg.on_nodes::<ValueCell>().on_nodes::<Domain>().on_nodes::<At>().on_nodes::<Requires>().on_nodes::<Macro>();
     reg.declare(Label::NAME, Place::Link, Some(valid_label));
+    reg.on_links::<IsA>().inherit_through(IsA::NAME);
 }
 
 /// How a value reads. If it's only ever true or false, it reads as the worlds where it's true.
@@ -1127,5 +1164,6 @@ pub fn describe(c: &mut Catalog) {
     c.internal::<TryExpansion>();
     let label = c.arranging::<Label>("The name a formula on this node uses for that one.", json!(""));
     label.reversed = true;
+    c.link::<IsA>("What kind of thing this is: it takes any cell of its own it doesn't say from there.", Value::Null);
     c.constraint_on(requirement);
 }
