@@ -31,6 +31,11 @@ export interface Cell {
   error?: string;
 }
 
+export interface CellRef {
+  node: string;
+  component: string;
+}
+
 export interface GraphNode {
   id: string;
   name: string;
@@ -283,6 +288,8 @@ export const api = {
   checkout: (seq: number, why = "") => post<void>("/api/checkout", { seq, why }),
   undo: (seq: number, why = "") => post<{ seq: number }>("/api/undo", { seq, why }),
   tryFormula: (node: string, text: string, world: World) => post<Tried>("/api/try", { node, text, world }),
+  /** What these cells would be with `set` typed in as each value in turn, with nothing changed. */
+  sweep: (set: CellRef, values: number[], read: CellRef[], world: World) => post<{ at: number; cells: (Cell | null)[] }[]>("/api/sweep", { set, values, read, world }),
   history: (node?: string) => req<EventView[]>(`/api/history${node ? `?node=${encodeURIComponent(node)}` : ""}`),
   files: () => req<FileInfo[]>("/api/files"),
   file: (path: string) => req<FileText>(`/api/file?path=${encodeURIComponent(path)}`),

@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { api, type Cell, type Matrix, type MatrixOption, type MatrixRow, type VarView, type View } from "../api";
 import type { ViewProps } from "./MapView";
 import type { Workspace } from "../workspace";
-import { Formula, NodeChip, valueText } from "../bits";
+import { Formula, NodeChip, casesOf, valueText } from "../bits";
+import { SweepChart, type Line } from "./SweepChart";
 import { nodeColor, pct } from "../theme";
 import { askWhy } from "../Ask";
 
@@ -250,7 +251,9 @@ type Column = { node: string; cell: string; title: string; of: "option" | "elsew
 function CompareTable({ m, ws, onSelect }: { m: Matrix; ws: Workspace; onSelect: (id: string | null) => void }) {
   const live = m.options.filter((o) => !o.ruled_out && !o.dropped && !o.gap);
   const [views, setViews] = useState<Record<string, View> | null>(null);
-  const key = `${ws.view?.last_seq}|${JSON.stringify(ws.world)}|${live.map((o) => o.id).join()}`;
+  const [charting, setCharting] = useState(false);
+  const [chartCol, setChartCol] = useState<string | null>(null);
+  const key =`${ws.view?.last_seq}|${JSON.stringify(ws.world)}|${live.map((o) => o.id).join()}`;
   useEffect(() => {
     let alive = true;
     Promise.all(live.map((o) => api.view({ ...ws.world, [m.id]: o.id }).then((v) => [o.id, v] as const)))
@@ -279,6 +282,24 @@ function CompareTable({ m, ws, onSelect }: { m: Matrix; ws: Workspace; onSelect:
   }
   if (!columns.length) return null;
 
+  // A chart reads one column for each option, pinned to it, as some other number changes.
+  const colKey = (c: Column) => c.node + "|" + c.cell;
+  const at = (o: string, col: Column) => cellIn(o, col.of === "option" ? o : col.node, col.cell);
+  const numeric = columns.filter((col) => live.some((o) => casesOf(at(o.id, col)).some((v) => typeof v === "number")));
+  // Something worked out is more worth charting than a price typed in, and something that doesn't wait on
+  // another choice can be drawn as a line.
+  const choice = (id: string) => ws.view!.worlds.vars.some((v) => v.id === id && !v.uncertain);
+  // What to vary is a number of its own, or something uncertain as a whole, not one of its options.
+  const optionOfAny = new Set(ws.view!.links.filter((l) => l.kind === "alternative").map((l) => l.from));
+  const drawable = numeric.filter((col) => live.every((o) => !(at(o.id, col)?.vars ?? []).some(choice)));
+  const worked = drawable.find((col) => live.some((o) => at(o.id, col)?.formula)) ?? drawable[0] ?? numeric[0];
+  const charted = numeric.find((c) => colKey(c) === chartCol) ?? worked;
+  const inputs = ws
+    .view!.nodes.filter((n) => !optionOfAny.has(n.id) && n.id !== m.id && !choice(n.id) && casesOf(n.cells.value).some((v) => typeof v === "number"))
+    .map((n) => ({ node: n.id, name: n.name, uncertain: !!ws.view!.worlds.vars.find((v) => v.id === n.id)?.uncertain }))
+    .sort((a, b) => Number(b.uncertain) - Number(a.uncertain));
+  const lines: Line[] = charted ? live.map((o) => ({ id: o.id, name: o.name, read: { node: charted.of === "option" ? o.id : charted.node, component: charted.cell }, world: { ...ws.world, [m.id]: o.id } })) : [];
+
   return (
     <div className="compare-wrap">
     <table className="matrix compare">
@@ -298,13 +319,30 @@ function CompareTable({ m, ws, onSelect }: { m: Matrix; ws: Workspace; onSelect:
             <td className="t">{o.name}</td>
             {columns.map((col) => (
               <td key={col.node + col.cell}>
-                <Summary cell={cellIn(o.id, col.of === "option" ? o.id : col.node, col.cell)} vars={views[o.id].worlds.vars} />
+                <Summary cell={at(o.id, col)} vars={views[o.id].worlds.vars} />
               </td>
             ))}
           </tr>
         ))}
       </tbody>
     </table>
+    {charted && inputs.length > 0 && (
+      <div className="sweep-open small">
+        <button className="link" onClick={() => setCharting(!charting)}>
+          {charting ? "hide the chart" : "chart how these change…"}
+        </button>
+        {charting && numeric.length > 1 && (
+          <select value={colKey(charted)} onChange={(e) => setChartCol(e.target.value)} aria-label="What to chart">
+            {numeric.map((c) => (
+              <option key={colKey(c)} value={colKey(c)}>
+                {c.title}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+    )}
+    {charting && charted && inputs.length > 0 && <SweepChart ws={ws} lines={lines} inputs={inputs} title={charted.title} />}
     </div>
   );
 }

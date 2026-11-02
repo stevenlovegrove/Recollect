@@ -11,7 +11,7 @@ use recollect_systems::formulas::{EXPR, Uncertain, formula_text};
 use recollect_systems::notes::Body;
 use recollect_systems::plan::{self, Matrix, WorkItem};
 use recollect_systems::{Catalog, ComponentInfo, Shown};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::app::Open;
@@ -375,6 +375,42 @@ pub fn try_formula(o: &Open, e: Entity, text: &str, world: &World) -> Tried {
         }
         Err(err) => Tried { shown: None, expansion: None, error: Some(describe_error(&err, &labels)) },
     }
+}
+
+/// A cell, by its node and component.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CellRef {
+    pub node: Entity,
+    pub component: String,
+}
+
+/// Some cells, as they'd be with another cell typed in as one value.
+#[derive(Debug, Serialize)]
+pub struct Swept {
+    pub at: f64,
+    pub cells: Vec<Option<CellView>>,
+}
+
+/// What these cells would be with `set` typed in as each of these values in turn, with nothing changed.
+/// It's the same as typing each one in: a copy of the graph is changed, and it keeps the memos, so each
+/// value only reruns what it reaches.
+pub fn sweep(o: &Open, set: &CellRef, values: &[f64], read: &[CellRef], world: &World) -> Result<Vec<Swept>, String> {
+    let g = o.log.graph();
+    if !g.entities().any(|e| e == set.node) {
+        return Err(format!("there's no node {}", set.node));
+    }
+    let catalog = &o.built.catalog;
+    let labels = Labels(recollect_systems::labels(g));
+    let picks = Space::global().picks(world);
+    let mut copy = g.fork();
+    let mut vars = BTreeMap::new();
+    Ok(values
+        .iter()
+        .map(|&at| {
+            copy.set_runtime(set.node, &set.component, json!(at));
+            Swept { at, cells: read.iter().map(|r| cell_view(&copy, catalog, r.node, &r.component, &picks, &labels, &mut vars)).collect() }
+        })
+        .collect())
 }
 
 /// What the planning system has to say, narrowed to `world`, or nothing if it isn't active.

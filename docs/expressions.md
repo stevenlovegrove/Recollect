@@ -400,6 +400,16 @@ It's in the engine, rather than written as a default rule, because which cells a
 
 A decision can give any cell of whichever option it lands on: `range` on "Which car?" is `pick(o in in.alternative: o.range)`, and a constraint reads `car.range >= trip`.
 
+## Comparing options
+
+Decision 1 keeps world-collapsing functions out of cells, so comparing options is the views' job. They do it from finished values, the same way pinning does:
+
+- **Side by side.** Each open decision on the Decisions tab has a row per option. The columns are the options' own cells, and any value elsewhere that differs depending on which is taken. Each row is the view asked with that option pinned, so it can't disagree with really deciding.
+- **Choices and chances.** A decision marked `uncertain` isn't anyone's to choose, like how far you'll drive, so its weights are how likely each option is. A view says which open choices each cell differs over. What's expected averages over uncertain ones only: averaging over a choice still to be made means nothing, so there it's a range, naming the choice it waits on.
+- **How it changes.** `/api/sweep` gives some cells with another typed in as each of a list of values, on a copy of the graph that keeps its memos. The comparison charts a column against any number that isn't a choice, one line per option, so where one option overtakes another can be read off.
+
+What this leaves out: an expected value can't be a cell, so "expected cost under £4,000" can't be a `requires`.
+
 ## What changed in building it
 
 - **A type column needed a small engine addition.** A type rule has to read whatever the formula reads, and what that is depends on the formula. `Inputs::like` says a rule may follow what the rule on another of its node's components may, and `cx.own_rule` reads how that rule is written.

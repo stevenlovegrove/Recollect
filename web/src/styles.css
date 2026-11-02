@@ -26,6 +26,16 @@
   --c-none: #8a8a82;
   --minimap-mask: rgba(247, 247, 245, 0.6);
 
+  /* Lines in a chart, in this order and never cycled, checked against the panel for colour blindness. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
+  --series-8: #e34948;
+
   color-scheme: light;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 14px;
@@ -55,6 +65,14 @@
     --c-macro: #a8a29e;
     --c-none: #a8a29e;
     --minimap-mask: rgba(20, 20, 19, 0.55);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
     color-scheme: dark;
   }
 }
@@ -1011,6 +1029,72 @@ table.matrix.compare th:not(.t) {
 }
 table.matrix.compare th.elsewhere {
   font-style: italic;
+}
+.sweep-open {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 6px;
+}
+.sweep {
+  margin-top: 8px;
+  position: relative;
+}
+.sweep-controls,
+.sweep-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.sweep-controls input {
+  width: 7em;
+}
+.sweep-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+.sweep-plot {
+  width: 100%;
+  min-width: 420px;
+  height: auto;
+  display: block;
+}
+.sweep-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.sweep-axis {
+  stroke: var(--muted);
+  stroke-width: 1;
+  opacity: 0.6;
+}
+.sweep-cross {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+.sweep-tick {
+  fill: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.sweep-label {
+  fill: var(--text);
+  font-size: 12px;
+}
+.sweep-tip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  font-variant-numeric: tabular-nums;
 }
 table.matrix.compare .yes {
   color: var(--ok, var(--c-task));

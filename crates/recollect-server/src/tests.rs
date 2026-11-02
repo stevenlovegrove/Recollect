@@ -727,6 +727,18 @@ async fn held_out_choosing_a_car() {
     assert_eq!(cell(&v, "Which car?", "value")["vars"], json!(both), "the chosen car's differs with both");
     assert!(cell(&c.view(json!({ ids("new:which"): ids("new:hatch") })).await, "Which car?", "value")["vars"] == json!([ids("new:miles")]), "until the car is pinned");
 
+    // What each car costs as the mileage goes from a little to a lot, which is the same as typing each in,
+    // with nothing changed.
+    let read = |name: &str| json!({ "node": ids(name), "component": "yearly" });
+    let swept = c.post("/api/sweep", json!({ "set": { "node": ids("new:miles"), "component": "value" }, "values": [8000, 20000], "read": [read("new:hatch"), read("new:ev")] })).await;
+    let at = |i: usize, j: usize| swept[i]["cells"][j]["value"].as_f64().unwrap_or_else(|| panic!("{swept}"));
+    let by_miles = |price: f64, per_mile: f64, insurance: f64, miles: f64| price * (1.0 - 0.85f64.powf(5.0)) / 5.0 + miles * per_mile + insurance;
+    for (i, miles) in [8000.0, 20000.0].into_iter().enumerate() {
+        assert!((at(i, 0) - by_miles(18000.0, 0.12, 500.0, miles)).abs() < 1e-6 && (at(i, 1) - by_miles(32000.0, 0.05, 600.0, miles)).abs() < 1e-6, "{swept}");
+        assert_eq!(swept[i]["cells"][0]["vars"], Value::Null, "with the mileage typed in, nothing's left to differ over");
+    }
+    assert_eq!(cell(&c.view(json!({})).await, "Hatchback", "yearly")["vars"], json!([ids("new:miles")]), "and nothing was changed");
+
     // A car can say otherwise for itself, such as needing a charger at home, and goes back to its kind's
     // when that's taken away.
     let ev = ids("new:ev");

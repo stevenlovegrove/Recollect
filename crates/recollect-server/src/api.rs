@@ -46,6 +46,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/proposals/{id}/reject", post(reject))
         .route("/api/events", get(events))
         .route("/api/try", post(try_formula))
+        .route("/api/sweep", post(sweep))
         .route("/api/files", get(file_list))
         .route("/api/file", get(file))
         .with_state(app)
@@ -131,6 +132,26 @@ struct TryBody {
 async fn try_formula(State(app): S, Json(body): Json<TryBody>) -> Result<impl IntoResponse, AppError> {
     let tried = blocking(app, move |a| a.with(|o| Ok(views::try_formula(o, body.node, &body.text, &body.world)))).await?;
     Ok(Json(tried))
+}
+
+#[derive(Deserialize)]
+struct SweepBody {
+    set: views::CellRef,
+    values: Vec<f64>,
+    read: Vec<views::CellRef>,
+    #[serde(default)]
+    world: World,
+}
+
+/// The most values one sweep can try, which is plenty for a chart.
+const MOST_SWEPT: usize = 200;
+
+async fn sweep(State(app): S, Json(body): Json<SweepBody>) -> Result<impl IntoResponse, AppError> {
+    if body.values.len() > MOST_SWEPT {
+        return Err(AppError::Refused(format!("{} values is more than the {MOST_SWEPT} a sweep can try", body.values.len())));
+    }
+    let swept = blocking(app, move |a| a.with(|o| views::sweep(o, &body.set, &body.values, &body.read, &body.world).map_err(AppError::Refused))).await?;
+    Ok(Json(swept))
 }
 
 #[derive(Deserialize)]
