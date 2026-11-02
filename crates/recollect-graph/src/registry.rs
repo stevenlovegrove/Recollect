@@ -203,6 +203,14 @@ impl Registry {
         self
     }
 
+    /// A rule that's already loadable, as it's written down, on every node that doesn't say otherwise.
+    pub fn set_default_rule(&mut self, component: &str, key: &str, params: Value) -> &mut Self {
+        let saved = SavedRule { rule: key.to_string(), params };
+        let backing = self.resolve(&Self::column_key(component), &saved);
+        self.defaults.insert(component.to_string(), backing);
+        self
+    }
+
     /// Make a rule with no Rust type loadable by its key.
     pub fn runtime_rule(&mut self, r: RuntimeRule) -> &mut Self {
         let (key, inputs, compute) = (r.key.clone(), r.inputs.clone(), r.compute);

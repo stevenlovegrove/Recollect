@@ -211,7 +211,7 @@ fn dated(c: &Cond<Option<f64>>, g: &N, o: &str) -> Option<f64> {
 #[test]
 fn dates_differ_exactly_between_worlds_and_gaps_make_them_unknowable() {
     let g = calibration();
-    let end = g.get::<WorldFinish>("calib").unwrap().unwrap().0;
+    let end = g.get::<WorldFinish>("calib").unwrap().unwrap().0.0;
     assert_eq!(dated(&end, &g, "cad"), Some(5.0), "static 2 then export 3");
     assert_eq!(dated(&end, &g, "free"), Some(7.0), "static 2 then search 5");
     assert_eq!(dated(&end, &g, "board"), Some(4.0), "detector alone");
@@ -222,7 +222,7 @@ fn dates_differ_exactly_between_worlds_and_gaps_make_them_unknowable() {
 #[test]
 fn slack_differs_between_worlds_too() {
     let g = calibration();
-    let slack = |t: &str| g.get::<WorldSlack>(t).unwrap().unwrap().0;
+    let slack = |t: &str| g.get::<WorldSlack>(t).unwrap().unwrap().0.0;
     assert_eq!(dated(&slack("imu"), &g, "cad"), Some(4.0), "the imu takes 1 of the 5 days that way");
     assert_eq!(dated(&slack("imu"), &g, "free"), Some(6.0));
     assert_eq!(dated(&slack("static"), &g, "cad"), Some(0.0), "it's on the critical path");
@@ -235,7 +235,7 @@ fn deciding_narrows_the_dates_to_one_value() {
     let mut g = calibration();
     let cad = g.id("cad");
     g.set("calib", Decision { chosen: Some(cad) });
-    let end = g.get::<WorldFinish>("calib").unwrap().unwrap().0;
+    let end = g.get::<WorldFinish>("calib").unwrap().unwrap().0.0;
     assert_eq!(end.cases().len(), 1);
     assert_eq!(dated(&end, &g, "free"), Some(5.0), "whichever world you ask about");
 }
@@ -250,7 +250,7 @@ fn shared_work_only_inherits_from_parents_in_play() {
     g.set("prereq", Task {}).set("prereq", Estimate::days(10.0));
     g.link("a", "prereq", DependsOn::default());
     g.set("shared", Task {}).set("shared", Estimate::days(1.0)).link("shared", "a", PartOf).link("shared", "b", PartOf);
-    let start = g.get::<WorldStart>("shared").unwrap().unwrap().0;
+    let start = g.get::<WorldStart>("shared").unwrap().unwrap().0.0;
     let at = |o: &str| *start.at(&g.world(&[("d", o)]));
     assert_eq!((at("a"), at("b")), (Some(10.0), Some(0.0)));
 }
@@ -276,7 +276,7 @@ fn memoisation_holds_across_worlds_too() {
     g.get::<WorldFinish>("calib").unwrap();
     g.take_ran();
     g.set("detector", Task {}).set("detector", Estimate::days(9.0));
-    let end = g.get::<WorldFinish>("calib").unwrap().unwrap().0;
+    let end = g.get::<WorldFinish>("calib").unwrap().unwrap().0.0;
     assert_eq!(dated(&end, &g, "board"), Some(9.0));
     let ran = g.ran_cells();
     assert!(!ran.iter().any(|r| r.contains("export") || r.contains("search") || r.contains("static")), "other approaches don't run: {ran:?}");
@@ -454,7 +454,7 @@ fn every_world_agrees_with_a_plain_schedule_of_that_world() {
             for id in &ids {
                 let is_kept = kept.contains(id);
                 assert_eq!(g.get::<Need>(id).unwrap().unwrap().0.at(&by_handle), is_kept, "need({id}) in {world:?}");
-                let w = g.get::<WorldFinish>(id).unwrap().unwrap().0;
+                let w = g.get::<WorldFinish>(id).unwrap().unwrap().0.0;
                 let got = w.at(&by_handle).unwrap();
                 let want = if is_kept {
                     match plain.get::<Finish>(id) {
@@ -468,7 +468,7 @@ fn every_world_agrees_with_a_plain_schedule_of_that_world() {
                 compared += 1;
 
                 // Slack means how far it could slip without moving the end, so slip it and see.
-                let slack = *g.get::<WorldSlack>(id).unwrap().unwrap().0.at(&by_handle);
+                let slack = *g.get::<WorldSlack>(id).unwrap().unwrap().0.0.at(&by_handle);
                 if !is_kept {
                     assert_eq!(slack, None, "slack({id}) in {world:?}");
                 } else if !parents.contains(&id) {

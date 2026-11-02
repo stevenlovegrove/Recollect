@@ -107,6 +107,8 @@ pub enum BinOp {
     Ge,
     And,
     Or,
+    Max,
+    Min,
 }
 
 impl BinOp {
@@ -124,6 +126,8 @@ impl BinOp {
             BinOp::Ge => ">=",
             BinOp::And => "&&",
             BinOp::Or => "||",
+            BinOp::Max => "max",
+            BinOp::Min => "min",
         }
     }
 }
@@ -135,27 +139,39 @@ pub enum Expr {
     Path(Vec<String>),
     Call(String, Vec<Expr>),
     /// `sum(x in group: body)`. A group is `in.kind`, `out.kind`, `with.component`, or a name.
-    Fold { func: String, var: String, group: Vec<String>, body: Box<Expr> },
+    /// `start` is what `max` and `min` begin from, and what `pick` gives if nothing's chosen.
+    Fold { func: String, var: String, group: Vec<String>, body: Box<Expr>, start: Option<Box<Expr>> },
     Not(Box<Expr>),
     Neg(Box<Expr>),
     Bin(BinOp, Box<Expr>, Box<Expr>),
 }
 
 /// What's evaluated as itself, rather than being expanded into something else.
-pub const CORE: &[&str] = &["if", "defined", "chose", "round", "floor", "ceil"];
+pub const CORE: &[&str] = &["if", "defined", "has", "chose", "round", "floor", "ceil", "max", "min"];
 
 /// Functions that expand into one copy of their body for each node in a group.
-pub const FOLDS: &[&str] = &["sum", "product", "all", "any", "count", "pick"];
+pub const FOLDS: &[&str] = &["sum", "product", "all", "any", "count", "pick", "max", "min"];
+
+/// Folds with no answer of their own for an empty group, so they have to be told where to begin.
+const NEEDS_START: &[&str] = &["max", "min"];
 
 /// The rest of the library, written in the language itself, with no special standing.
 const LIBRARY: &[(&str, &[&str], &str)] = &[
     ("abs", &["x"], "if(x < 0, -x, x)"),
-    ("min", &["a", "b"], "if(a < b, a, b)"),
-    ("max", &["a", "b"], "if(a > b, a, b)"),
     ("or", &["x", "fallback"], "if(defined(x), x, fallback)"),
     // A plan's effort in each world. Summing over tasks, not up through parents, counts shared work
     // once. A gap in play means nobody knows, and a task with no estimate is the same.
     ("effort", &[], "if(any(u in with.unknown: u.need), undefined, sum(t in with.task: if(t.need, t.estimate, 0)))"),
+    // Whether this node's own time is its own, because nothing beneath it stands in for it.
+    ("is_leaf", &[], "count(p in in.part_of: !has(p.dropped)) = 0 && !has(self.decision)"),
+    // How long this node takes. With no estimate that's nothing, and an estimate a formula can't
+    // work out makes the dates unknowable.
+    ("days", &[], "if(has(self.estimate), self.estimate, 0)"),
+    // When the last task finishes.
+    ("plan_end", &[], "max(t in with.task: t.finish, 0)"),
+    // How late this could finish, given what has to follow it. `end` stands for no limit, because
+    // nothing here can be later than that anyway.
+    ("latest_given", &["end"], "min(p in out.part_of: if(p.need, p.latest_finish, end), min(d in out.alternative: if(d.need && chose(d, self), d.latest_finish, end), min(x in in.depends_on: if(x.need, x.latest_start, end), end)))"),
 ];
 
 pub struct LibraryMacro {
@@ -199,9 +215,12 @@ pub fn inputs_of(e: &Expr) -> Inputs {
                 args.iter().for_each(|a| group_arg(a, i));
                 args.iter().for_each(|a| walk(a, i));
             }
-            Expr::Fold { group, body, .. } => {
+            Expr::Fold { group, body, start, .. } => {
                 group_path(group, i);
                 walk(body, i);
+                if let Some(start) = start {
+                    walk(start, i);
+                }
             }
         }
     }
@@ -449,8 +468,10 @@ impl Parser {
             let group = self.path_from(first)?;
             self.expect(":")?;
             let body = self.or()?;
+            let start = if self.eat(",") { Some(Box::new(self.or()?)) } else { None };
             self.expect(")")?;
-            return Ok(Expr::Fold { func, var, group, body: Box::new(body) });
+            check_start(&func, start.is_some())?;
+            return Ok(Expr::Fold { func, var, group, body: Box::new(body), start });
         }
         let mut args = Vec::new();
         if !self.eat(")") {
@@ -462,15 +483,29 @@ impl Parser {
                 self.expect(",")?;
             }
         }
-        if FOLDS.contains(&func.as_str()) {
+        // `max(a, b)` is two numbers, and only a group spelled out as one can be gone over.
+        let of_group = matches!(args.first(), Some(Expr::Path(p)) if matches!(p[0].as_str(), "in" | "out" | "with"));
+        if FOLDS.contains(&func.as_str()) && (!NEEDS_START.contains(&func.as_str()) || of_group) {
             return short_fold(func, args);
         }
         Ok(Expr::Call(func, args))
     }
 }
 
+fn check_start(func: &str, given: bool) -> Result<(), String> {
+    if given && !(NEEDS_START.contains(&func) || func == "pick") {
+        return Err(format!("{func} takes one group, such as {func}(line) or {func}(x in line: x)"));
+    }
+    if !given && NEEDS_START.contains(&func) {
+        return Err(format!("{func} over a group needs somewhere to begin, such as {func}(x in line: x, 0)"));
+    }
+    Ok(())
+}
+
 /// `sum(line.cost)` is short for `sum(x in line: x.cost)`. `count(line)` is how many there are.
 fn short_fold(func: String, mut args: Vec<Expr>) -> Result<Expr, String> {
+    let start = if args.len() == 2 { args.pop().map(Box::new) } else { None };
+    check_start(&func, start.is_some())?;
     let (1, Some(Expr::Path(path))) = (args.len(), args.pop()) else {
         return Err(format!("{func} takes one group, such as {func}(line) or {func}(x in line: x)"));
     };
@@ -482,7 +517,7 @@ fn short_fold(func: String, mut args: Vec<Expr>) -> Result<Expr, String> {
     let mut read = vec![var.clone()];
     read.extend_from_slice(&path[whole..]);
     let body = if func == "count" && path.len() == whole { Expr::Lit(Val::Bool(true)) } else { Expr::Path(read) };
-    Ok(Expr::Fold { func, var, group: path[..whole].to_vec(), body: Box::new(body) })
+    Ok(Expr::Fold { func, var, group: path[..whole].to_vec(), body: Box::new(body), start })
 }
 
 pub fn parse(text: &str) -> Result<Expr, String> {

@@ -36,10 +36,7 @@ impl Estimate {
 
 /// What a formula gives an estimate.
 fn estimate_of(c: Cond<Val>) -> Result<Estimate, Error> {
-    if let Some((_, bad)) = c.cases().iter().find(|(_, v)| !matches!(v, Val::Num(_) | Val::Undefined)) {
-        return Err(Error::Failed(format!("an estimate is a number of days, not {}", Type::of(bad).word())));
-    }
-    Ok(Estimate(Worldly(c.map(|v| if let Val::Num(n) = v { Some(*n) } else { None }))))
+    formulas::number_cases(c, "an estimate").map(Estimate)
 }
 
 #[component]

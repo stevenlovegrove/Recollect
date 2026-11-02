@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 
 use crate::expr::{self, BinOp, CORE, Expr, Type, Val, inputs_of};
 use crate::plan::{Choice, Need};
+use crate::schedule::{Finish, LatestFinish, LatestStart, Start};
 use crate::{Catalog, Shown};
 
 /// The rule. Its meaning is fixed by this key, so a change in meaning needs a new one.
@@ -103,7 +104,7 @@ pub struct TryExpansion(pub String);
 fn component_type(component: &str) -> Type {
     match component {
         "need" | "actionable" | "blocked" | "completion" | "requires" => Type::Bool,
-        "estimate" | "start" | "finish" | "slack" => Type::Number,
+        "estimate" | "start" | "finish" | "latest_start" | "latest_finish" | "slack" => Type::Number,
         "name" | "body" | "choice" => Type::Text,
         _ => Type::Any,
     }
@@ -130,6 +131,7 @@ enum Part {
     Not(Id),
     Neg(Id),
     Defined(Id),
+    Has(Entity, String),
     Chose(Entity, Entity),
     Round(Id, Id),
     Floor(Id),
@@ -154,7 +156,7 @@ impl Part {
 
     fn parts(&self) -> Vec<Id> {
         match self {
-            Part::Lit(_) | Part::Read { .. } | Part::Chose(..) => vec![],
+            Part::Lit(_) | Part::Read { .. } | Part::Has(..) | Part::Chose(..) => vec![],
             Part::Field(a, _) | Part::Not(a) | Part::Neg(a) | Part::Defined(a) | Part::Floor(a) | Part::Ceil(a) => vec![*a],
             Part::Bin(_, a, b) | Part::Round(a, b) => vec![*a, *b],
             Part::If(a, b, c) => vec![*a, *b, *c],
@@ -320,7 +322,7 @@ impl<'c, 'a> Expander<'c, 'a> {
                 Ok(self.add(Part::Bin(*op, a, b)))
             }
             Expr::Path(path) => self.path(path, scope),
-            Expr::Fold { func, var, group, body } => self.fold(func, var, group, body, scope),
+            Expr::Fold { func, var, group, body, start } => self.fold(func, var, group, body, start.as_deref(), scope),
             Expr::Call(name, args) => self.call(name, args, scope),
         })
     }
@@ -349,15 +351,16 @@ impl<'c, 'a> Expander<'c, 'a> {
         }
     }
 
-    fn fold(&self, func: &str, var: &str, group: &[String], body: &Expr, scope: &Scope) -> Result<Id, Error> {
+    fn fold(&self, func: &str, var: &str, group: &[String], body: &Expr, start: Option<&Expr>, scope: &Scope) -> Result<Id, Error> {
         let nodes = self.group(group, scope)?;
         let copy = |n: Entity| {
             let mut inner = scope.clone();
             inner.vars.insert(var.to_string(), Binding::Node(n));
             self.expand(body, &inner)
         };
+        let from = |unit: Val| start.map_or_else(|| Ok(self.lit(unit)), |s| self.expand(s, scope));
         let chain = |op: BinOp, unit: Val| -> Result<Id, Error> {
-            let mut acc = self.lit(unit);
+            let mut acc = from(unit)?;
             for n in &nodes {
                 let next = copy(*n)?;
                 acc = self.add(Part::Bin(op, acc, next));
@@ -369,6 +372,8 @@ impl<'c, 'a> Expander<'c, 'a> {
             "product" => chain(BinOp::Mul, Val::Num(1.0)),
             "all" => chain(BinOp::And, Val::Bool(true)),
             "any" => chain(BinOp::Or, Val::Bool(false)),
+            "max" => chain(BinOp::Max, Val::Undefined),
+            "min" => chain(BinOp::Min, Val::Undefined),
             "count" => {
                 let (one, zero) = (self.lit(Val::Num(1.0)), self.lit(Val::Num(0.0)));
                 let mut acc = zero;
@@ -383,7 +388,7 @@ impl<'c, 'a> Expander<'c, 'a> {
                 if scope.is_macro() {
                     return failed("a macro can only use its parameters, so it can't pick for the node calling it");
                 }
-                let mut acc = self.lit(Val::Undefined);
+                let mut acc = from(Val::Undefined)?;
                 for n in nodes.iter().rev() {
                     let chosen = self.add(Part::Chose(self.cx.id(), *n));
                     let this = copy(*n)?;
@@ -445,6 +450,20 @@ impl<'c, 'a> Expander<'c, 'a> {
                 wants(1)?;
                 let a = self.expand(&args[0], scope)?;
                 Ok(self.add(Part::Defined(a)))
+            }
+            "has" => {
+                wants(1)?;
+                let Expr::Path(path) = &args[0] else { return failed("has needs a node and a cell, such as has(self.estimate)") };
+                let [root, component] = path.as_slice() else { return failed("has needs a node and a cell, such as has(self.estimate)") };
+                match self.binding(&Expr::Path(vec![root.clone()]), scope)? {
+                    Binding::Node(n) => Ok(self.add(Part::Has(n, component.clone()))),
+                    _ => failed(format!("has needs one node, and {root} isn't one")),
+                }
+            }
+            "max" | "min" => {
+                wants(2)?;
+                let (a, b) = (self.expand(&args[0], scope)?, self.expand(&args[1], scope)?);
+                Ok(self.add(Part::Bin(if name == "max" { BinOp::Max } else { BinOp::Min }, a, b)))
             }
             "chose" => {
                 wants(2)?;
@@ -530,7 +549,7 @@ fn type_of(cx: &Cx, part: &Part, types: &[Type], closed: &Closed) -> Result<Type
             let a = &types[*a];
             if numberish(a) { Ok(Type::Number) } else { failed(format!("- needs a number, not {}", a.word())) }
         }
-        Part::Defined(_) | Part::Chose(..) => Ok(Type::Bool),
+        Part::Defined(_) | Part::Has(..) | Part::Chose(..) => Ok(Type::Bool),
         Part::Round(x, places) => {
             let (x, places) = (&types[*x], &types[*places]);
             if numberish(x) && numberish(places) { Ok(Type::Number) } else { failed(format!("round needs numbers, not {}", x.word())) }
@@ -543,7 +562,7 @@ fn type_of(cx: &Cx, part: &Part, types: &[Type], closed: &Closed) -> Result<Type
             let (ta, tb) = (&types[*a], &types[*b]);
             let sym = op.symbol();
             match op {
-                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Max | BinOp::Min => {
                     if numberish(ta) && numberish(tb) { Ok(Type::Number) } else { failed(format!("{sym} needs numbers, not {} and {}", ta.word(), tb.word())) }
                 }
                 BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
@@ -665,10 +684,11 @@ fn read_cell(cx: &Cx, node: Entity, component: &str, fields: &[String]) -> Resul
             Some(n) => Ev::Truth { yes: n.0, undefined: Space::global().never() },
             None => Ev::Data(pure(Val::Undefined)),
         },
-        crate::plan::Estimate::NAME => match cx.get::<crate::plan::Estimate>(node)? {
-            Some(e) => Ev::Data(e.0.0.map(|d| d.map_or(Val::Undefined, Val::num))),
-            None => Ev::Data(pure(Val::Undefined)),
-        },
+        crate::plan::Estimate::NAME => number_cell(cx.get::<crate::plan::Estimate>(node)?.map(|c| c.0)),
+        Start::NAME => number_cell(cx.get::<Start>(node)?.map(|c| c.0)),
+        Finish::NAME => number_cell(cx.get::<Finish>(node)?.map(|c| c.0)),
+        LatestStart::NAME => number_cell(cx.get::<LatestStart>(node)?.map(|c| c.0)),
+        LatestFinish::NAME => number_cell(cx.get::<LatestFinish>(node)?.map(|c| c.0)),
         _ => match cx.get_runtime(node, component)? {
             None => Ev::Data(pure(Val::Undefined)),
             Some(r) => from_json(r.value).map_err(|detail| Error::Malformed { cell: (node, component.to_string()), detail })?,
@@ -678,6 +698,13 @@ fn read_cell(cx: &Cx, node: Entity, component: &str, fields: &[String]) -> Resul
         return Ok(whole);
     }
     Ok(Ev::Data(field_of(&whole.data(), fields)))
+}
+
+fn number_cell(c: Option<Worldly<Option<f64>>>) -> Ev {
+    match c {
+        Some(c) => Ev::Data(c.0.map(|d| d.map_or(Val::Undefined, Val::num))),
+        None => Ev::Data(pure(Val::Undefined)),
+    }
 }
 
 fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
@@ -693,6 +720,7 @@ fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
             };
             Ev::Truth { yes: !&undefined, undefined: space.never() }
         }
+        Part::Has(node, component) => Ev::Truth { yes: space.truth(cx.get_runtime(*node, component)?.is_some()), undefined: space.never() },
         Part::Chose(decision, option) => {
             let Some(Choice(choice)) = cx.get::<Choice>(*decision)? else { return failed("chose needs a decision") };
             Ev::Truth { yes: choice.holds(|c| *c == Some(*option)), undefined: space.never() }
@@ -775,7 +803,7 @@ fn binary(op: BinOp, a: &Ev, b: &Ev) -> Result<Ev, Error> {
             let (yes, undefined) = e.truth()?;
             Ok(Ev::Truth { yes, undefined })
         }
-        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+        BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Max | BinOp::Min => {
             let wrong = StdCell::new(false);
             let out = zip(&a.data(), &b.data(), |x, y| {
                 numbers(x, y, |x, y| {
@@ -783,6 +811,8 @@ fn binary(op: BinOp, a: &Ev, b: &Ev) -> Result<Ev, Error> {
                         BinOp::Add => x + y,
                         BinOp::Sub => x - y,
                         BinOp::Mul => x * y,
+                        BinOp::Max => x.max(y),
+                        BinOp::Min => x.min(y),
                         _ => x / y,
                     })
                 }, &wrong)
@@ -853,6 +883,23 @@ pub fn fills<C: Component>(reg: &mut Registry, expected: Type, wrap: Wrap<C>) {
     reg.rule_on::<C>(EXPR, move |params| build::<C>(params, expected.clone(), wrap));
 }
 
+/// Say that a formula can fill this component, and what it's worked out by on any node that doesn't
+/// say otherwise. A node can type over it with a value or a formula of its own, and removing that
+/// brings this back.
+pub fn defaults_to<C: Component>(reg: &mut Registry, expected: Type, wrap: Wrap<C>, text: &str) {
+    fills::<C>(reg, expected, wrap);
+    reg.on_nodes::<C>();
+    reg.set_default_rule(C::NAME, EXPR, json!({ "text": text }));
+}
+
+/// What a formula gives a cell that holds a number. Undefined is `None`.
+pub fn number_cases(c: Cond<Val>, what: &str) -> Result<Worldly<Option<f64>>, Error> {
+    if let Some((_, bad)) = c.cases().iter().find(|(_, v)| !matches!(v, Val::Num(_) | Val::Undefined)) {
+        return failed(format!("{what} is a number, not {}", Type::of(bad).word()));
+    }
+    Ok(Worldly(c.map(|v| if let Val::Num(n) = v { Some(*n) } else { None })))
+}
+
 fn build<C: Component>(params: &Value, expected: Type, wrap: Wrap<C>) -> Result<Rule<C>, String> {
     let text = formula_text(params)?;
     let e = expr::parse(text)?;
@@ -902,10 +949,12 @@ fn render(closed: &Closed) -> String {
             Part::Read { node, component, fields } => read(node, component, fields),
             Part::Field(a, fields) => format!("{}.{}", out[*a], fields.join(".")),
             Part::If(c, a, b) => format!("if({}, {}, {})", out[*c], out[*a], out[*b]),
+            Part::Bin(op @ (BinOp::Max | BinOp::Min), a, b) => format!("{}({}, {})", op.symbol(), out[*a], out[*b]),
             Part::Bin(op, a, b) => format!("({} {} {})", out[*a], op.symbol(), out[*b]),
             Part::Not(a) => format!("!{}", out[*a]),
             Part::Neg(a) => format!("-{}", out[*a]),
             Part::Defined(a) => format!("defined({})", out[*a]),
+            Part::Has(n, c) => format!("has({n}.{c})"),
             Part::Chose(d, o) => format!("chose({d}, {o})"),
             Part::Round(a, b) => format!("round({}, {})", out[*a], out[*b]),
             Part::Floor(a) => format!("floor({})", out[*a]),

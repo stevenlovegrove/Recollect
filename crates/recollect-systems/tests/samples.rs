@@ -142,16 +142,16 @@ fn the_plan_samples_hold_their_decisions_open() {
     let show = |b: &Bool| b.show_with(&|s| names.get(s).cloned().unwrap_or_else(|| s.to_string()));
     assert_eq!(show(&o.get::<Need>("Static captures").0), "Which approach?∈{From the CAD model,Free-form search}");
     assert!(o.get::<Need>("Fit the IMU time offset").0.is_always());
-    let end = o.get::<Finish>("Which approach?").0;
+    let end = o.get::<Finish>("Which approach?").0.0;
     let at = |option: &str| *end.at(&BTreeMap::from([(o.id("Which approach?").to_string(), o.id(option).to_string())]));
     assert_eq!((at("From the CAD model"), at("Free-form search"), at("With a checkerboard"), at("Something else")), (Some(5.0), Some(7.0), Some(4.0), None));
     assert!(matches!(plan::pressure(g, o.id("Which approach?")).unwrap(), Pressure::Free(_)));
 
     let o = open("critical-path");
-    let slack = |n: &str| *o.get::<Slack>(n).0.at(&BTreeMap::new());
+    let slack = |n: &str| *o.get::<Slack>(n).0.0.at(&BTreeMap::new());
     assert_eq!(slack("Wire the rooms"), Some(2.0));
     assert_eq!(slack("Frame the walls"), Some(0.0));
-    assert_eq!(*o.get::<Finish>("Paint").0.at(&BTreeMap::new()), Some(9.0));
+    assert_eq!(*o.get::<Finish>("Paint").0.0.at(&BTreeMap::new()), Some(9.0));
 }
 
 #[test]
