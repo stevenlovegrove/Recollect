@@ -2161,6 +2161,23 @@ input.sheet-input {
 .derived-v {
   min-width: 0;
 }
+.tick-row {
+  padding: 4px 0 8px;
+}
+.tick-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+.tick-k {
+  font-weight: 600;
+  cursor: pointer;
+}
+.tick-v {
+  flex: 1;
+  min-width: 0;
+}
 .fields {
   display: grid;
   gap: 4px;

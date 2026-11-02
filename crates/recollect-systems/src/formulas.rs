@@ -101,7 +101,7 @@ pub struct TryExpansion(pub String);
 
 /// What the components of compiled systems hold, for a formula reading them. Anything else is
 /// checked as it runs.
-fn component_type(component: &str) -> Type {
+pub(crate) fn component_type(component: &str) -> Type {
     match component {
         "need" | "actionable" | "blocked" | "done" | "dropped" | "requires" => Type::Bool,
         "estimate" | "start" | "finish" | "latest_start" | "latest_finish" | "slack" | "plan_end" => Type::Number,

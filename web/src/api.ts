@@ -52,6 +52,8 @@ export interface ComponentInfo {
   /** A link that says what comes first, which a map can be laid out by. */
   orders: boolean;
   summary: boolean;
+  /** It's either true or false, so it can be read and set as a tick. */
+  truth: boolean;
   initial: unknown;
 }
 

@@ -76,6 +76,8 @@ pub struct ComponentInfo {
     pub orders: bool,
     /// Worth showing on a node's card.
     pub summary: bool,
+    /// It's either true or false, so it can be read and set as a tick.
+    pub truth: bool,
     /// What a new one starts as.
     pub initial: Option<Value>,
 }
@@ -103,7 +105,7 @@ pub struct Catalog {
 
 impl Catalog {
     fn add(&mut self, name: &str, on: &'static str, about: &str) -> &mut ComponentInfo {
-        let info = ComponentInfo { name: name.to_string(), system: self.current.clone(), on, about: about.to_string(), derived: false, internal: false, quiet: false, arranges: false, reversed: false, orders: false, summary: false, initial: None };
+        let info = ComponentInfo { name: name.to_string(), system: self.current.clone(), on, about: about.to_string(), derived: false, internal: false, quiet: false, arranges: false, reversed: false, orders: false, summary: false, truth: formulas::component_type(name) == expr::Type::Bool, initial: None };
         self.components.entry(name.to_string()).or_insert(info)
     }
 

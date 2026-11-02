@@ -14,7 +14,7 @@ import { HistoryView } from "./views/HistoryView";
 import { InboxView } from "./views/InboxView";
 import { FilesView } from "./views/FilesView";
 import { Inspector, LinkInspector, NewNodePanel, type NodeTemplate } from "./Inspector";
-import { parseEdgeKey } from "./bits";
+import { parseEdgeKey, tickOp } from "./bits";
 import { ContextMenu, type CtxTarget } from "./ContextMenu";
 import { WorldBar } from "./WorldBar";
 import { SamplePicker, Welcome } from "./Welcome";
@@ -141,8 +141,9 @@ export function App() {
         if (key === "Enter" && e.target instanceof Element && e.target.closest("button, a")) return;
         setCommand((c) => ({ kind: "edit", n: (c?.n ?? 0) + 1 }));
       } else if (selNode && key === "l") setCommand((c) => ({ kind: "link", n: (c?.n ?? 0) + 1 }));
-      else if (selNode && ws.info("done") && key === "x") {
-        run([selNode.cells.done?.own ? { op: "set", id: selNode.id, component: "done" } : { op: "set", id: selNode.id, component: "done", value: true }]);
+      else if (selNode?.cells.done && key === "x") {
+        // A node's own formula decides for itself, as it does for the box.
+        if (!(selNode.cells.done.own && selNode.cells.done.formula !== undefined)) run([tickOp(selNode.id, "done", selNode.cells.done)]);
       } else if (selNode && ws.info("dropped") && (key === "Backspace" || key === "Delete")) {
         if (isDropped(selNode)) run([{ op: "set", id: selNode.id, component: "dropped" }], "brought back");
         else {

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { Cell, GraphNode, Link, Reading, Shown } from "./api";
+import type { Cell, GraphNode, Link, Op, Reading, Shown } from "./api";
 import { bracketRuns, pairText } from "./brackets";
 import type { Workspace } from "./workspace";
 import { GLYPH, compColor, factsOf, isDropped, label, nodeColor } from "./theme";
@@ -237,6 +237,37 @@ export function casesOf(cell: Cell | undefined): unknown[] {
   if (!cell) return [];
   if (cell.shown?.kind === "cond") return cell.shown.cases.map((c) => c.value);
   return cell.value === undefined ? [] : [cell.value];
+}
+
+/** The change a tick makes: what the node says for itself goes first, and otherwise it says the opposite of what's worked out. */
+export function tickOp(id: string, c: string, cell: Cell): Op {
+  if (cell.own) return { op: "set", id, component: c };
+  const cases = casesOf(cell);
+  return { op: "set", id, component: c, value: !(cases.length > 0 && cases.every((v) => v === true)) };
+}
+
+/** A true-or-false cell as a box to tick. A node's own formula decides for itself, and differing worlds show as neither. */
+export function TickBox({ ws, id, c }: { ws: Workspace; id: string; c: string }) {
+  const cell = ws.byId.get(id)?.cells[c];
+  if (!cell) return null;
+  const cases = casesOf(cell);
+  const yes = cases.length > 0 && cases.every((v) => v === true);
+  const mixed = !yes && cases.includes(true);
+  const decided = cell.own && cell.formula !== undefined;
+  return (
+    <input
+      type="checkbox"
+      aria-label={label(c)}
+      checked={yes}
+      disabled={decided}
+      ref={(el) => {
+        if (el) el.indeterminate = mixed;
+      }}
+      title={decided ? "Its own formula decides this" : cell.own ? "Go back to working this out" : yes ? `Say it isn't ${label(c).toLowerCase()}` : `Mark as ${label(c).toLowerCase()}`}
+      onClick={(e) => e.stopPropagation()}
+      onChange={() => ws.apply([tickOp(id, c, cell)]).catch((e) => alert(String(e)))}
+    />
+  );
 }
 
 /** Selection keys: nodes are handles, so a link can be keyed as "e:from|kind|to". */

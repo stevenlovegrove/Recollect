@@ -3,7 +3,7 @@ import { api, type Cell, type ComponentInfo, type EventView, type GraphNode, typ
 import { linksOf, type Workspace } from "./workspace";
 import { GLYPH, compColor, factsOf, isDropped, label, nodeColor } from "./theme";
 import { DdItemButton, Dropdown } from "./Dropdown";
-import { Brackets, CellValue, CompBadge, NodeChip, Resolved, shownText } from "./bits";
+import { Brackets, CellValue, CompBadge, NodeChip, Resolved, TickBox, shownText } from "./bits";
 import { entryText, parseEntry } from "./cellEntry";
 import { Key } from "./Shortcuts";
 import { OpLine } from "./views/HistoryView";
@@ -184,8 +184,12 @@ export function Inspector({
 
   const { outgoing, incoming } = linksOf(view, id);
   const facts = factsOf(node);
-  const stored = view.components.filter((c) => c.on === "node" && !["name", "body"].includes(c.name) && node.cells[c.name]?.source === "stored");
-  const computedHere = Object.entries(node.cells).filter(([c, cell]) => cell.source === "rule" && (cell.own || !ws.info(c)?.quiet));
+  // Where a cell shows goes by what it is, not by who last said it, so typing over one doesn't move it.
+  const typedOver = (c: string) => !!ws.info(c)?.derived && holdsFormula(ws, c);
+  const shows = (c: string, cell: Cell) => cell.own || !ws.info(c)?.quiet;
+  const stored = view.components.filter((c) => c.on === "node" && !["name", "body"].includes(c.name) && node.cells[c.name]?.source === "stored" && !typedOver(c.name));
+  const ticks = Object.entries(node.cells).filter(([c, cell]) => typedOver(c) && ws.info(c)?.truth && shows(c, cell));
+  const computedHere = Object.entries(node.cells).filter(([c, cell]) => (cell.source === "rule" || typedOver(c)) && shows(c, cell) && !ticks.some(([t]) => t === c));
   const missing = view.components.filter((c) => c.on === "node" && !c.derived && !node.cells[c.name]);
   const others = Object.entries(node.cells).filter(([c, cell]) => cell.source === "stored" && !view.components.some((x) => x.name === c) && c !== "name" && c !== "body");
 
@@ -211,7 +215,10 @@ export function Inspector({
 
       <section>
         <h4>What it is</h4>
-        {stored.length === 0 && others.length === 0 && !computedHere.some(([, cell]) => cell.own) && <p className="muted small">A plain note. Add something to give it behaviour, or leave it as a note.</p>}
+        {stored.length === 0 && others.length === 0 && ticks.length === 0 && !computedHere.some(([, cell]) => cell.own) && <p className="muted small">A plain note. Add something to give it behaviour, or leave it as a note.</p>}
+        {ticks.map(([c, cell]) => (
+          <TickRow key={c} ws={ws} id={id} c={c} cell={cell} info={ws.info(c)} onSelect={onSelect} />
+        ))}
         {stored.map((c) => (
           <FactEditor key={c.name} node={node} info={c} ws={ws} run={run} onSelect={onSelect} onShowDecisions={onShowDecisions} />
         ))}
@@ -649,11 +656,12 @@ function Derived({ ws, id, c, cell, info, onSelect }: { ws: Workspace; id: strin
   const [editing, setEditing] = useState(false);
   const canEdit = holdsFormula(ws, c);
   const ownFormula = cell.formula !== undefined && cell.own;
+  const typed = cell.own && cell.formula === undefined && cell.source === "stored";
   return (
     <div className="derived">
       <span className="derived-k" title={info?.about}>
         {label(c)}
-        {cell.own && cell.formula === undefined && <span className="muted small"> · {cell.rule}</span>}
+        {cell.own && cell.formula === undefined && cell.rule && <span className="muted small"> · {cell.rule}</span>}
       </span>
       <span className="derived-v">
         {ownFormula ? (
@@ -671,11 +679,41 @@ function Derived({ ws, id, c, cell, info, onSelect }: { ws: Workspace; id: strin
           </span>
         )}
       </span>
-      {ownFormula && info?.derived && (
-        <button className="icon small" title="Go back to working this out" onClick={() => ws.apply([entryOp(id, c, parseEntry(""), undefined, true)]).catch((e) => alert(String(e)))}>
+      {(ownFormula || typed) && info?.derived && (
+        <button className="icon small" title="Go back to working this out" onClick={() => ws.apply([entryOp(id, c, parseEntry(""), undefined, ownFormula)]).catch((e) => alert(String(e)))}>
           ×
         </button>
       )}
+    </div>
+  );
+}
+
+/** A true-or-false cell a node can say for itself: a box to tick, and the formula behind it for anyone who wants it. */
+function TickRow({ ws, id, c, cell, info, onSelect }: { ws: Workspace; id: string; c: string; cell: Cell; info: ComponentInfo | undefined; onSelect: (id: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const ownFormula = cell.formula !== undefined && cell.own;
+  return (
+    <div className="tick-row">
+      <div className="tick-line">
+        <label className="tick-k" title={info?.about}>
+          <TickBox ws={ws} id={id} c={c} /> {label(c)}
+        </label>
+        <span className="tick-v">
+          <CellValue ws={ws} cell={cell} onSelect={onSelect} component={c} />
+          {cell.own && <span className="muted small"> · {ownFormula ? "its own formula" : "said here"}</span>}
+        </span>
+        {!ownFormula && !editing && (
+          <button className="link small" title={cell.formula ? `Worked out by =${cell.formula}` : undefined} onClick={() => setEditing(true)}>
+            edit
+          </button>
+        )}
+        {cell.own && (
+          <button className="icon small" title="Go back to working this out" onClick={() => ws.apply([entryOp(id, c, parseEntry(""), undefined, ownFormula)]).catch((e) => alert(String(e)))}>
+            ×
+          </button>
+        )}
+      </div>
+      {ownFormula ? <CellEditor key={cell.formula} ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} /> : editing && <CellEditor ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} opening onClosed={() => setEditing(false)} />}
     </div>
   );
 }
