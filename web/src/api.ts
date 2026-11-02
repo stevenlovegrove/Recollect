@@ -28,6 +28,8 @@ export interface Cell {
   shown?: Shown;
   /** The open choices it differs over, by id. Empty if it's the same in every world that's left. */
   vars?: string[];
+  /** Whether it differs in any world at all, whatever's pinned or ruled out. */
+  varies?: boolean;
   error?: string;
 }
 

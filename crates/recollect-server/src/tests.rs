@@ -786,6 +786,10 @@ async fn what_holds_in_every_world_left_differs_over_nothing() {
     c.open("trip-budget").await;
     let v = c.view(json!({})).await;
     assert_eq!(cell(&v, "Over £200", "value")["vars"], json!([id(&v, "Stay")]));
+    // Pinned, it's settled, but it still differs in some world, which is worth knowing.
+    let pinned = c.view(json!({ id(&v, "Stay"): id(&v, "Hotel") })).await;
+    assert_eq!((&cell(&pinned, "Over £200", "value")["vars"], &cell(&pinned, "Over £200", "value")["varies"]), (&Value::Null, &json!(true)));
+    assert_eq!(cell(&v, "Train", "value")["varies"], Value::Null, "and what's the same everywhere doesn't");
 }
 
 #[tokio::test]

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Cell, GraphNode, OptionView, Reading, VarView, World } from "../api";
+import type { Cell, GraphNode, OptionView, VarView, World } from "../api";
 import type { ViewProps } from "./MapView";
 import { CellValue } from "../bits";
 import { label } from "../theme";
@@ -73,14 +73,10 @@ export function WorldsView({ ws, onSelect }: ViewProps) {
   const atInfo = (v: VarView) => ws.byId.get(v.id)?.cells.at?.value as { row: number; col: number } | undefined;
   const isBoard = w.vars.length > 0 && w.vars.every((v) => atInfo(v));
   const summaries = g.components.filter((c) => c.summary);
-  // Differs between the worlds left, or between any, ignoring what rules worlds out, as a puzzle's
-  // constraints do.
+  // Differs between the worlds left, or in any world at all, whatever's pinned or ruled out, as a
+  // puzzle's constraints are.
   const differsLeft = (c: Cell) => !!c.vars?.length;
-  const differsAny = (c: Cell) => {
-    const s = c.shown;
-    const open = (r: Reading) => !r.always && !r.never;
-    return s?.kind === "bool" ? open(s) : s?.kind === "cond" ? s.cases.length > 1 : s?.kind === "named" ? s.items.some((i) => open(i.when)) : false;
-  };
+  const differsAny = (c: Cell) => !!c.varies;
   const differs = (c: Cell) => (showing === "all" ? true : showing === "any" ? differsAny(c) : differsLeft(c));
   // What a node says that's worth a column: what its systems summarise it by, and any of the workspace's
   // own cells that are worked out, like a car's cost a year.

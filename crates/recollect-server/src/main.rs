@@ -93,7 +93,12 @@ async fn serve(workspace: Option<PathBuf>, port: u16, web: Option<PathBuf>, samp
     );
 
     let dist = web.unwrap_or_else(|| source_tree("web/dist"));
-    let static_files = ServeDir::new(&dist).fallback(ServeFile::new(dist.join("index.html")));
+    // Asked about every time, so a page from an older build isn't kept after a rebuild.
+    let static_files = tower_http::set_header::SetResponseHeader::overriding(
+        ServeDir::new(&dist).fallback(ServeFile::new(dist.join("index.html"))),
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
     if !dist.join("index.html").exists() {
         tracing::warn!("no built UI at {} (run `npm run build` in web/, or use the Vite dev server)", dist.display());
     }

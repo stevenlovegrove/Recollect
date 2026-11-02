@@ -45,6 +45,9 @@ pub struct CellView {
     /// The open choices it differs over, by id. Empty if it's the same in every world that's left.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub vars: Vec<String>,
+    /// Whether it differs in any world at all, whatever's pinned or ruled out.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub varies: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -229,11 +232,11 @@ fn cell_view(g: &Graph, catalog: &Catalog, e: Entity, c: &str, picks: &Picks, in
     let formula = g.saved_rule(e, c).filter(|r| r.rule == EXPR).and_then(|r| formula_text(&r.params).ok().map(String::from));
     let kind = g.kind_beneath(e, c);
     let workspace = catalog.is_own_cell(c) && c != recollect_graph::Name::NAME;
-    let cell = |value, shown, open: Vec<String>, error| CellView { source, rule: rule.clone(), own, kind, workspace, formula: formula.clone(), value, shown, vars: open, error };
+    let cell = |value, shown, open: Vec<String>, varies, error| CellView { source, rule: rule.clone(), own, kind, workspace, formula: formula.clone(), value, shown, vars: open, varies, error };
     if let Some(shown) = catalog.shown(g, e, c) {
         return match shown {
             Ok(None) => None,
-            Err(err) => Some(cell(None, None, Vec::new(), Some(describe_error(&err, labels)))),
+            Err(err) => Some(cell(None, None, Vec::new(), false, Some(describe_error(&err, labels)))),
             Ok(Some(s)) => {
                 for v in s.vars() {
                     vars.insert(v.name(), v);
@@ -251,14 +254,14 @@ fn cell_view(g: &Graph, catalog: &Catalog, e: Entity, c: &str, picks: &Picks, in
                 let mut open: Vec<String> = if settled(&narrowed, in_play) { Vec::new() } else { narrowed.vars().iter().map(Var::name).collect() };
                 open.sort();
                 open.dedup();
-                Some(cell(value, Some(show(&narrowed, labels)), open, None))
+                Some(cell(value, Some(show(&narrowed, labels)), open, !s.vars().is_empty(), None))
             }
         };
     }
     match g.get_runtime(e, c) {
         Ok(None) => None,
-        Err(err) => Some(cell(None, None, Vec::new(), Some(describe_error(&err, labels)))),
-        Ok(Some(r)) => Some(cell(Some(r.value), None, Vec::new(), None)),
+        Err(err) => Some(cell(None, None, Vec::new(), false, Some(describe_error(&err, labels)))),
+        Ok(Some(r)) => Some(cell(Some(r.value), None, Vec::new(), false, None)),
     }
 }
 
