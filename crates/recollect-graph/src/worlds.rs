@@ -15,6 +15,9 @@ use serde_json::Value;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 type F = u32;
+/// The most ways of holding a function is written out as. Past this, it says how many more there are:
+/// writing them all can take longer than working them out, and nobody reads that many.
+const MOST_TERMS: usize = 24;
 const FALSE: F = 0;
 const TRUE: F = 1;
 const LEAF: u32 = u32::MAX;
@@ -159,32 +162,59 @@ impl Mdd {
         }
     }
 
-    fn terms(&self, f: F, label: &dyn Fn(&str) -> String) -> Vec<String> {
-        if f == TRUE {
-            return vec![String::new()];
+    /// The ways a function holds, as "and"s of choices, up to `most` of them. There can be very many,
+    /// so they're listed only as far as asked.
+    fn terms(&self, f: F, label: &dyn Fn(&str) -> String, most: usize) -> Vec<String> {
+        let mut out = Vec::new();
+        self.walk(f, String::new(), label, most, &mut out);
+        out
+    }
+
+    fn walk(&self, f: F, prefix: String, label: &dyn Fn(&str) -> String, most: usize, out: &mut Vec<String>) {
+        if out.len() >= most || f == FALSE {
+            return;
         }
-        if f == FALSE {
-            return vec![];
+        if f == TRUE {
+            out.push(prefix);
+            return;
         }
         let (var, kids) = &self.nodes[f as usize];
         let v = &self.vars[*var as usize];
+        for (kid, opts) in Self::groups(kids, &v.options) {
+            let name = label(&v.name);
+            let opts: Vec<String> = opts.iter().map(|o| label(o)).collect();
+            let lit = if opts.len() == 1 { format!("{name}={}", opts[0]) } else { format!("{name}∈{{{}}}", opts.join(",")) };
+            self.walk(kid, if prefix.is_empty() { lit } else { format!("{prefix} ∧ {lit}") }, label, most, out);
+        }
+    }
+
+    /// A node's children, with the options leading to each.
+    fn groups<'o>(kids: &[F], options: &'o [String]) -> Vec<(F, Vec<&'o str>)> {
         let mut groups: Vec<(F, Vec<&str>)> = Vec::new();
-        for (kid, opt) in kids.iter().zip(&v.options) {
+        for (kid, opt) in kids.iter().zip(options) {
             match groups.iter_mut().find(|(k, _)| k == kid) {
                 Some((_, opts)) => opts.push(opt),
                 None => groups.push((*kid, vec![opt])),
             }
         }
-        let mut out = Vec::new();
-        for (kid, opts) in groups {
-            let name = label(&v.name);
-            let opts: Vec<String> = opts.iter().map(|o| label(o)).collect();
-            let lit = if opts.len() == 1 { format!("{name}={}", opts[0]) } else { format!("{name}∈{{{}}}", opts.join(",")) };
-            for t in self.terms(kid, label) {
-                out.push(if t.is_empty() { lit.clone() } else { format!("{lit} ∧ {t}") });
-            }
+        groups
+    }
+
+    /// How many ways `terms` would list, without listing them.
+    fn count_terms(&self, f: F, memo: &mut HashMap<F, u128>) -> u128 {
+        if f == FALSE {
+            return 0;
         }
-        out
+        if f == TRUE {
+            return 1;
+        }
+        if let Some(n) = memo.get(&f) {
+            return *n;
+        }
+        let (var, kids) = &self.nodes[f as usize];
+        let n = Self::groups(kids, &self.vars[*var as usize].options).into_iter().fold(0u128, |t, (kid, _)| t.saturating_add(self.count_terms(kid, memo)));
+        memo.insert(f, n);
+        n
     }
 }
 
@@ -562,10 +592,18 @@ impl Bool {
             FALSE => "never".into(),
             TRUE => "always".into(),
             f => {
-                let terms = self.space.lock().terms(f, label);
+                let space = self.space.lock();
+                let terms = space.terms(f, label, MOST_TERMS);
                 // An "and" alone needs no brackets, and nor does a term of one.
                 let bracket = |t: &String| if terms.len() > 1 && t.contains(" ∧ ") { format!("({t})") } else { t.clone() };
-                terms.iter().map(bracket).collect::<Vec<_>>().join(" ∨ ")
+                let mut text = terms.iter().map(bracket).collect::<Vec<_>>().join(" ∨ ");
+                if terms.len() == MOST_TERMS {
+                    let more = space.count_terms(f, &mut HashMap::new()) - MOST_TERMS as u128;
+                    if more > 0 {
+                        text.push_str(&format!(" ∨ … {more} more way{}", if more == 1 { "" } else { "s" }));
+                    }
+                }
+                text
             }
         }
     }

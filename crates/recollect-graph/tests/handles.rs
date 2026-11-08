@@ -274,3 +274,17 @@ fn a_world_value_means_the_same_in_a_space_with_a_different_variable_order() {
         assert_eq!(back.at(&w), want, "{w:?}");
     }
 }
+
+/// Writing out where something holds lists the ways it does, and an odd number of eight switches being
+/// on holds 128 ways, which nobody reads. Past a couple of dozen, it says how many more there are.
+#[test]
+fn a_condition_that_holds_many_ways_is_written_out_only_so_far() {
+    let s = Space::global();
+    let vars: Vec<_> = (0..8).map(|i| s.uniform(&format!("many_{i}"), &["off", "on"])).collect();
+    let odd = vars.iter().fold(s.never(), |acc, v| &(&acc & &v.is("off")) | &(&!&acc & &v.is("on")));
+    let text = odd.show();
+    assert_eq!(text.matches(" ∨ ").count(), 24, "24 ways, and the rest counted: {text}");
+    assert!(text.ends_with(" ∨ … 104 more ways"), "{text}");
+    let few = &vars[0].is("on") | &vars[1].is("on");
+    assert_eq!(few.show(), "(many_0=off ∧ many_1=on) ∨ many_0=on", "and a short one is written out whole");
+}
