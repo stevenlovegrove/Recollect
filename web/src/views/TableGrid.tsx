@@ -43,7 +43,10 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
   const columns = useMemo(() => {
     const cs = new Set(Object.entries(head?.cells ?? {}).filter(([, c]) => c.workspace).map(([k]) => k));
     for (const r of rows) for (const [k, c] of Object.entries(r.cells)) if (c.workspace && (c.own || (c.kind && lineage.has(c.kind)))) cs.add(k);
-    return [...cs].sort();
+    // A table of choices: each row's choice, and the options, which the rows take from the table. The
+    // table's own value is what it says about them, such as that no two are the same.
+    const choices = [head, ...rows].some((n) => n?.cells.domain);
+    return [...(choices ? ["value", "domain"] : []), ...[...cs].sort()];
   }, [head, rows, lineage]);
   const numbered = rows.length > 0 && rows.every((r) => typeof r.row!.key === "number");
   // A numbered table goes on past its last written row, as far as it's asked: those rows are worked out

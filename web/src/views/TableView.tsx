@@ -120,6 +120,8 @@ export function TableCell({ ws, node, c, cell, written, readOnly }: { ws: ViewPr
   }
   if (cell.error) return <span title={cell.error}>#ERROR</span>;
   if (r) return <Truth component={c} r={r} />;
+  // A list of words, such as a choice's options, reads as a list.
+  if (Array.isArray(cell.value) && cell.value.every((v) => typeof v === "string")) return <span>{cell.value.join(", ")}</span>;
   return <span title={cell.rule}>{cellText(cell, nameOf)}</span>;
 }
 

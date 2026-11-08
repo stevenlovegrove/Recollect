@@ -32,6 +32,7 @@ const LABEL: Record<string, string> = {
   blockers: "Waits for",
   actionable: "Can start",
   scope: "Inside",
+  domain: "Options",
 };
 
 export const label = (c: string) => LABEL[c] ?? (c[0]?.toUpperCase() ?? "") + c.slice(1).replace(/_/g, " ");
