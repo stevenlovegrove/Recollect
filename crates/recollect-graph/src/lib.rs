@@ -9,6 +9,7 @@ pub mod log;
 pub mod name;
 pub mod registry;
 pub mod saved;
+pub mod table;
 pub mod worlds;
 
 pub use graph::{Cell, Component, Cx, Dep, Entity, Error, Graph, Inputs, Rule, Runtime, Storage, rule};

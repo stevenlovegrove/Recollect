@@ -246,6 +246,9 @@ call     := name "(" (name "in" path ":" expr ("," expr)? | expr ("," expr)*)? "
 | `rate` | The `value` of the node labelled `rate` |
 | `rate.finish`, `rate.task.review.pages` | Another cell on it, or a field of one |
 | `self.need` | A cell on this node |
+| `prev.balance`, `next.left`, `prev.prev.f` | A cell on the row before or after this one in its table: see [Tables](#tables) |
+| `row` | Which row this is: its number, or its key |
+| `rows` | The group of rows in this node's table |
 | `in.part_of`, `out.depends_on` | The group of nodes linked by that kind |
 | `with.task` | The group of nodes holding that component, using the engine's declared scans |
 
@@ -377,7 +380,7 @@ If one needs new Rust, that's the finding, and it goes in this document.
 
 1. **Should `requires` narrow the plan's views?** Say a budget node rules out free-form. It could dim that option on the Decisions tab and hide its work, or only show it on the Worlds tab with a notice saying why. It does only the Worlds tab today.
 2. **Is keeping `Domain` consistent enough?** It's the one place an option isn't a node. The alternative is making every option a node and having the map collapse them, which costs 125 nodes on the zebra puzzle.
-3. **Should a workspace be able to make a whole column?** A system can, with `formulas::defaults_to`. A workspace does it with a kind: see [Kinds](#kinds). What a kind can't yet do is give its instances a system's cells, such as making each one a task.
+3. **Should a workspace be able to make a whole column?** A system can, with `formulas::defaults_to`. A workspace does it with a kind or a table: see [Kinds](#kinds) and [Tables](#tables). What neither can yet do is give its rows a system's cells, such as a `value`, or making each one a task.
 
 ## Kinds
 
@@ -394,7 +397,7 @@ Hybrid:      is_a Petrol car, cost_per_mile 0.09, price 26000
 - **A value is taken as it is, and a formula runs for each node of that kind.** `self` is the hatchback, so it's the hatchback's mpg.
 - **Names are labelled once, on the kind.** A formula taken from a kind may follow links from where it's written as well as from the node it runs for, so `fuel` doesn't need a link from every car.
 - **A node's own word wins,** and taking it away brings the kind's back, as for a default. The hybrid's maker gives its cost a mile, so it says that for itself.
-- **A kind can have a kind.** The nearest that says something is the one used: a node's kinds in the order they were made, then theirs. A loop of kinds goes round once and stops.
+- **A kind can have a kind.** What's more specific comes first, so a kind always comes before what it's a kind of. Otherwise it's the nearest, and then the order the kinds were made. A loop of kinds goes round once and stops.
 - **What a system owns stays the system's.** A kind can't give its instances a name, make them done or make them tasks.
 
 It's in the engine, rather than written as a default rule, because which cells a node has depends on its kind, and memos have to follow changes to the kind. Changing a kind's cell reaches everything that takes it, however far down, and linking or unlinking a kind reaches every cell the node could take from it. `tests/kinds.rs` checks this against a newly built graph through random edits.
@@ -402,6 +405,28 @@ It's in the engine, rather than written as a default rule, because which cells a
 On a map, `is_a` is dashed and doesn't decide what goes above what. A kind is where a formula is written, not a step its numbers go through, so what the kind's formulas read goes beneath each node they run for: Fuel price sits under the petrol cars.
 
 A decision can give any cell of whichever option it lands on: `range` on "Which car?" is `pick(o in in.alternative: o.range)`, and a constraint reads `car.range >= trip`. That's how a car's figures reach what's worked out from the one chosen: "Yearly cost" reads `car.price`, `car.cost_per_mile` and `car.insurance` the same way.
+
+## Tables
+
+A node named `Year[3]` is row 3 of the table `Year`, and one named `Car[Hatchback]` is the Hatchback row of `Car`. The name is all there is to it: nothing else is stored, so nothing can disagree with it, and renaming a row moves it. In the files, each row is still an ordinary node.
+
+A row takes the workspace's own cells it doesn't say from the node named for its table, as a node takes them from its kind. A formula there is a column, like one filled down in a spreadsheet:
+
+```
+Rate:     0.05
+Year:     balance = prev.balance * (1 + rate)      (rate labels Rate)
+Year[0]:  balance 1000
+Year[1] … Year[10]
+```
+
+- **A numbered row has neighbours.** `prev` is the row before, `next` the row after, and `prev.prev` the one before that. With no row there, as before `Year[0]` or at a gap, it's undefined, so the first row says its own value, as `Year[0]` does.
+- **`row` is which row this is,** a number for `Year[3]` and text for `Car[Hatchback]`, and `rows` is every row of the table, so `sum(rows.cost)` is a column's total.
+- **Rows of related tables with the same key are one thing.** If Petrol car `is_a` Car, then `Car[Hatchback]` and `Petrol car[Hatchback]` are parts of one car. Each table holds only what applies to it: every car has a price, and only petrol cars have an mpg. Each part reads the cells it doesn't say from the others, and then from the tables of all of them. What's more specific wins: a part's own word, then Petrol car's, then Car's. A petrol car with no `Car` row is still a car.
+- **A choice part way down changes only what comes after.** A row can say its own formula, such as `Year[5]` adding a top-up that's a decision. The rows before it have one value, and the rows after have one for each option.
+
+What a system owns still can't come from a table, and that includes `value`, so a table's columns are cells of the workspace's own, such as `balance`.
+
+The engine keeps an index of names, so finding a table's rows or a row's neighbour doesn't mean reading every name. Renaming a node, linking a table to a kind, or removing a row reaches everything that could take a cell from somewhere else as a result. `tests/tables.rs` checks this against a newly built graph through random renames, kinds and edits, and `tests/toy_table.rs` in the systems checks the formulas.
 
 ## Comparing options
 

@@ -14,6 +14,7 @@ use std::cell::{Cell as StdCell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 
 use recollect_graph::worlds::{Bool, Cond, Space, Worldly};
+use recollect_graph::table::Key;
 use recollect_graph::{Cell, Component, Compute, Cx, Entity, Error, Graph, Inputs, Place, Registry, Rule, RuleMeta, component, rule};
 use serde_json::{Value, json};
 
@@ -119,6 +120,21 @@ pub(crate) fn component_type(component: &str) -> Type {
         "name" | "body" | "choice" => Type::Text,
         _ => Type::Any,
     }
+}
+
+/// How far along its table `prev` and `next` are from a row.
+fn along(name: &str) -> Option<i64> {
+    match name {
+        "prev" => Some(-1),
+        "next" => Some(1),
+        _ => None,
+    }
+}
+
+/// How far along a path starting `prev.prev…` goes, and what it reads there.
+fn steps_along(path: &[String]) -> (i64, &[String]) {
+    let n = path.iter().take_while(|p| along(p).is_some()).count();
+    (path[..n].iter().filter_map(|p| along(p)).sum(), &path[n..])
 }
 
 fn failed<T>(message: impl Into<String>) -> Result<T, Error> {
@@ -281,6 +297,9 @@ impl<'c, 'a> Expander<'c, 'a> {
         if scope.is_macro() {
             return failed(format!("a macro can only use its parameters, not {root}"));
         }
+        if root == "rows" {
+            return Ok(self.cx.rows());
+        }
         // No links yet is fine for a group: a total with no lines is 0.
         Ok(self.labels.get(root).cloned().unwrap_or_default())
     }
@@ -302,7 +321,14 @@ impl<'c, 'a> Expander<'c, 'a> {
                 }
             } else if root == "self" && path.len() == 1 && !scope.is_macro() {
                 return Ok(Binding::Node(self.cx.id()));
-            } else if matches!(root, "in" | "out" | "with") {
+            } else if along(root).is_some() && !scope.is_macro() {
+                let (by, rest) = steps_along(path);
+                if rest.is_empty()
+                    && let Some(n) = self.cx.row_along(by)
+                {
+                    return Ok(Binding::Node(n));
+                }
+            } else if matches!(root, "in" | "out" | "with" | "rows") {
                 return Ok(Binding::Group(self.group(path, scope)?));
             } else if path.len() == 1 && !scope.is_macro() && root != "self" {
                 let nodes = self.group(path, scope)?;
@@ -358,7 +384,21 @@ impl<'c, 'a> Expander<'c, 'a> {
             "self" => Ok(self.read(self.cx.id(), rest)),
             "whole" if rest.is_empty() => failed("whole needs to say which cell, such as whole.plan_end"),
             "whole" => Ok(self.read(Entity::whole(), rest)),
-            "in" | "out" | "with" => failed(format!("{}.… is a group of nodes, so it needs something like sum({}.…)", root, root)),
+            // Before the first row, or with a gap, there's nothing there.
+            "prev" | "next" => {
+                let (by, rest) = steps_along(path);
+                Ok(match self.cx.row_along(by) {
+                    Some(n) => self.read(n, rest),
+                    None => self.lit(Val::Undefined),
+                })
+            }
+            "row" if !rest.is_empty() => failed("row is which row this is, so it has no cells: prev.cost reads the row before"),
+            "row" => Ok(self.lit(match self.cx.row_key() {
+                Some(Key::Num(n)) => Val::Num(n as f64),
+                Some(Key::Text(t)) => Val::Text(t),
+                None => Val::Undefined,
+            })),
+            "in" | "out" | "with" | "rows" => failed(format!("{}.… is a group of nodes, so it needs something like sum({}.…)", root, root)),
             _ => match self.labels.get(root).map(Vec::as_slice) {
                 None | Some([]) => failed(format!("no input called {root}")),
                 Some([one]) => Ok(self.read(*one, rest)),

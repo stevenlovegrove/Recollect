@@ -11,6 +11,7 @@ use recollect_systems::formulas::{Domain, Requires, ValueCell, truth};
 use recollect_systems::plan::{self, Need, Pressure};
 use recollect_systems::samples::{SAMPLES, ops_of};
 use recollect_systems::schedule::{Finish, Slack};
+use serde_json::Value;
 
 fn copy(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
@@ -127,11 +128,13 @@ fn the_trip_budget_is_exact_with_its_choices_open() {
 
 #[test]
 fn compound_interest_and_fibonacci_reach_their_known_values() {
+    // A table's own column, worked out row by row from the one before.
+    let column = |o: &Opened, row: &str, c: &str| -> Value { o.g().get_runtime(o.id(row), c).unwrap().unwrap_or_else(|| panic!("{row} has no {c}")).value };
     let o = open("compound-interest");
-    assert!((o.number("Year 10") - 1628.894626777442).abs() < 1e-6);
+    assert!((column(&o, "Year[10]", "balance").as_f64().unwrap() - 1628.894626777442).abs() < 1e-6, "{}", column(&o, "Year[10]", "balance"));
     let o = open("fibonacci");
-    assert_eq!(o.number("f80"), 23416728348467685.0);
-    assert_eq!(o.g().take_ran().iter().filter(|(_, c)| c == ValueCell::NAME).count(), 79);
+    assert_eq!(column(&o, "F[80]", "f").as_f64().unwrap(), 23416728348467685.0);
+    assert_eq!(o.g().take_ran().iter().filter(|(_, c)| c == "f").count(), 79);
 }
 
 #[test]

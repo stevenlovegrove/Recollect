@@ -496,7 +496,7 @@ impl Parser {
             }
         }
         // `max(a, b)` is two numbers, and only a group spelled out as one can be gone over.
-        let of_group = matches!(args.first(), Some(Expr::Path(p)) if matches!(p[0].as_str(), "in" | "out" | "with"));
+        let of_group = matches!(args.first(), Some(Expr::Path(p)) if matches!(p[0].as_str(), "in" | "out" | "with" | "rows"));
         if FOLDS.contains(&func.as_str()) && (!NEEDS_START.contains(&func.as_str()) || of_group) {
             return short_fold(func, args);
         }
@@ -547,7 +547,7 @@ pub fn parse(text: &str) -> Result<Expr, String> {
 pub fn is_name(s: &str) -> bool {
     let mut chars = s.chars();
     let starts = chars.next().is_some_and(|c| c.is_alphabetic() || c == '_');
-    starts && chars.all(|c| c.is_alphanumeric() || c == '_') && !matches!(s, "true" | "false" | "undefined" | "self" | "whole" | "in" | "out" | "with")
+    starts && chars.all(|c| c.is_alphanumeric() || c == '_') && !matches!(s, "true" | "false" | "undefined" | "self" | "whole" | "in" | "out" | "with" | "prev" | "next" | "row" | "rows")
 }
 
 #[cfg(test)]

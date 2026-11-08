@@ -26,8 +26,8 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "invoice", title: "Invoice", about: "Two lines, a subtotal, tax and a total. Edit a number and only what it reaches reruns.", group: "sheet", systems: &[], build: invoice },
     Sample { name: "trip-budget", title: "Trip budget", about: "A budget with decisions left open: the total is exact in every world, and so is what would put it over.", group: "sheet", systems: &["plan"], build: trip_budget },
     Sample { name: "choosing-a-car", title: "Choosing a car", about: "Petrol and electric cars, what each costs a year over mileage you can only guess at, and which can get to Edinburgh without stopping. A kind says what a mile costs, so a car only says its mpg.", group: "sheet", systems: &["plan"], build: choosing_a_car },
-    Sample { name: "compound-interest", title: "Compound interest", about: "Ten years chained together, sharing one rate cell.", group: "sheet", systems: &[], build: compound_interest },
-    Sample { name: "fibonacci", title: "Fibonacci", about: "Each cell adds the two before it. Cells that are shared run once, so 80 terms take 79 formula runs.", group: "sheet", systems: &[], build: fibonacci },
+    Sample { name: "compound-interest", title: "Compound interest", about: "A table of years. One formula on Year works out each from the year before, and Year[0] says where it starts.", group: "sheet", systems: &[], build: compound_interest },
+    Sample { name: "fibonacci", title: "Fibonacci", about: "A table where each row adds the two before it: prev.f + prev.prev.f. Cells that are shared run once, so 80 terms take 79 formula runs.", group: "sheet", systems: &[], build: fibonacci },
     Sample { name: "australia", title: "Colouring Australia", about: "Each region is a choice and each border a constraint. There are 18 colourings. Pin a region and see what that forces.", group: "puzzle", systems: &[], build: australia },
     Sample { name: "eight-queens", title: "Eight queens", about: "One choice per row, and one constraint per pair of rows. There are 92 boards.", group: "puzzle", systems: &[], build: eight_queens },
     Sample { name: "sudoku", title: "4×4 sudoku", about: "Sixteen cells, and a constraint between each pair that can't match. There are 288 grids.", group: "puzzle", systems: &[], build: sudoku },
@@ -36,7 +36,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "4";
+pub const FORMAT: &str = "5";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -205,18 +205,20 @@ fn choosing_a_car(b: &mut Build) {
 }
 
 fn compound_interest(b: &mut Build) {
-    b.set("Year 0", ValueCell::num(1000.0)).set("Rate", ValueCell::num(0.05));
+    // One formula for every year, on the table. Year[0] says its own, so it's where the chain starts.
+    b.set("Rate", ValueCell::num(0.05));
+    b.formula_on("Year", "balance", "prev.balance * (1 + rate)").label("Year", "Rate", "rate");
+    b.put("Year[0]", "balance", json!(1000.0));
     for i in 1..=10 {
-        let id = format!("Year {i}");
-        b.formula(&id, "prev * (1 + rate)").label(&id, &format!("Year {}", i - 1), "prev").label(&id, "Rate", "rate");
+        b.e(&format!("Year[{i}]"));
     }
 }
 
 fn fibonacci(b: &mut Build) {
-    b.set("f0", ValueCell::num(0.0)).set("f1", ValueCell::num(1.0));
+    b.formula_on("F", "f", "prev.f + prev.prev.f");
+    b.put("F[0]", "f", json!(0)).put("F[1]", "f", json!(1));
     for i in 2..=80 {
-        let id = format!("f{i}");
-        b.formula(&id, "a + b").label(&id, &format!("f{}", i - 1), "a").label(&id, &format!("f{}", i - 2), "b");
+        b.e(&format!("F[{i}]"));
     }
 }
 

@@ -125,7 +125,7 @@ fn compound_interest_is_a_chain_with_a_shared_rate() {
     g.set("y0", num(1000.0)).set("rate", num(0.05));
     for i in 1..=10 {
         let id = format!("y{i}");
-        g.formula(&id, "prev * (1 + rate)").input(&id, &format!("y{}", i - 1), "prev").input(&id, "rate", "rate");
+        g.formula(&id, "last * (1 + rate)").input(&id, &format!("y{}", i - 1), "last").input(&id, "rate", "rate");
     }
     assert!((amount(&g, "y10") - 1628.894626777442).abs() < 1e-6);
     g.take_ran();

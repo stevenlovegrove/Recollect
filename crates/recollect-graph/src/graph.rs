@@ -51,7 +51,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::name::Name;
 use crate::registry::{Registry, SavedRule};
+use crate::table::{self, Row};
 
 /// A node. An opaque handle with no meaning of its own: a name is just a component. Time-ordered,
 /// so nodes sort in creation order, and files created on two machines never collide.
@@ -301,6 +303,14 @@ pub(crate) enum Backing {
     Broken(SavedRule, Error),
 }
 
+/// The name a cell holds, if it's a name typed in.
+fn name_in(b: &Backing) -> Option<String> {
+    match b {
+        Backing::Stored(Value::String(s)) => Some(s.clone()),
+        _ => None,
+    }
+}
+
 pub(crate) fn typed_backing<C: Component>(s: Storage<C>) -> Backing {
     match s {
         Storage::Value(v) => Backing::Stored(serde_json::to_value(&v).expect("components serialise")),
@@ -342,6 +352,33 @@ struct Engine {
     ran: Vec<Key>,
 }
 
+/// Every node's name, and what's a row of what, so finding a table's rows doesn't mean reading every name.
+#[derive(Clone, Default)]
+struct Names {
+    of: HashMap<Entity, String>,
+    named: HashMap<String, BTreeSet<Entity>>,
+    rows: HashMap<Entity, Row>,
+    tables: HashMap<String, BTreeMap<table::Key, BTreeSet<Entity>>>,
+}
+
+impl Names {
+    fn set(&mut self, e: Entity, name: Option<String>) {
+        if let Some(old) = self.of.remove(&e) {
+            self.named.get_mut(&old).map(|s| s.remove(&e));
+        }
+        if let Some(row) = self.rows.remove(&e) {
+            self.tables.get_mut(&row.table).and_then(|t| t.get_mut(&row.key)).map(|s| s.remove(&e));
+        }
+        let Some(name) = name else { return };
+        if let Some(row) = table::row_of(&name) {
+            self.tables.entry(row.table.clone()).or_default().entry(row.key.clone()).or_default().insert(e);
+            self.rows.insert(e, row);
+        }
+        self.named.entry(name.clone()).or_default().insert(e);
+        self.of.insert(e, name);
+    }
+}
+
 /// How a node takes the cells it doesn't have from its kind.
 pub(crate) struct Inheriting {
     /// The kind of link from a node to its kind.
@@ -357,6 +394,8 @@ pub struct Graph {
     /// What backs a component on every node that doesn't say otherwise.
     pub(crate) defaults: HashMap<String, Backing>,
     inheriting: Option<Arc<Inheriting>>,
+    /// Names, and the tables they make: see `table`.
+    names: Names,
     pub(crate) links: BTreeMap<(Entity, Entity), BTreeMap<String, Value>>,
     into: HashMap<Entity, BTreeSet<Entity>>,
     from: HashMap<Entity, BTreeSet<Entity>>,
@@ -416,9 +455,14 @@ impl Graph {
     /// returns false.
     pub fn despawn(&mut self, e: Entity) -> bool {
         let linked = self.into.get(&e).is_some_and(|s| !s.is_empty()) || self.from.get(&e).is_some_and(|s| !s.is_empty());
-        if linked || !self.entities.remove(&e) {
+        if linked || !self.entities.contains(&e) {
             return false;
         }
+        // Its name may have made it part of a row, or a table something's a row of.
+        let before = self.reach(&[e]);
+        self.entities.remove(&e);
+        self.names.set(e, None);
+        self.moved(before, &[e]);
         self.revision += 1;
         let own = self.cells.remove(&e).unwrap_or_default().into_keys();
         let columns: BTreeSet<String> = own.chain(self.defaults.keys().cloned()).collect();
@@ -501,54 +545,73 @@ impl Graph {
         if matches!(b, Backing::Stored(_)) {
             self.forget(e, component);
         }
+        let renamed = (component == Name::NAME).then(|| (self.reach(&[e]), name_in(&b)));
         let is_new = self.cells.entry(e).or_default().insert(component.to_string(), b).is_none();
+        if let Some((before, name)) = renamed {
+            self.renamed(e, name, before);
+        }
         self.rebacked(e, component);
         if is_new {
             self.touch(Dep::Scan(component.to_string()));
         }
     }
 
-    /// The nodes that take this cell from `e`, because it's their kind or their kind's kind, and that
-    /// don't say it for themselves.
-    fn heirs(&self, e: Entity, component: &str) -> Vec<Entity> {
-        let Some(inh) = self.inheriting.as_ref().filter(|i| !i.owned.contains(component)) else { return Vec::new() };
-        let (mut out, mut seen, mut todo) = (Vec::new(), HashSet::from([e]), vec![e]);
-        while let Some(k) = todo.pop() {
-            for s in self.sources_of(k, &inh.through) {
-                if seen.insert(s) && !self.has_own(s, component) {
-                    out.push(s);
-                    todo.push(s);
-                }
+    /// What backs this cell changed, here and for whatever takes it from here.
+    fn rebacked(&mut self, e: Entity, component: &str) {
+        self.touch(Dep::Backing((e, component.to_string())));
+        if !self.inheriting.as_ref().is_some_and(|i| !i.owned.contains(component)) {
+            return;
+        }
+        let takers = self.takers_all(e);
+        if takers.is_empty() {
+            return;
+        }
+        for t in takers {
+            if !self.has_own(t, component) {
+                // Whether it's now a value or a rule, it isn't an unbroken run of the old one.
+                self.forget(t, component);
+                self.touch(Dep::Backing((t, component.to_string())));
+            }
+        }
+        self.touch(Dep::Scan(component.to_string()));
+    }
+
+    /// A node's name changed, so it may be a row somewhere else now, or a table with other rows.
+    fn renamed(&mut self, e: Entity, name: Option<String>, before: HashMap<Entity, BTreeSet<String>>) {
+        self.names.set(e, name);
+        self.moved(before, &[e]);
+        self.touch(Dep::Scan(Name::NAME.to_string()));
+    }
+
+    /// The nodes that might take a cell from around these, and the cells each could take: kept from
+    /// before a change that can move where cells come from, such as a new kind or a new name.
+    fn reach(&self, around: &[Entity]) -> HashMap<Entity, BTreeSet<String>> {
+        if self.inheriting.is_none() {
+            return HashMap::new();
+        }
+        let mut out = HashMap::new();
+        for a in around.iter().filter(|a| self.entities.contains(a)) {
+            for n in std::iter::once(*a).chain(self.takers_all(*a)) {
+                out.entry(n).or_insert_with(|| self.taken(n));
             }
         }
         out
     }
 
-    /// What backs this cell changed, here and for whatever takes it from here.
-    fn rebacked(&mut self, e: Entity, component: &str) {
-        self.touch(Dep::Backing((e, component.to_string())));
-        let heirs = self.heirs(e, component);
-        if heirs.is_empty() {
-            return;
+    /// After such a change: anything that could take a cell from somewhere else, before or after it,
+    /// has to look again.
+    fn moved(&mut self, mut before: HashMap<Entity, BTreeSet<String>>, around: &[Entity]) {
+        for (n, cells) in self.reach(around) {
+            before.entry(n).or_default().extend(cells);
         }
-        for h in heirs {
-            // Whether it's now a value or a rule, it isn't an unbroken run of the old one.
-            self.forget(h, component);
-            self.touch(Dep::Backing((h, component.to_string())));
-        }
-        self.touch(Dep::Scan(component.to_string()));
-    }
-
-    /// `e` took a kind, or stopped taking one, so every cell it could take from there may have changed.
-    fn rekinded(&mut self, e: Entity, kind: Entity) {
-        let Some(inh) = self.inheriting.clone() else { return };
-        for c in self.components_of(kind) {
-            if inh.owned.contains(&c) || self.has_own(e, &c) {
-                continue;
+        for (n, cells) in before {
+            for c in cells {
+                if self.entities.contains(&n) && !self.has_own(n, &c) {
+                    self.forget(n, &c);
+                    self.touch(Dep::Backing((n, c.clone())));
+                }
+                self.touch(Dep::Scan(c));
             }
-            self.forget(e, &c);
-            self.rebacked(e, &c);
-            self.touch(Dep::Scan(c));
         }
     }
 
@@ -563,8 +626,12 @@ impl Graph {
     }
 
     pub fn remove_named(&mut self, e: Entity, component: &str) -> &mut Self {
+        let before = (component == Name::NAME).then(|| self.reach(&[e]));
         if self.cells.get_mut(&e).and_then(|c| c.remove(component)).is_some() {
             self.revision += 1;
+            if let Some(before) = before {
+                self.renamed(e, None, before);
+            }
             self.forget(e, component);
             self.rebacked(e, component);
             self.touch(Dep::Scan(component.to_string()));
@@ -579,17 +646,19 @@ impl Graph {
     pub fn link_runtime(&mut self, from: Entity, to: Entity, c: Runtime) -> &mut Self {
         self.known(from);
         self.known(to);
-        let bag = self.links.entry((from, to)).or_default();
-        if bag.get(&c.name) == Some(&c.value) {
+        if self.link_value(from, to, &c.name) == Some(&c.value) {
             return self;
         }
+        let kinded = self.inheriting.as_ref().is_some_and(|i| i.through == c.name);
+        let before = if kinded { self.reach(&[from, to]) } else { HashMap::new() };
+        let bag = self.links.entry((from, to)).or_default();
         bag.insert(c.name.clone(), c.value);
         self.into.entry(to).or_default().insert(from);
         self.from.entry(from).or_default().insert(to);
         self.revision += 1;
         self.touch(Dep::Into(to, c.name.clone()));
-        if self.inheriting.as_ref().is_some_and(|i| i.through == c.name) {
-            self.rekinded(from, to);
+        if kinded {
+            self.moved(before, &[from, to]);
         }
         self.touch(Dep::From(from, c.name));
         self
@@ -602,6 +671,8 @@ impl Graph {
     /// A link is its kinds, so removing the last kind removes the link.
     pub fn unlink_named(&mut self, from: Entity, to: Entity, kind: &str) -> &mut Self {
         let key = (from, to);
+        let kinded = self.inheriting.as_ref().is_some_and(|i| i.through == kind) && self.has_link(from, to, kind);
+        let before = if kinded { self.reach(&[from, to]) } else { HashMap::new() };
         let removed = self.links.get_mut(&key).and_then(|b| b.remove(kind)).is_some();
         if removed {
             if self.links[&key].is_empty() {
@@ -612,8 +683,8 @@ impl Graph {
             self.revision += 1;
             self.touch(Dep::Into(to, kind.to_string()));
             self.touch(Dep::From(from, kind.to_string()));
-            if self.inheriting.as_ref().is_some_and(|i| i.through == kind) {
-                self.rekinded(from, to);
+            if kinded {
+                self.moved(before, &[from, to]);
             }
         }
         self
@@ -639,6 +710,7 @@ impl Graph {
             cells: self.cells.clone(),
             defaults: self.defaults.clone(),
             inheriting: self.inheriting.clone(),
+            names: self.names.clone(),
             links: self.links.clone(),
             into: self.into.clone(),
             from: self.from.clone(),
@@ -746,26 +818,166 @@ impl Graph {
         self.from_kind(e, component).or_else(|| self.defaults.get(component).map(|b| (b.clone(), e)))
     }
 
-    /// The nearest kind that says what this cell is: its kinds first, in the order they were made, then
-    /// theirs.
+    /// The nearest that says what this cell is, of the other parts of the same row and then the kinds:
+    /// see `lookup`.
     fn from_kind(&self, e: Entity, component: &str) -> Option<(Backing, Entity)> {
-        let inh = self.inheriting.as_ref().filter(|i| !i.owned.contains(component))?;
-        let mut seen = HashSet::from([e]);
-        let mut level = vec![e];
+        self.inheriting.as_ref().filter(|i| !i.owned.contains(component))?;
+        self.lookup(e).into_iter().find_map(|k| self.cells.get(&k).and_then(|c| c.get(component)).map(|b| (b.clone(), k)))
+    }
+
+    /// Where a node looks for a cell it doesn't say itself, in order. First the other parts of the
+    /// same thing, such as `Car[Hatchback]` for `Petrol car[Hatchback]`. Then the kinds of all of them:
+    /// what they link to by `is_a`, and their tables, then those kinds' kinds. Something more specific
+    /// always comes first, so Petrol car comes before Car. Otherwise it's nearest first, and in the
+    /// order nodes were made.
+    fn lookup(&self, e: Entity) -> Vec<Entity> {
+        if self.inheriting.is_none() {
+            return Vec::new();
+        }
+        let mut parts = self.parts(e);
+        let mut seen: HashSet<Entity> = parts.iter().copied().chain([e]).collect();
+        let mut kinds = Vec::new();
+        let mut level: Vec<Entity> = std::iter::once(e).chain(parts.iter().copied()).collect();
         while !level.is_empty() {
             let mut next = Vec::new();
-            for k in level.iter().flat_map(|n| self.targets_of(*n, &inh.through)) {
-                if !seen.insert(k) {
-                    continue;
+            for k in level.iter().flat_map(|n| self.kinds_of(*n)) {
+                if seen.insert(k) {
+                    kinds.push(k);
+                    next.push(k);
                 }
-                if let Some(b) = self.cells.get(&k).and_then(|c| c.get(component)) {
-                    return Some((b.clone(), k));
-                }
-                next.push(k);
             }
             level = next;
         }
-        None
+        // Stable, so what's equally specific stays nearest first.
+        parts.sort_by_key(|p| std::cmp::Reverse(self.above(*p)));
+        kinds.sort_by_key(|k| std::cmp::Reverse(self.above(*k)));
+        parts.extend(kinds);
+        parts
+    }
+
+    /// What a node is directly a kind of: what it links to by `is_a`, and the table it's a row of.
+    fn kinds_of(&self, n: Entity) -> Vec<Entity> {
+        let Some(inh) = &self.inheriting else { return Vec::new() };
+        let mut out = self.targets_of(n, &inh.through);
+        if let Some(row) = self.names.rows.get(&n) {
+            out.extend(self.names.named.get(&row.table).into_iter().flatten().copied().filter(|t| *t != n));
+        }
+        out
+    }
+
+    /// How many kinds are above a node, all the way up. Something is always above fewer than what's
+    /// of its kind, unless they're in a loop.
+    fn above(&self, n: Entity) -> usize {
+        let mut seen = HashSet::from([n]);
+        let mut todo = vec![n];
+        while let Some(k) = todo.pop() {
+            for up in self.kinds_of(k) {
+                if seen.insert(up) {
+                    todo.push(up);
+                }
+            }
+        }
+        seen.len() - 1
+    }
+
+    /// The names of a table and of every kind above it.
+    fn lineage(&self, table: &str) -> HashSet<String> {
+        let mut names = HashSet::from([table.to_string()]);
+        let mut seen = HashSet::new();
+        let mut todo: Vec<Entity> = self.names.named.get(table).into_iter().flatten().copied().collect();
+        while let Some(k) = todo.pop() {
+            if seen.insert(k) {
+                names.extend(self.names.of.get(&k).cloned());
+                todo.extend(self.kinds_of(k));
+            }
+        }
+        names
+    }
+
+    /// The other rows with the same key, in tables related to this one's: one is a kind of the other,
+    /// or they're kinds of the same thing. Together they're one thing, each saying some of its cells.
+    fn parts(&self, e: Entity) -> Vec<Entity> {
+        let Some(row) = self.names.rows.get(&e) else { return Vec::new() };
+        let mine = self.lineage(&row.table);
+        let mut out: Vec<Entity> = Vec::new();
+        for (table, rows) in &self.names.tables {
+            let Some(same) = rows.get(&row.key).filter(|s| s.iter().any(|p| *p != e)) else { continue };
+            if *table == row.table || !self.lineage(table).is_disjoint(&mine) {
+                out.extend(same.iter().copied().filter(|p| *p != e));
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// The nodes that look straight at this one for cells they don't say: what's of its kind, the rows
+    /// of the table it is, and the other parts of the same row.
+    fn takers(&self, k: Entity) -> Vec<Entity> {
+        let Some(inh) = &self.inheriting else { return Vec::new() };
+        let mut out = self.sources_of(k, &inh.through);
+        if let Some(name) = self.names.of.get(&k) {
+            out.extend(self.rows(name).into_iter().filter(|r| *r != k));
+        }
+        out.extend(self.parts(k));
+        out
+    }
+
+    /// Everything that might take a cell from this node, however indirectly.
+    fn takers_all(&self, e: Entity) -> Vec<Entity> {
+        let (mut out, mut seen, mut todo) = (Vec::new(), HashSet::from([e]), vec![e]);
+        while let Some(k) = todo.pop() {
+            for t in self.takers(k) {
+                if seen.insert(t) {
+                    out.push(t);
+                    todo.push(t);
+                }
+            }
+        }
+        out
+    }
+
+    /// The cells a node could take from elsewhere.
+    fn taken(&self, n: Entity) -> BTreeSet<String> {
+        let Some(inh) = &self.inheriting else { return BTreeSet::new() };
+        self.lookup(n).iter().flat_map(|k| self.cells.get(k).into_iter().flat_map(|c| c.keys())).filter(|c| !inh.owned.contains(*c)).cloned().collect()
+    }
+
+    // ---------- tables ----------
+
+    /// Which row of which table a node is, if its name says: see `table`.
+    pub fn row_of(&self, e: Entity) -> Option<&Row> {
+        self.names.rows.get(&e)
+    }
+
+    /// A table's rows: those with numbers in order, then the rest in the order they were made.
+    pub fn rows(&self, table: &str) -> Vec<Entity> {
+        let Some(rows) = self.names.tables.get(table) else { return Vec::new() };
+        let (mut numbered, mut rest) = (Vec::new(), Vec::new());
+        for (key, nodes) in rows {
+            match key {
+                table::Key::Num(_) => numbered.extend(nodes.iter().copied()),
+                table::Key::Text(_) => rest.extend(nodes.iter().copied()),
+            }
+        }
+        rest.sort();
+        numbered.extend(rest);
+        numbered
+    }
+
+    /// The table whose rows are around this node: its own, if it's a table, or the one it's a row of.
+    pub fn table_here(&self, e: Entity) -> Option<&str> {
+        match self.names.rows.get(&e) {
+            Some(row) => Some(&row.table),
+            None => self.names.of.get(&e).map(String::as_str),
+        }
+    }
+
+    /// The row this many along from a numbered row in the same table: the one before is -1.
+    pub fn row_along(&self, e: Entity, by: i64) -> Option<Entity> {
+        let row = self.names.rows.get(&e)?;
+        let table::Key::Num(n) = row.key else { return None };
+        let at = table::Key::Num(n.checked_add(by)?);
+        self.names.tables.get(&row.table)?.get(&at)?.first().copied()
     }
 
     /// The node a node takes this cell from, if it takes it from a kind.
@@ -783,16 +995,7 @@ impl Graph {
     pub fn components_of(&self, e: Entity) -> BTreeSet<String> {
         let own = self.cells.get(&e).into_iter().flat_map(|c| c.keys());
         let mut out: BTreeSet<String> = own.chain(self.defaults.keys()).cloned().collect();
-        if let Some(inh) = &self.inheriting {
-            let mut seen = HashSet::from([e]);
-            let mut todo = self.targets_of(e, &inh.through);
-            while let Some(k) = todo.pop() {
-                if seen.insert(k) {
-                    out.extend(self.cells.get(&k).into_iter().flat_map(|c| c.keys()).filter(|c| !inh.owned.contains(*c)).cloned());
-                    todo.extend(self.targets_of(k, &inh.through));
-                }
-            }
-        }
+        out.extend(self.taken(e));
         out
     }
 
@@ -977,7 +1180,9 @@ impl Cx<'_> {
         let g = self.s.g;
         let from = |at: Entity, i: &Inputs| i.incoming.iter().any(|k| g.has_link(other, at, k)) || i.outgoing.iter().any(|k| g.has_link(at, other, k));
         let reaches = |i: &Inputs| from(self.id, i) || (self.origin != self.id && from(self.origin, i)) || i.scans.iter().any(|c| g.backing(other, c).is_some());
-        let reached = other == self.id || other == self.origin || other == Entity::whole() || reaches(self.inputs) || self.like().is_some_and(|r| reaches(&r.inputs));
+        // Rows of the same table can always read each other, as `prev` does.
+        let same_table = g.row_of(other).is_some_and(|r| g.table_here(self.id) == Some(r.table.as_str()));
+        let reached = other == self.id || other == self.origin || other == Entity::whole() || same_table || reaches(self.inputs) || self.like().is_some_and(|r| reaches(&r.inputs));
         if reached { Ok(()) } else { Err(self.undeclared(format!("{other}, which no declared link reaches"))) }
     }
 
@@ -1087,6 +1292,28 @@ impl Cx<'_> {
         let g = self.s.g;
         let targets = g.from.get(&at).into_iter().flatten();
         Ok(targets.filter_map(|t| Some((*t, Runtime::new(kind, g.links.get(&(at, *t))?.get(kind)?.clone())))).collect())
+    }
+
+    // ---------- tables: see `table` ----------
+
+    /// The rows of the table this rule's node is, or is a row of. These depend on names, so renaming
+    /// anything reruns what read them.
+    pub fn rows(&self) -> Vec<Entity> {
+        self.s.note(Dep::Scan(Name::NAME.to_string()));
+        self.s.g.table_here(self.id).map(|t| self.s.g.rows(t)).unwrap_or_default()
+    }
+
+    /// The row this many along from this rule's node, if it's a numbered row and there's one there:
+    /// the one before is -1.
+    pub fn row_along(&self, by: i64) -> Option<Entity> {
+        self.s.note(Dep::Scan(Name::NAME.to_string()));
+        self.s.g.row_along(self.id, by)
+    }
+
+    /// Which row this rule's node is in its table.
+    pub fn row_key(&self) -> Option<table::Key> {
+        self.s.note(Dep::Scan(Name::NAME.to_string()));
+        self.s.g.row_of(self.id).map(|r| r.key.clone())
     }
 
     pub fn scan(&self, component: &str) -> Result<Vec<Entity>, Error> {

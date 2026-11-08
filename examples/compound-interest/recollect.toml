@@ -1,3 +1,3 @@
 name = "Compound interest"
-about = "Ten years chained together, sharing one rate cell."
+about = "A table of years. One formula on Year works out each from the year before, and Year[0] says where it starts."
 systems = []

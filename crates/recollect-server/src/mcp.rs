@@ -34,6 +34,13 @@ give any cell of whichever option it lands on, as `range` = `pick(o in in.altern
 chosen option reads it there, as `car.range >= trip`. Mark a decision `uncertain` when it isn't anyone's \
 to choose, such as how far someone will drive: its weights then say how likely each option is, and what's expected averages over it.\n\
 \n\
+A name makes a table. A node named `Year[3]` is row 3 of the table `Year`, and `Car[Hatchback]` is the Hatchback row of `Car`: each \
+takes what it doesn't say from the node named `Year` or `Car`, as from a kind, with no `is_a` link needed. A formula there reads \
+`prev.balance` for the row before (`next`, `prev.prev`, `row` for which row this is, and `rows` for all of them), so a recurrence is \
+one formula on the table and a starting value on the first row. If Petrol car `is_a` Car, then `Petrol car[Hatchback]` and \
+`Car[Hatchback]` are parts of one car: put what every car has on the Car row and what only petrol cars have on the Petrol car row. \
+A table's columns are cells of the workspace's own, such as `balance`, since `value` belongs to the formulas system.\n\
+\n\
 Values that depend on open decisions are exact: each is the set of worlds where it holds, shown as a formula such as `calib∈{cad,free}`. \
 A world is one way every open choice could land. Tools that take a `world` read everything as it would be with those choices pinned, \
 keyed by choice and option, by name or handle. That's how to answer what-if questions, and it's the same code as really deciding.\n\
