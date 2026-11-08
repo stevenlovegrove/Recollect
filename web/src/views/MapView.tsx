@@ -19,7 +19,8 @@ import ELK from "elkjs/lib/elk.bundled.js";
 import type { GraphNode, Link } from "../api";
 import type { Workspace } from "../workspace";
 import { GLYPH, compColor, dominant, factsOf, isDropped, isNote, label as labelOf, nodeColor } from "../theme";
-import { Brackets, CompBadges, LIKELY_MEANS, casesOf, cellText, edgeKey, likelyText, parseEdgeKey, reading, truthWords } from "../bits";
+import { Brackets, CompBadges, edgeKey, parseEdgeKey, reading } from "../bits";
+import { type SummaryLine, summaryOf } from "../summary";
 import { DdItem, Dropdown } from "../Dropdown";
 import { Key, isTyping } from "../Shortcuts";
 import type { CtxTarget } from "../ContextMenu";
@@ -57,7 +58,7 @@ type CardData = {
   linking: boolean;
   /** Not needed in any world still in play. */
   out: boolean;
-  lines: { name: string; text: string; full: string; trivial: boolean }[];
+  lines: SummaryLine[];
   /** The names of what it's a kind of. */
   kinds: string[];
   title: string;
@@ -87,7 +88,7 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
       </div>
       {lines.map((l) => (
         <div key={l.name} className={`card-foot ${l.trivial ? "trivial" : ""}`}>
-          <span className="card-foot-k" title={`${labelOf(l.name)}: ${l.full}`}>{labelOf(l.name)}</span> <span className="card-foot-v"><Brackets text={l.text} /></span>
+          <span className="card-foot-k" title={`${l.about ? `${l.about}. ` : ""}${labelOf(l.name)}: ${l.text.length > 400 ? `${l.text.slice(0, 400)}…` : l.text}`}>{labelOf(l.name)}</span> <span className="card-foot-v"><Brackets text={l.text} /></span>
         </div>
       ))}
       <Handle type="target" position={direction === "down" ? Position.Bottom : Position.Right} />
@@ -373,50 +374,6 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
   const [linkDrag, setLinkDrag] = useState<LinkDrag | null>(null);
   const [linkDrop, setLinkDrop] = useState<LinkDrop | null>(null);
   const selectedNode = selected && ws.byId.has(selected) ? selected : null;
-  // What a card says beyond its name: a formula only if it says something.
-  const summaryLines = (n: GraphNode) => {
-    const nameOf = (s: string) => ws.byId.get(s)?.name ?? s;
-    const out: CardData["lines"] = [];
-    // Something uncertain is answered by how likely each way is, and each way by how likely it is: that
-    // says more than when it's in play.
-    const vars = g.worlds.vars;
-    const asked = vars.find((v) => v.id === n.id && v.uncertain);
-    if (asked) {
-      const text = [...asked.options]
-        .filter((o) => o.chance > 0)
-        .sort((a, b) => b.chance - a.chance)
-        .map((o) => `${nameOf(o.id)} ${likelyText(o.chance)}`)
-        .join(", ");
-      out.push({ name: "likely", text, full: `${LIKELY_MEANS}: ${text}`, trivial: false });
-    }
-    const answer = vars.find((v) => v.uncertain && v.options.some((o) => o.id === n.id));
-    if (answer) {
-      const o = answer.options.find((x) => x.id === n.id)!;
-      const text = likelyText(o.chance);
-      out.push({ name: "likely", text, full: `${LIKELY_MEANS}: ${text}`, trivial: o.chance === 0 });
-    }
-    for (const c of g.components) {
-      if (!c.summary) continue;
-      // How likely it is says more than when it's in play.
-      if (answer && c.name === "need") continue;
-      const cell = n.cells[c.name];
-      if (!cell) continue;
-      const r = reading(cell);
-      if (r && (r.always || (c.name === "actionable" && r.never))) continue;
-      const text = cellText(cell, nameOf);
-      const words = r && truthWords(c.name, r);
-      const reads = !words ? text : "fixed" in words ? words.fixed : `${words.lead} ${text}`;
-      out.push({ name: c.name, text: reads, full: reads.length > 400 ? `${reads.slice(0, 400)}…` : reads, trivial: !!r?.never });
-    }
-    // The workspace's own cells that are worked out are what it's for, so they say something too. A kind's
-    // own, with nothing of its own to work them out from, don't.
-    for (const [c, cell] of Object.entries(n.cells)) {
-      if (!cell.workspace || cell.formula === undefined || cell.error || casesOf(cell).every((v) => v === null)) continue;
-      const text = cellText(cell, nameOf);
-      out.push({ name: c, text, full: text, trivial: false });
-    }
-    return out;
-  };
   const selectedRef = useRef(selectedNode);
   selectedRef.current = selectedNode;
 
@@ -905,7 +862,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
               leaving: gone,
               linking: id === linkDrag?.from || id === linkDrag?.over,
               out: !!reading(node.cells.need)?.never,
-              lines: [node, ...(node.parts ?? []).flatMap((p) => ws.byId.get(p) ?? [])].flatMap(summaryLines).filter((l, i, all) => all.findIndex((x) => x.name === l.name) === i),
+              lines: summaryOf(ws, node),
               // A row is called by its key, under the tables it's in.
               title: node.row ? String(node.row.key) : node.name,
               kinds: [

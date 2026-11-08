@@ -2157,6 +2157,32 @@ input.sheet-input {
 .card-foot.trivial {
   opacity: 0.6;
 }
+/* What a card says, in full, in the inspector. */
+.glance {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+.glance > div {
+  display: grid;
+  grid-template-columns: minmax(70px, max-content) 1fr;
+  gap: 8px;
+}
+.glance > div.trivial {
+  opacity: 0.6;
+}
+.glance dt {
+  color: var(--muted);
+}
+.glance dd {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.glance dd .muted {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
 .outline-value {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;

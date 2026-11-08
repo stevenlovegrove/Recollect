@@ -5,6 +5,7 @@ import { GLYPH, compColor, factsOf, isDropped, isNote, label, nodeColor } from "
 import { DdItemButton, Dropdown } from "./Dropdown";
 import { Brackets, CellValue, CompBadge, NodeChip, Resolved, TickBox, casesOf, shownText } from "./bits";
 import { entryText, parseEntry } from "./cellEntry";
+import { summaryOf } from "./summary";
 import { Key } from "./Shortcuts";
 import { OpLine } from "./views/HistoryView";
 import { askSure, askWhy } from "./Ask";
@@ -196,6 +197,8 @@ export function Inspector({
   const computedHere = Object.entries(node.cells).filter(([c, cell]) => !cell.workspace && (cell.source === "rule" || typedOver(c)) && shows(c, cell) && !(typedOver(c) && ws.info(c)?.truth));
   const missing = view.components.filter((c) => c.on === "node" && !c.derived && !node.cells[c.name]);
   const [naming, setNaming] = useState(false);
+  // What its card on the map says, said in full.
+  const summary = summaryOf(ws, node);
 
   return (
     <aside className="inspector">
@@ -224,6 +227,23 @@ export function Inspector({
       </div>
 
       {err && <div className="error">{err}</div>}
+
+      {summary.length > 0 && (
+        <section>
+          <h4>At a glance</h4>
+          <dl className="glance">
+            {summary.map((l) => (
+              <div key={l.name} className={l.trivial ? "trivial" : ""}>
+                <dt title={l.about}>{label(l.name)}</dt>
+                <dd>
+                  <Brackets text={l.text} />
+                  {l.about && <div className="muted small">{l.about}.</div>}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      )}
 
       <section>
         <h4>What it is</h4>
