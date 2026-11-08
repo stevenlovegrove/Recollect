@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Cell, GraphNode, OptionView, VarView, World } from "../api";
 import type { ViewProps } from "./MapView";
-import { CellValue } from "../bits";
+import { CellValue, LIKELY_MEANS, likelyText as percent } from "../bits";
 import { label } from "../theme";
 import { DrawingFrame } from "./DrawingFrame";
 
@@ -144,7 +144,10 @@ export function WorldsView({ ws, onSelect }: ViewProps) {
       )}
       {(!drawing || failed) && (
         <>
-          <p className="muted small">Click to pin a choice. Solid means pinned, a dot means it's the only one left, and blank means no world lands there.</p>
+          <p className="muted small">
+            Click to pin a choice. Solid means pinned, a dot means it's the only one left, and blank means no world lands there.
+            {w.vars.some((v) => v.uncertain) && " For what's uncertain, the percentage is how likely each is, given the evidence and whatever's pinned, so it changes as you pin things."}
+          </p>
           {!w.vars.length ? <p className="muted">Every decision here has been made, so there's only one world.</p> : isBoard ? <Board ws={ws} /> : shared ? <Grid ws={ws} /> : <Lists ws={ws} />}
         </>
       )}
@@ -282,8 +285,8 @@ function Lists({ ws }: { ws: ViewProps["ws"] }) {
             {v.options.map((o) => (
               <button key={o.id} className={`world-opt ${o.picked ? "picked" : ""} ${o.possible ? "" : "gone"} ${o.gap ? "gap" : ""}`} onClick={pinner(ws, v, o)} title={o.name}>
                 {optionName(ws, o)}
-                {v.options.length > 1 && (o.chance > 0 || !o.gap) && (
-                  <span className="muted small" title={`${percent(o.weight)} before the evidence and anything pinned`}>
+                {v.uncertain && v.options.length > 1 && (o.chance > 0 || !o.gap) && (
+                  <span className="muted small" title={`${LIKELY_MEANS}. Before any of that: ${percent(o.weight)}.`}>
                     {" "}
                     {percent(o.chance)}
                   </span>
@@ -297,7 +300,6 @@ function Lists({ ws }: { ws: ViewProps["ws"] }) {
   );
 }
 
-const percent = (p: number) => (p > 0 && p < 0.005 ? "<1%" : p < 1 && p > 0.995 ? ">99%" : `${Math.round(p * 100)}%`);
 
 /**
  * For something uncertain, what's most worth finding out next: each other open question, by how sure of

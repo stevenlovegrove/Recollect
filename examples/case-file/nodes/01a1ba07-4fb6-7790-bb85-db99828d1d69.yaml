@@ -1,18 +1,18 @@
-id: 01a1b9e4-a886-77bd-8ae3-1e344fbfd483
+id: 01a1ba07-4fb6-7790-bb85-db99828d1d69
 components:
   arrives: 0
   body: The housekeeper. She has a key to the study, and was in the house all evening.
-  name: Suspect[Clara]
+  name: Clara
 rules:
   from_garden:
     rule: expr@1
     params:
-      text: went_out
+      text: garden.went_out
 links:
-- to: 01a1b9e4-a886-77bd-8ae3-1e319030b8e5
+- to: 01a1ba07-4fb6-7790-bb85-db96a90cf1ca
   components:
     alternative:
       weight: 2.0
-- to: 01a1b9e4-a886-77bd-8ae3-1e3fc276645f
+- to: 01a1ba07-4fb6-7790-bb85-dba4583b5bea
   components:
-    label: went_out
+    label: garden

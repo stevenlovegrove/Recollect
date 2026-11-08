@@ -62,6 +62,22 @@ function displayValue(v: unknown, names?: (s: string) => string): string {
   return valueText(v);
 }
 
+/**
+ * How likely an option of something uncertain is now: its weight, given whatever rules worlds out and
+ * whatever's been pinned or found out. Something that's someone's to choose has no likelihood, so it's null.
+ */
+export function chanceOf(ws: Workspace, decision: string, option: string): number | null {
+  const v = ws.view?.worlds.vars.find((x) => x.id === decision);
+  if (!v?.uncertain) return null;
+  return v.options.find((o) => o.id === option)?.chance ?? null;
+}
+
+/** A chance as a percentage, saying when it's almost but not quite certain either way. */
+export const likelyText = (p: number) => (p > 0 && p < 0.005 ? "<1%" : p < 1 && p > 0.995 ? ">99%" : `${Math.round(p * 100)}%`);
+
+/** What a likelihood means, for a tooltip. */
+export const LIKELY_MEANS = "How likely, given the evidence and anything pinned or found out";
+
 /** A cell in one line, for a card or a table. */
 export function cellText(cell: Cell, names?: (s: string) => string): string {
   if (cell.error) return "error";

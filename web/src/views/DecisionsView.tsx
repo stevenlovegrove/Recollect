@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type Cell, type Matrix, type MatrixOption, type MatrixRow, type VarView, type View } from "../api";
 import type { ViewProps } from "./MapView";
 import type { Workspace } from "../workspace";
-import { Formula, NodeChip, casesOf, valueText } from "../bits";
+import { Formula, LIKELY_MEANS, NodeChip, casesOf, chanceOf, likelyText, valueText } from "../bits";
 import { SweepChart, type Line } from "./SweepChart";
 import { nodeColor, pct } from "../theme";
 import { askWhy } from "../Ask";
@@ -79,7 +79,14 @@ function DecisionCard({ m, ws, selected, onSelect, focused }: { m: Matrix; ws: W
               <button className="opt-name" onClick={() => onSelect(o.id)} title={o.gap ? "A gap: an option nobody has named" : undefined}>
                 {o.name}
               </button>
-              {!m.chosen && !out && !o.gap && <span className="muted small">{pct(o.weight)}</span>}
+              {!m.chosen && !out && (() => {
+                const p = chanceOf(ws, m.id, o.id);
+                return p !== null && (p > 0 || !o.gap) ? (
+                  <span className="muted small" title={LIKELY_MEANS}>
+                    {likelyText(p)} likely
+                  </span>
+                ) : null;
+              })()}
               {o.ruled_out && <span className="muted small">ruled out</span>}
               {o.dropped && <span className="muted small">dropped</span>}
               <span className="opt-actions">
@@ -89,8 +96,8 @@ function DecisionCard({ m, ws, selected, onSelect, focused }: { m: Matrix; ws: W
                   </button>
                 )}
                 {!m.chosen && !out && !o.gap && (
-                  <button className="link" onClick={() => setCommitting({ kind: "choose", option: o })}>
-                    choose…
+                  <button className="link" title={uncertain ? "Record that this is how it was" : undefined} onClick={() => setCommitting({ kind: "choose", option: o })}>
+                    {uncertain ? "found out…" : "choose…"}
                   </button>
                 )}
                 {!m.chosen && !out && !o.gap && live.length > 1 && (
@@ -122,6 +129,7 @@ function DecisionCard({ m, ws, selected, onSelect, focused }: { m: Matrix; ws: W
         })}
       </div>
 
+      {!m.chosen && uncertain && <WorthKnowing m={m} ws={ws} onSelect={onSelect} />}
       {!m.chosen && <CompareTable m={m} ws={ws} onSelect={onSelect} />}
       {committing && <CommitPanel key={committing.option.id + committing.kind} m={m} ws={ws} commit={committing} onSelect={onSelect} onCancel={() => setCommitting(null)} run={run} />}
       {err && <div className="error">{err}</div>}
@@ -139,7 +147,7 @@ function DecisionCard({ m, ws, selected, onSelect, focused }: { m: Matrix; ws: W
 /** Where a decision stands, in a few words. Something uncertain isn't waiting on anyone to decide it. */
 function standing(m: Matrix, uncertain: boolean): string {
   const n = m.pressure.work.length;
-  if (uncertain && !m.chosen) return "Not yours to choose: weighted by how likely each is";
+  if (uncertain && !m.chosen) return "Not yours to choose: it happened one way, and the percentages say how likely each is, given the evidence";
   switch (m.pressure.state) {
     case "free":
       return `${n} safe step${n === 1 ? "" : "s"} ready: no need to decide yet`;
@@ -157,6 +165,7 @@ function CommitPanel({ m, ws, commit, onSelect, onCancel, run }: { m: Matrix; ws
   const [why, setWhy] = useState("");
   const o = commit.option;
   const choosing = commit.kind === "choose";
+  const uncertain = ws.view?.worlds.vars.find((v) => v.id === m.id)?.uncertain;
   const open = m.rows.filter((r) => r.is_work && !r.finished);
   const safe = choosing ? open.filter((r) => !r.need.always && r.per_option[o.id] >= 0.999) : [];
   const notNeeded = choosing ? m.rows.filter((r) => !r.need.never && !r.finished && (r.per_option[o.id] ?? 0) <= 0) : m.rows.filter((r) => !r.need.never && !r.finished && m.options.every((x) => x.id === o.id || x.ruled_out || x.dropped || (r.per_option[x.id] ?? 0) <= 0));
@@ -170,7 +179,7 @@ function CommitPanel({ m, ws, commit, onSelect, onCancel, run }: { m: Matrix; ws
   };
   return (
     <div className="commit-panel">
-      <h4>{choosing ? `Choose “${o.name}”` : `Rule out “${o.name}”`}</h4>
+      <h4>{choosing ? (uncertain ? `Found out: “${o.name}”` : `Choose “${o.name}”`) : `Rule out “${o.name}”`}</h4>
       <ul className="consequences">
         {safe.length > 0 && (
           <li>
@@ -191,11 +200,11 @@ function CommitPanel({ m, ws, commit, onSelect, onCancel, run }: { m: Matrix; ws
         {safe.length === 0 && notNeeded.length === 0 && <li className="muted">Nothing beneath it would change.</li>}
         <li className="muted">Nothing is written onto that work, so taking this back brings it all back.</li>
       </ul>
-      <textarea autoFocus rows={2} placeholder="Why? This is recorded in the log." value={why} onChange={(e) => setWhy(e.target.value)} />
+      <textarea autoFocus rows={2} placeholder={uncertain && choosing ? "How do you know? This is recorded in the log." : "Why? This is recorded in the log."} value={why} onChange={(e) => setWhy(e.target.value)} />
       <div className="row end">
         <button onClick={onCancel}>Cancel</button>
         <button className="primary" onClick={confirm}>
-          {choosing ? "Decide" : "Rule out"}
+          {choosing ? (uncertain ? "Record it" : "Decide") : "Rule out"}
         </button>
       </div>
     </div>
@@ -419,4 +428,27 @@ function RowTag({ r, ws, onSelect }: { r: MatrixRow; ws: Workspace; onSelect: (i
     return <span className="tagpill safe">safe now</span>;
   }
   return <span className={`tagpill ${r.need.prob >= 0.5 ? "hedge" : ""}`}>{r.need.prob >= 0.5 ? "hedge" : "commits"}</span>;
+}
+
+/** For something uncertain: which other open question would most help to know, as the Worlds tab says. */
+function WorthKnowing({ m, ws, onSelect }: { m: Matrix; ws: Workspace; onSelect: (id: string | null) => void }) {
+  const v = ws.view?.worlds.vars.find((x) => x.id === m.id);
+  if (!v || v.sure === undefined) return null;
+  const nameOf = (id: string) => ws.view!.worlds.vars.find((x) => x.id === id)?.name ?? id;
+  const best = v.clues?.[0];
+  return (
+    <p className="muted small">
+      {best ? (
+        <>
+          Most worth finding out:{" "}
+          <button className="link" onClick={() => onSelect(best.var)}>
+            {nameOf(best.var)}
+          </button>
+          . Knowing it would leave you {likelyText(best.sure)} sure of this on average, from {likelyText(v.sure)} now.
+        </>
+      ) : (
+        <>Nothing else that's open would change which is likeliest, on its own.</>
+      )}
+    </p>
+  );
 }

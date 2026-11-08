@@ -266,7 +266,7 @@ async fn the_case_file_says_who_it_probably_was_and_what_to_find_out() {
     let var = |v: &Value, name: &str| v["worlds"]["vars"].as_array().unwrap().iter().find(|x| x["name"] == name).unwrap_or_else(|| panic!("no {name}")).clone();
     let chance = |v: &Value, option: &str| {
         let who = var(v, "Who took it?");
-        who["options"].as_array().unwrap().iter().find(|o| o["name"] == format!("Suspect[{option}]")).unwrap()["chance"].as_f64().unwrap()
+        who["options"].as_array().unwrap().iter().find(|o| o["name"] == option).unwrap()["chance"].as_f64().unwrap()
     };
     // Of all the weight (9 for who, times the accounts'), the evidence leaves Tom half of his: he's ruled
     // out only if he left at 9:40 (3/4) and cycled (2/3). Pryce is left only if he drove, Clara only if she went out.
@@ -281,6 +281,10 @@ async fn the_case_file_says_who_it_probably_was_and_what_to_find_out() {
     let first = &who["clues"][0];
     assert_eq!(first["var"], var(&v, "How did Mr Pryce get home?")["id"]);
     assert!((first["sure"].as_f64().unwrap() - 0.479).abs() < 0.001, "{first}");
+
+    // How likely anything is, is among the worlds still in play: the evidence holds in all of them.
+    let evidence = node(&v, "They came in from the garden");
+    assert_eq!(evidence["cells"]["value"]["shown"]["prob"], 1.0, "{}", evidence["cells"]["value"]);
 
     // Find out he was on the train, and he's out of it.
     let pryce = var(&v, "How did Mr Pryce get home?");

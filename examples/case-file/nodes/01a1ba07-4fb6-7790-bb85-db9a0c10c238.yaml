@@ -1,11 +1,12 @@
-id: 01a1b9e4-a886-77bd-8ae3-1e3553ee7193
+id: 01a1ba07-4fb6-7790-bb85-db9a0c10c238
 components:
   arrives: 0
   body: Someone nobody has thought of yet.
-  name: Suspect[Someone else]
+  from_garden: true
+  name: Someone else
   unknown: null
 links:
-- to: 01a1b9e4-a886-77bd-8ae3-1e319030b8e5
+- to: 01a1ba07-4fb6-7790-bb85-db96a90cf1ca
   components:
     alternative:
       weight: 1.0

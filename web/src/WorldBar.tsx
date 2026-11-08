@@ -1,5 +1,6 @@
 import type { Workspace } from "./workspace";
 import { DdItemButton, Dropdown } from "./Dropdown";
+import { LIKELY_MEANS, likelyText } from "./bits";
 
 const FEW = 5;
 
@@ -29,7 +30,11 @@ export function WorldBar({ ws, onShowWorlds }: { ws: Workspace; onShowWorlds: ()
                     {o.name}
                     {o.gap ? " (a gap)" : ""}
                   </span>
-                  {!o.gap && <span className="muted small">{Math.round(o.weight * 100)}%</span>}
+                  {v.uncertain && (o.chance > 0 || !o.gap) && (
+                    <span className="muted small" title={LIKELY_MEANS}>
+                      {likelyText(o.chance)}
+                    </span>
+                  )}
                 </DdItemButton>
               ))}
             </Dropdown>

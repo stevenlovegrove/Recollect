@@ -1,4 +1,4 @@
-id: 01a1b9e4-a886-77bd-8ae3-1e437c61f6f7
+id: 01a1ba07-4fb6-7790-bb85-dba716f9d8c6
 components:
   body: The case was locked at 9:00 and empty at 10:15, and it would take a while to find the key, open it, and get away.
   name: Whoever took it was in the house by 10:00
@@ -9,6 +9,6 @@ rules:
     params:
       text: who.arrives <= 60
 links:
-- to: 01a1b9e4-a886-77bd-8ae3-1e319030b8e5
+- to: 01a1ba07-4fb6-7790-bb85-db96a90cf1ca
   components:
     label: who

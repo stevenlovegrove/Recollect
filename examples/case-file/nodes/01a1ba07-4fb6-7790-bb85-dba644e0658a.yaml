@@ -1,10 +1,10 @@
-id: 01a1b9e4-a886-77bd-8ae3-1e417e9defa7
+id: 01a1ba07-4fb6-7790-bb85-dba644e0658a
 components:
   body: The cook found the back door unbolted at half past nine.
   name: Yes, as the cook thinks
-  value: true
+  went_out: true
 links:
-- to: 01a1b9e4-a886-77bd-8ae3-1e3fc276645f
+- to: 01a1ba07-4fb6-7790-bb85-dba4583b5bea
   components:
     alternative:
       weight: 1.0

@@ -6,7 +6,6 @@ use std::collections::BTreeMap;
 use recollect_graph::{Component, Entity, Name, Op, Storage};
 use serde_json::{Value, json};
 
-use crate::expr::Val;
 use crate::formulas::{At, Domain, EXPR, IsA, Label, Requires, Uncertain, ValueCell};
 use crate::notes::{Body, Drawing};
 use crate::plan::{Alternative, Decision, DependsOn, Done, Estimate, Goal, PartOf, Task, Unknown};
@@ -38,7 +37,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "8";
+pub const FORMAT: &str = "10";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -405,57 +404,64 @@ fn case_file(b: &mut Build) {
         ("Someone else", 1.0, "Someone nobody has thought of yet."),
     ];
     for (name, weight, about) in suspects {
-        let row = format!("Suspect[{name}]");
-        b.set(&row, Body(about.to_string())).link(&row, who, Alternative { weight: Some(weight), ..Alternative::default() });
+        b.set(name, Body(about.to_string())).link(name, who, Alternative { weight: Some(weight), ..Alternative::default() });
     }
-    b.set("Suspect[Someone else]", Unknown);
+    b.set("Someone else", Unknown);
 
     // What's in doubt, each a decision nobody made, whose options are the accounts.
-    let account = |b: &mut Build, question: &str, options: &[(&str, Val, f64, &str)]| {
-        b.set(question, Decision::default()).set(question, Uncertain).formula(question, "pick(in.alternative)");
+    // The question's answer is which account is true. What follows from it is a cell named for what it is,
+    // which each account says and the question gives for whichever is true.
+    let account = |b: &mut Build, question: &str, cell: &str, options: &[(&str, Value, f64, &str)]| {
+        b.set(question, Decision::default()).set(question, Uncertain).formula_on(question, cell, &format!("pick(o in in.alternative: o.{cell})"));
         for (option, value, weight, said) in options {
-            b.set(option, ValueCell::plain(value.clone())).set(option, Body(said.to_string())).link(option, question, Alternative { weight: Some(*weight), ..Alternative::default() });
+            b.put(option, cell, value.clone()).set(option, Body(said.to_string())).link(option, question, Alternative { weight: Some(*weight), ..Alternative::default() });
         }
     };
     account(
         b,
         "When did Tom leave the Red Lion?",
+        "left_at",
         &[
-            ("At 9:40, as the barman says", Val::Num(40.0), 3.0, "The barman remembers calling time on Tom's tab at twenty to ten."),
-            ("At about 9:10, as Mrs Dale says", Val::Num(10.0), 1.0, "Mrs Dale was at the next table, and thinks he went just after nine. She'd had a few."),
+            ("At 9:40, as the barman says", json!(40), 3.0, "The barman remembers calling time on Tom's tab at twenty to ten."),
+            ("At about 9:10, as Mrs Dale says", json!(10), 1.0, "Mrs Dale was at the next table, and thinks he went just after nine. She'd had a few."),
         ],
     );
     account(
         b,
         "How did Tom get to the house?",
+        "minutes",
         &[
-            ("By bike, 25 minutes", Val::Num(25.0), 2.0, "Tom says his car was at the garage, so he cycled."),
-            ("By car, 10 minutes", Val::Num(10.0), 1.0, "The garage says he collected the car on Friday."),
+            ("By bike, 25 minutes", json!(25), 2.0, "Tom says his car was at the garage, so he cycled."),
+            ("By car, 10 minutes", json!(10), 1.0, "The garage says he collected the car on Friday."),
         ],
     );
     account(
         b,
         "How did Mr Pryce get home?",
+        "at_house_by",
         &[
-            ("On the 9:20 train, at the house by 10:10", Val::Num(70.0), 3.0, "He has a ticket for the 9:20 from town. It gets in at 9:55, and the walk from the station is a quarter of an hour."),
-            ("He drove, home by 9:05", Val::Num(5.0), 1.0, "His neighbour on the other side heard a car on the drive just after nine."),
+            ("On the 9:20 train, at the house by 10:10", json!(70), 3.0, "He has a ticket for the 9:20 from town. It gets in at 9:55, and the walk from the station is a quarter of an hour."),
+            ("He drove, home by 9:05", json!(5), 1.0, "His neighbour on the other side heard a car on the drive just after nine."),
         ],
     );
     account(
         b,
         "Did Clara go out into the garden?",
+        "went_out",
         &[
-            ("No, as she says", Val::Bool(false), 2.0, "Clara says she was in the kitchen with the radio on all evening."),
-            ("Yes, as the cook thinks", Val::Bool(true), 1.0, "The cook found the back door unbolted at half past nine."),
+            ("No, as she says", json!(false), 2.0, "Clara says she was in the kitchen with the radio on all evening."),
+            ("Yes, as the cook thinks", json!(true), 1.0, "The cook found the back door unbolted at half past nine."),
         ],
     );
 
     // When each could have been at the house, worked out from the accounts.
-    b.formula_on("Suspect[Tom]", "arrives", "left + travel").label("Suspect[Tom]", "When did Tom leave the Red Lion?", "left").label("Suspect[Tom]", "How did Tom get to the house?", "travel");
-    b.formula_on("Suspect[Mr Pryce]", "arrives", "home").label("Suspect[Mr Pryce]", "How did Mr Pryce get home?", "home");
-    b.put("Suspect[Clara]", "arrives", json!(0)).formula_on("Suspect[Clara]", "from_garden", "went_out").label("Suspect[Clara]", "Did Clara go out into the garden?", "went_out");
-    b.put("Suspect[Someone else]", "arrives", json!(0));
-    b.put("Suspect", "from_garden", json!(true));
+    b.formula_on("Tom", "arrives", "pub.left_at + journey.minutes").label("Tom", "When did Tom leave the Red Lion?", "pub").label("Tom", "How did Tom get to the house?", "journey");
+    b.formula_on("Mr Pryce", "arrives", "trip.at_house_by").label("Mr Pryce", "How did Mr Pryce get home?", "trip");
+    b.put("Clara", "arrives", json!(0)).formula_on("Clara", "from_garden", "garden.went_out").label("Clara", "Did Clara go out into the garden?", "garden");
+    b.put("Someone else", "arrives", json!(0));
+    for name in ["Tom", "Mr Pryce", "Someone else"] {
+        b.put(name, "from_garden", json!(true));
+    }
 
     // The evidence, which rules out the worlds it doesn't fit.
     let evidence = |b: &mut Build, name: &str, formula: &str, about: &str| {

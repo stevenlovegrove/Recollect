@@ -1,0 +1,21 @@
+id: 01a1ba07-4fb6-7790-bb85-db976c0e1d8f
+components:
+  body: Rosalind's nephew. He owes money, and he knew where the key to the case was kept.
+  from_garden: true
+  name: Tom
+rules:
+  arrives:
+    rule: expr@1
+    params:
+      text: pub.left_at + journey.minutes
+links:
+- to: 01a1ba07-4fb6-7790-bb85-db96a90cf1ca
+  components:
+    alternative:
+      weight: 3.0
+- to: 01a1ba07-4fb6-7790-bb85-db9b2219dbbe
+  components:
+    label: pub
+- to: 01a1ba07-4fb6-7790-bb85-db9e410b07f2
+  components:
+    label: journey

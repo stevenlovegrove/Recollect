@@ -19,7 +19,7 @@ import ELK from "elkjs/lib/elk.bundled.js";
 import type { GraphNode, Link } from "../api";
 import type { Workspace } from "../workspace";
 import { GLYPH, compColor, dominant, factsOf, isDropped, isNote, label as labelOf, nodeColor } from "../theme";
-import { Brackets, CompBadges, casesOf, cellText, edgeKey, parseEdgeKey, reading, truthWords } from "../bits";
+import { Brackets, CompBadges, LIKELY_MEANS, casesOf, cellText, edgeKey, likelyText, parseEdgeKey, reading, truthWords } from "../bits";
 import { DdItem, Dropdown } from "../Dropdown";
 import { Key, isTyping } from "../Shortcuts";
 import type { CtxTarget } from "../ContextMenu";
@@ -377,8 +377,28 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
   const summaryLines = (n: GraphNode) => {
     const nameOf = (s: string) => ws.byId.get(s)?.name ?? s;
     const out: CardData["lines"] = [];
+    // Something uncertain is answered by how likely each way is, and each way by how likely it is: that
+    // says more than when it's in play.
+    const vars = g.worlds.vars;
+    const asked = vars.find((v) => v.id === n.id && v.uncertain);
+    if (asked) {
+      const text = [...asked.options]
+        .filter((o) => o.chance > 0)
+        .sort((a, b) => b.chance - a.chance)
+        .map((o) => `${nameOf(o.id)} ${likelyText(o.chance)}`)
+        .join(", ");
+      out.push({ name: "likely", text, full: `${LIKELY_MEANS}: ${text}`, trivial: false });
+    }
+    const answer = vars.find((v) => v.uncertain && v.options.some((o) => o.id === n.id));
+    if (answer) {
+      const o = answer.options.find((x) => x.id === n.id)!;
+      const text = likelyText(o.chance);
+      out.push({ name: "likely", text, full: `${LIKELY_MEANS}: ${text}`, trivial: o.chance === 0 });
+    }
     for (const c of g.components) {
       if (!c.summary) continue;
+      // How likely it is says more than when it's in play.
+      if (answer && c.name === "need") continue;
       const cell = n.cells[c.name];
       if (!cell) continue;
       const r = reading(cell);

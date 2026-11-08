@@ -1,4 +1,4 @@
-id: 01a1b9e4-a886-77bd-8ae3-1e44994b2d23
+id: 01a1ba07-4fb6-7790-bb85-dba8122290d2
 components:
   body: Fresh mud on the study carpet, from the garden door to the case.
   name: They came in from the garden
@@ -9,6 +9,6 @@ rules:
     params:
       text: who.from_garden
 links:
-- to: 01a1b9e4-a886-77bd-8ae3-1e319030b8e5
+- to: 01a1ba07-4fb6-7790-bb85-db96a90cf1ca
   components:
     label: who

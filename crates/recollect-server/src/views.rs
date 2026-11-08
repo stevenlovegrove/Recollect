@@ -245,8 +245,12 @@ impl Labels {
         describe_error(e, &Labels(names))
     }
 
-    fn read(&self, b: &Bool) -> Reading {
-        Reading { when: b.show_with(&|s| self.of(s)), prob: b.prob(), always: b.is_always(), never: b.is_never() }
+    /// Where something holds, and how likely that is among the worlds still in play: given the evidence
+    /// and whatever's pinned, not before them.
+    fn read(&self, b: &Bool, in_play: &Bool) -> Reading {
+        let held = in_play.prob();
+        let prob = if held > 0.0 { (b & in_play).prob() / held } else { 0.0 };
+        Reading { when: b.show_with(&|s| self.of(s)), prob, always: b.is_always(), never: b.is_never() }
     }
 }
 
@@ -270,11 +274,11 @@ fn describe_error(e: &Error, labels: &Labels) -> String {
     }
 }
 
-fn show(s: &Shown, labels: &Labels) -> ShownView {
+fn show(s: &Shown, labels: &Labels, in_play: &Bool) -> ShownView {
     match s {
-        Shown::Bool(b) => ShownView::Bool(labels.read(b)),
-        Shown::Cond(c) => ShownView::Cond { cases: c.cases().into_iter().map(|(g, v)| CaseView { when: labels.read(&g), value: v.clone() }).collect() },
-        Shown::Named(items) => ShownView::Named { items: items.iter().map(|(e, b)| NamedView { node: *e, when: labels.read(b) }).collect() },
+        Shown::Bool(b) => ShownView::Bool(labels.read(b, in_play)),
+        Shown::Cond(c) => ShownView::Cond { cases: c.cases().into_iter().map(|(g, v)| CaseView { when: labels.read(&g, in_play), value: v.clone() }).collect() },
+        Shown::Named(items) => ShownView::Named { items: items.iter().map(|(e, b)| NamedView { node: *e, when: labels.read(b, in_play) }).collect() },
     }
 }
 
@@ -322,7 +326,7 @@ fn cell_view(g: &Graph, catalog: &Catalog, e: Entity, c: &str, picks: &Picks, in
                 let mut open: Vec<String> = if settled(&narrowed, in_play) { Vec::new() } else { narrowed.vars().iter().map(Var::name).collect() };
                 open.sort();
                 open.dedup();
-                Some(cell(value, Some(show(&narrowed, labels)), open, !s.vars().is_empty(), None))
+                Some(cell(value, Some(show(&narrowed, labels, in_play)), open, !s.vars().is_empty(), None))
             }
         };
     }
@@ -515,8 +519,9 @@ pub fn try_formula(o: &Open, e: Entity, text: &str, world: &World) -> Tried {
     let labels = Labels(recollect_systems::labels(g));
     match recollect_systems::formulas::try_formula(g, e, text) {
         Ok((value, expansion)) => {
-            let narrowed = Shown::cond(&value).given(&Space::global().picks(world));
-            Tried { shown: Some(show(&narrowed, &labels)), expansion: Some(relabel(&expansion, &labels).replace(['“', '”'], "")), error: None }
+            let picks = Space::global().picks(world);
+            let narrowed = Shown::cond(&value).given(&picks);
+            Tried { shown: Some(show(&narrowed, &labels, &in_play(g, &o.built.catalog, &picks))), expansion: Some(relabel(&expansion, &labels).replace(['“', '”'], "")), error: None }
         }
         Err(err) => Tried { shown: None, expansion: None, error: Some(describe_error(&err, &labels)) },
     }
