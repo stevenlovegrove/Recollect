@@ -774,6 +774,68 @@ async fn held_out_choosing_a_car() {
     assert_eq!(per_mile(&v, "Hybrid"), 0.09);
 }
 
+/// The same cars as tables: every car has a price, only petrol cars have an mpg, and each row of Car is
+/// an option of the decision. Then a recurrence with a choice part way down it.
+#[tokio::test]
+async fn held_out_tables_of_cars_and_years() {
+    let c = Client::new();
+    let dir = tempfile::tempdir().unwrap();
+    c.post("/api/workspaces/new", json!({ "path": dir.path().join("tables"), "name": "Tables", "systems": ["plan"] })).await;
+    let done = c.post("/api/ops", json!({ "ops": [
+        { "op": "add_node", "id": "new:fuel", "name": "Fuel price", "components": { "value": 1.45 } },
+        { "op": "add_node", "id": "new:which", "name": "Which car?", "components": { "decision": {} } },
+        { "op": "set", "id": "new:which", "component": "cost_per_mile", "formula": "pick(o in in.alternative: o.cost_per_mile)" },
+        { "op": "table", "name": "Car", "alternative_of": "new:which", "rows": [
+            { "key": "Hatchback", "price": 18000 }, { "key": "Electric", "price": 32000 }, { "key": "Hybrid", "price": 26000 },
+        ] },
+        { "op": "table", "name": "Petrol car", "is_a": "Car", "columns": { "cost_per_mile": { "formula": "fuel * 4.546 / self.mpg", "labels": { "fuel": "new:fuel" } } }, "rows": [
+            { "key": "Hatchback", "mpg": 52 }, { "key": "Hybrid", "cost_per_mile": 0.09 },
+        ] },
+        { "op": "table", "name": "Electric car", "is_a": "Car", "columns": { "cost_per_mile": 0.08 }, "rows": ["Electric"] },
+    ] })).await;
+    let v = c.view(json!({})).await;
+    for n in v["nodes"].as_array().unwrap() {
+        for (k, cell) in n["cells"].as_object().unwrap() {
+            assert!(cell["error"].is_null(), "{} {k}: {cell}", n["name"]);
+        }
+    }
+    let per_mile = |name: &str| cell(&v, name, "cost_per_mile")["value"].as_f64().unwrap_or_else(|| panic!("{name}: {}", cell(&v, name, "cost_per_mile")));
+    assert!((per_mile("Car[Hatchback]") - 1.45 * 4.546 / 52.0).abs() < 1e-9, "the Car row reads the petrol part's mpg through Petrol car's formula");
+    assert_eq!((per_mile("Car[Hybrid]"), per_mile("Car[Electric]")), (0.09, 0.08));
+    assert_eq!(node(&v, "Car[Hatchback]")["row"], json!({ "table": "Car", "key": "Hatchback" }));
+    assert_eq!(node(&v, "Car[Hatchback]")["parts"], json!([id(&v, "Petrol car[Hatchback]")]));
+    assert!(cell(&v, "Car[Electric]", "mpg").is_null(), "an electric car has no mpg at all");
+    let which = cell(&v, "Which car?", "cost_per_mile")["shown"]["cases"].as_array().unwrap().len();
+    assert_eq!(which, 3, "the decision's options are Car's rows");
+
+    // Writing it again changes nothing that's there: rows with those names are used, not made twice.
+    c.post("/api/ops", json!({ "ops": [{ "op": "table", "name": "Car", "rows": [{ "key": "Hatchback", "price": 17000 }, "Estate"] }] })).await;
+    let v = c.view(json!({})).await;
+    assert_eq!(v["nodes"].as_array().unwrap().iter().filter(|n| n["name"] == "Car[Hatchback]").count(), 1);
+    assert_eq!(cell(&v, "Car[Hatchback]", "price")["value"], 17000.0);
+    assert!(refused(&c, json!([{ "op": "table", "name": "Car[x]" }])).await.contains("row's name"));
+
+    // Years, with a top-up chosen at year 5 that only the years after it see.
+    let done = c.post("/api/ops", json!({ "ops": [
+        { "op": "add_node", "id": "new:rate", "name": "Rate", "components": { "value": 0.05 } },
+        { "op": "add_node", "id": "new:top", "name": "Top up?", "components": { "decision": {} }, "formula": "pick(in.alternative)" },
+        { "op": "add_node", "name": "No", "id": "new:no", "components": { "value": 0 }, "links": [{ "to": "new:top", "kind": "alternative", "value": {} }] },
+        { "op": "add_node", "name": "Yes", "id": "new:yes", "components": { "value": 500 }, "links": [{ "to": "new:top", "kind": "alternative", "value": {} }] },
+        { "op": "table", "name": "Year", "columns": { "balance": { "formula": "prev.balance * (1 + rate)", "labels": { "rate": "new:rate" } } }, "range": [0, 10], "rows": [
+            { "key": 0, "balance": 1000 },
+            { "key": 5, "balance": { "formula": "prev.balance * (1 + rate) + top_up", "labels": { "rate": "new:rate", "top_up": "new:top" } } },
+        ] },
+    ] })).await;
+    let v = c.view(json!({})).await;
+    assert_eq!(v["nodes"].as_array().unwrap().iter().filter(|n| n["row"]["table"] == "Year").count(), 11);
+    assert!(cell(&v, "Year[4]", "balance")["vars"].is_null());
+    assert_eq!(cell(&v, "Year[10]", "balance")["vars"], json!([ids_of(&done, "new:top")]));
+}
+
+fn ids_of(done: &Value, k: &str) -> String {
+    done["created"][k].as_str().unwrap().to_string()
+}
+
 /// A puzzle's constraints differ over its choices, but they hold in every world that's left, so there's
 /// nothing to say about which they depend on. Something that differs between the worlds left still does.
 #[tokio::test]

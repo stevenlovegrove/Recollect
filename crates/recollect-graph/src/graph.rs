@@ -944,6 +944,11 @@ impl Graph {
 
     // ---------- tables ----------
 
+    /// The other parts of the same thing as this row: see `parts`.
+    pub fn parts_of(&self, e: Entity) -> Vec<Entity> {
+        if self.inheriting.is_none() { Vec::new() } else { self.parts(e) }
+    }
+
     /// Which row of which table a node is, if its name says: see `table`.
     pub fn row_of(&self, e: Entity) -> Option<&Row> {
         self.names.rows.get(&e)

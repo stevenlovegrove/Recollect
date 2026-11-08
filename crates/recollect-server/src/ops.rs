@@ -12,6 +12,12 @@
 //! - `{"op": "set", "id": .., "component": .., "formula": "a + b", "labels": {"a": .., "b": ..}}` sets
 //!   a cell to a formula and says what its names mean, as one change. Labels it no longer has go.
 //!   `add_node` takes `formula` and `labels` too, for the node's `value`.
+//! - `{"op": "table", "name": "Car", "is_a": "Vehicle", "columns": {..}, "rows": [{"key": "Hatchback",
+//!   ..}, ..]}` writes a table: the node named `Car`, with `columns` its cells, which every row takes
+//!   unless it says otherwise, and a node named `Car[Hatchback]` for each row, with its own cells.
+//!   A cell is a value, or `{"formula": .., "labels": {..}}`. A row can be just its key, and
+//!   `"range": [0, 10]` adds numbered rows. Nodes with those names already are used, not made again.
+//!   `"alternative_of": "Which car?"` makes every row one of that decision's options.
 
 use std::collections::BTreeMap;
 
@@ -169,6 +175,99 @@ impl Resolver<'_> {
     }
 }
 
+/// A cell as `set` writes it: a value, or a formula with what its names mean.
+fn set_cell(id: &str, component: &str, v: Value) -> Value {
+    match v {
+        Value::Object(mut f) if f.contains_key("formula") => {
+            let mut op = json!({ "op": "set", "id": id, "component": component, "formula": f.remove("formula") });
+            if let Some(labels) = f.remove("labels") {
+                op["labels"] = labels;
+            }
+            op
+        }
+        v => json!({ "op": "set", "id": id, "component": component, "value": v }),
+    }
+}
+
+/// A table, as the ops that make it: see the top of this file.
+fn table(mut op: Map<String, Value>, names: &BTreeMap<String, Vec<Entity>>) -> Result<Vec<Value>, String> {
+    let name = op.remove("name").and_then(|n| n.as_str().map(str::to_string)).ok_or("a table needs a name, such as \"Year\"")?;
+    if recollect_graph::table::row_of(&name).is_some() {
+        return Err(format!("“{name}” is a row's name, so it can't be a table's"));
+    }
+    let mut out = Vec::new();
+    // The node with that name, or a new one.
+    let node = |n: &str, out: &mut Vec<Value>| -> Result<String, String> {
+        match names.get(n).map(Vec::as_slice) {
+            Some([one]) => Ok(one.to_string()),
+            Some(many) if many.len() > 1 => Err(format!("{} nodes are called “{n}”", many.len())),
+            _ => {
+                let id = format!("new:table:{n}");
+                if !out.iter().any(|o: &Value| o["id"] == id.as_str() && o["op"] == "add_node") {
+                    out.push(json!({ "op": "add_node", "id": id, "name": n }));
+                }
+                Ok(id)
+            }
+        }
+    };
+    let at = node(&name, &mut out)?;
+    if let Some(body) = op.remove("body") {
+        out.push(json!({ "op": "set", "id": at, "component": "body", "value": body }));
+    }
+    if let Some(kind) = op.remove("is_a") {
+        // Another table this batch makes is new too, so it's found the same way.
+        let kind = kind.as_str().ok_or("is_a names a table")?;
+        let to = if kind.starts_with("new:") || kind.parse::<Entity>().is_ok() { kind.to_string() } else { node(kind, &mut out)? };
+        out.push(json!({ "op": "link", "from": at, "to": to, "kind": "is_a", "value": null }));
+    }
+    if let Some(columns) = op.remove("columns") {
+        let Value::Object(columns) = columns else { return Err("a table's columns are {cell: value or {formula, labels}}".to_string()) };
+        for (c, v) in columns {
+            out.push(set_cell(&at, &c, v));
+        }
+    }
+    let decision = op.remove("alternative_of");
+    let mut rows: Vec<Value> = match op.remove("rows") {
+        Some(Value::Array(rows)) => rows,
+        None => Vec::new(),
+        Some(_) => return Err("a table's rows are a list, each a key or {key, cells…}".to_string()),
+    };
+    if let Some(range) = op.remove("range") {
+        let bounds: Option<(i64, i64)> = range.as_array().and_then(|r| Some((r.first()?.as_i64()?, r.get(1)?.as_i64()?)));
+        let (from, to) = bounds.ok_or("a range is [first, last], such as [0, 10]")?;
+        if to < from || to - from > 10_000 {
+            return Err(format!("[{from}, {to}] isn't a range of up to 10,000 rows"));
+        }
+        let given: Vec<String> = rows.iter().filter_map(|r| r.get("key").or(Some(r)).map(key_text)).collect();
+        rows.extend((from..=to).filter(|i| !given.contains(&i.to_string())).map(|i| json!(i)));
+    }
+    for row in rows {
+        let (key, cells) = match row {
+            Value::Object(mut cells) => (cells.remove("key").ok_or("a row needs a key")?, cells),
+            key => (key, Map::new()),
+        };
+        let key = key_text(&key);
+        if key.is_empty() || key.contains(['[', ']']) {
+            return Err(format!("“{key}” can't be a row's key"));
+        }
+        let id = node(&format!("{name}[{key}]"), &mut out)?;
+        for (c, v) in cells {
+            out.push(set_cell(&id, &c, v));
+        }
+        if let Some(d) = &decision {
+            out.push(json!({ "op": "link", "from": id, "to": d, "kind": "alternative", "value": {} }));
+        }
+    }
+    Ok(out)
+}
+
+fn key_text(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.trim().to_string(),
+        other => other.to_string(),
+    }
+}
+
 pub fn resolve_ops(ops: Vec<Value>, g: &Graph) -> Result<Resolved, String> {
     let mut names: BTreeMap<String, Vec<Entity>> = BTreeMap::new();
     for e in g.entities() {
@@ -178,7 +277,14 @@ pub fn resolve_ops(ops: Vec<Value>, g: &Graph) -> Result<Resolved, String> {
     }
     let mut r = Resolver { g, created: BTreeMap::new(), names };
     let mut written = Vec::new();
-    for mut op in ops {
+    let mut expanded = Vec::new();
+    for op in ops {
+        match op.as_object() {
+            Some(fields) if fields.get("op").and_then(Value::as_str) == Some("table") => expanded.extend(table(fields.clone(), &r.names)?),
+            _ => expanded.push(op),
+        }
+    }
+    for mut op in expanded {
         r.fresh(&mut op);
         let fields = op.as_object().cloned().ok_or_else(|| format!("{op} isn't an op"))?;
         r.write(fields, &mut written)?;

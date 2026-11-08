@@ -85,6 +85,30 @@ pub struct NodeView {
     pub id: Entity,
     pub name: String,
     pub cells: BTreeMap<String, CellView>,
+    /// Which row of which table its name makes it, if it does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub row: Option<RowView>,
+    /// The rows of related tables with the same key: with this one, they're one thing.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<Entity>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RowView {
+    pub table: String,
+    /// A number for a row in order, or text.
+    pub key: Value,
+}
+
+fn node_view(g: &Graph, e: Entity, name: String, cells: BTreeMap<String, CellView>) -> NodeView {
+    let row = g.row_of(e).map(|r| RowView {
+        table: r.table.clone(),
+        key: match &r.key {
+            recollect_graph::table::Key::Num(n) => json!(n),
+            recollect_graph::table::Key::Text(t) => json!(t),
+        },
+    });
+    NodeView { id: e, name, cells, row, parts: g.parts_of(e) }
 }
 
 #[derive(Debug, Serialize)]
@@ -350,7 +374,7 @@ pub fn view(o: &Open, world: &World) -> View {
         .entities()
         .map(|e| {
             let cells = g.components_of(e).into_iter().filter(|c| !catalog.is_internal(c)).filter_map(|c| cell_view(g, catalog, e, &c, &picks, &playing, &labels, &mut vars).map(|v| (c, v))).collect();
-            NodeView { id: e, name: recollect_systems::label_of(g, e), cells }
+            node_view(g, e, recollect_systems::label_of(g, e), cells)
         })
         .collect();
     let mut links = Vec::new();
@@ -583,7 +607,7 @@ pub fn node(o: &Open, e: Entity, world: &World) -> NodeDetail {
             }
         }
     }
-    NodeDetail { node: NodeView { id: e, name: labels.of(&e.to_string()), cells }, outgoing, incoming, history: history(o, Some(e)) }
+    NodeDetail { node: node_view(g, e, labels.of(&e.to_string()), cells), outgoing, incoming, history: history(o, Some(e)) }
 }
 
 #[derive(Debug, Serialize)]

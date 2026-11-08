@@ -42,6 +42,10 @@ export interface GraphNode {
   id: string;
   name: string;
   cells: Record<string, Cell>;
+  /** Which row of which table its name makes it: `Year[3]` is row 3 of Year. */
+  row?: { table: string; key: number | string };
+  /** The rows of related tables with the same key: with this one, they're one thing. */
+  parts?: string[];
 }
 
 export interface Link {
