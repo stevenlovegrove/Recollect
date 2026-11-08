@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Cell, GraphNode, OptionView, VarView, World } from "../api";
 import type { ViewProps } from "./MapView";
-import { CellValue, LIKELY_MEANS, likelyText as percent } from "../bits";
+import { CellValue, BELIEF_MEANS, beliefText as percent } from "../bits";
 import { label } from "../theme";
 import { DrawingFrame } from "./DrawingFrame";
 
@@ -146,7 +146,7 @@ export function WorldsView({ ws, onSelect }: ViewProps) {
         <>
           <p className="muted small">
             Click to pin a choice. Solid means pinned, a dot means it's the only one left, and blank means no world lands there.
-            {w.vars.some((v) => v.uncertain) && " For what's uncertain, the percentage is how likely each is, given the evidence and whatever's pinned, so it changes as you pin things."}
+            {w.vars.some((v) => v.uncertain) && " For what's uncertain, the percentage is the belief in each: how strongly it's believed given the evidence and whatever's pinned, so it changes as you pin things."}
           </p>
           {!w.vars.length ? <p className="muted">Every decision here has been made, so there's only one world.</p> : isBoard ? <Board ws={ws} /> : shared ? <Grid ws={ws} /> : <Lists ws={ws} />}
         </>
@@ -286,7 +286,7 @@ function Lists({ ws }: { ws: ViewProps["ws"] }) {
               <button key={o.id} className={`world-opt ${o.picked ? "picked" : ""} ${o.possible ? "" : "gone"} ${o.gap ? "gap" : ""}`} onClick={pinner(ws, v, o)} title={o.name}>
                 {optionName(ws, o)}
                 {v.uncertain && v.options.length > 1 && (o.chance > 0 || !o.gap) && (
-                  <span className="muted small" title={`${LIKELY_MEANS}. Before any of that: ${percent(o.weight)}.`}>
+                  <span className="muted small" title={`Belief: ${BELIEF_MEANS.toLowerCase()}. Prior belief, before any evidence: ${percent(o.weight)}.`}>
                     {" "}
                     {percent(o.chance)}
                   </span>
@@ -329,9 +329,9 @@ function WorthFindingOut({ ws, onSelect }: { ws: ViewProps["ws"]; onSelect: (id:
         </select>
       </h4>
       <p className="muted small">
-        Likeliest now: {optionName(ws, likeliest)}, {percent(likeliest.chance)}.{target.clues?.length ? " Each of these, once known, would leave you this sure on average." : ""}
+        Believed most now: {optionName(ws, likeliest)}, {percent(likeliest.chance)}.{target.clues?.length ? " Each of these, once known, would leave you this sure on average." : ""}
       </p>
-      {!target.clues?.length && <p className="muted small">Nothing else that's open would change which is likeliest, on its own.</p>}
+      {!target.clues?.length && <p className="muted small">Nothing else that's open would change which is believed most, on its own.</p>}
       <ol>
         {(target.clues ?? []).map((c) => (
           <li key={c.var}>

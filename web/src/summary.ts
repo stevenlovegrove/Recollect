@@ -1,6 +1,6 @@
-import type { GraphNode } from "./api";
+import type { GraphNode, OptionView } from "./api";
 import type { Workspace } from "./workspace";
-import { LIKELY_MEANS, casesOf, cellText, likelyText, reading, truthWords } from "./bits";
+import { BELIEF_MEANS, PRIOR_MEANS, beliefText, casesOf, cellText, reading, truthWords } from "./bits";
 
 /**
  * What a node says beyond its name, a line each: what a map card shows, cut short to fit, and what the
@@ -17,26 +17,32 @@ export function summaryLines(ws: Workspace, n: GraphNode): SummaryLine[] {
   const g = ws.view!;
   const nameOf = (s: string) => ws.byId.get(s)?.name ?? s;
   const out: SummaryLine[] = [];
-  // Something uncertain is answered by how likely each way is, and each way by how likely it is: that
-  // says more than when it's in play. The chance comes first, so a long answer cut short still reads as one.
+  // Something uncertain is answered by how strongly each way is believed, and each way by how strongly it
+  // is: that says more than when it's in play. The percentage comes first, so a long answer cut short still
+  // reads as one. What was believed before the evidence is said too, where the evidence has moved it, so
+  // it's plain how much of a belief is the evidence and how much was there to begin with.
   const vars = g.worlds.vars;
+  const moved = (o: { chance: number; weight: number }) => beliefText(o.chance) !== beliefText(o.weight);
   const asked = vars.find((v) => v.id === n.id && v.uncertain);
   if (asked) {
-    const text = [...asked.options]
-      .filter((o) => o.chance > 0)
-      .sort((a, b) => b.chance - a.chance)
-      .map((o) => `${likelyText(o.chance)} ${nameOf(o.id)}`)
-      .join(" · ");
-    out.push({ name: "likely", text, about: LIKELY_MEANS, trivial: false });
+    const list = (p: (o: OptionView) => number) =>
+      [...asked.options]
+        .filter((o) => p(o) > 0)
+        .sort((a, b) => p(b) - p(a))
+        .map((o) => `${beliefText(p(o))} ${nameOf(o.id)}`)
+        .join(" · ");
+    out.push({ name: "belief", text: list((o) => o.chance), about: BELIEF_MEANS, trivial: false });
+    if (asked.options.some(moved)) out.push({ name: "prior_belief", text: list((o) => o.weight), about: PRIOR_MEANS, trivial: false });
   }
   const answer = vars.find((v) => v.uncertain && v.options.some((o) => o.id === n.id));
   if (answer) {
     const o = answer.options.find((x) => x.id === n.id)!;
-    out.push({ name: "likely", text: likelyText(o.chance), about: LIKELY_MEANS, trivial: o.chance === 0 });
+    out.push({ name: "belief", text: beliefText(o.chance), about: BELIEF_MEANS, trivial: o.chance === 0 });
+    if (moved(o)) out.push({ name: "prior_belief", text: beliefText(o.weight), about: PRIOR_MEANS, trivial: false });
   }
   for (const c of g.components) {
     if (!c.summary) continue;
-    // How likely it is says more than when it's in play.
+    // How strongly it's believed says more than when it's in play.
     if (answer && c.name === "need") continue;
     const cell = n.cells[c.name];
     if (!cell) continue;

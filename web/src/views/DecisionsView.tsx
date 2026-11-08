@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type Cell, type Matrix, type MatrixOption, type MatrixRow, type VarView, type View } from "../api";
 import type { ViewProps } from "./MapView";
 import type { Workspace } from "../workspace";
-import { Formula, LIKELY_MEANS, NodeChip, casesOf, chanceOf, likelyText, valueText } from "../bits";
+import { BELIEF_MEANS, Formula, NodeChip, PRIOR_MEANS, beliefOf, beliefText, casesOf, valueText } from "../bits";
 import { SweepChart, type Line } from "./SweepChart";
 import { nodeColor, pct } from "../theme";
 import { askWhy } from "../Ask";
@@ -80,10 +80,11 @@ function DecisionCard({ m, ws, selected, onSelect, focused }: { m: Matrix; ws: W
                 {o.name}
               </button>
               {!m.chosen && !out && (() => {
-                const p = chanceOf(ws, m.id, o.id);
-                return p !== null && (p > 0 || !o.gap) ? (
-                  <span className="muted small" title={LIKELY_MEANS}>
-                    {likelyText(p)} likely
+                const b = beliefOf(ws, m.id, o.id);
+                return b !== null && (b.chance > 0 || !o.gap) ? (
+                  <span className="muted small">
+                    <span title={BELIEF_MEANS}>belief {beliefText(b.chance)}</span>
+                    {beliefText(b.chance) !== beliefText(b.weight) && <span title={PRIOR_MEANS}>, prior belief {beliefText(b.weight)}</span>}
                   </span>
                 ) : null;
               })()}
@@ -147,7 +148,7 @@ function DecisionCard({ m, ws, selected, onSelect, focused }: { m: Matrix; ws: W
 /** Where a decision stands, in a few words. Something uncertain isn't waiting on anyone to decide it. */
 function standing(m: Matrix, uncertain: boolean): string {
   const n = m.pressure.work.length;
-  if (uncertain && !m.chosen) return "Not yours to choose: it happened one way, and the percentages say how likely each is, given the evidence";
+  if (uncertain && !m.chosen) return "Not yours to choose: it happened one way. Belief is how strongly each is believed given the evidence, and prior belief how strongly before it";
   switch (m.pressure.state) {
     case "free":
       return `${n} safe step${n === 1 ? "" : "s"} ready: no need to decide yet`;
@@ -444,10 +445,10 @@ function WorthKnowing({ m, ws, onSelect }: { m: Matrix; ws: Workspace; onSelect:
           <button className="link" onClick={() => onSelect(best.var)}>
             {nameOf(best.var)}
           </button>
-          . Knowing it would leave you {likelyText(best.sure)} sure of this on average, from {likelyText(v.sure)} now.
+          . Knowing it would leave you {beliefText(best.sure)} sure of this on average, from {beliefText(v.sure)} now.
         </>
       ) : (
-        <>Nothing else that's open would change which is likeliest, on its own.</>
+        <>Nothing else that's open would change which is believed most, on its own.</>
       )}
     </p>
   );

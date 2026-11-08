@@ -1,6 +1,6 @@
 import type { Workspace } from "./workspace";
 import { DdItemButton, Dropdown } from "./Dropdown";
-import { LIKELY_MEANS, likelyText } from "./bits";
+import { BELIEF_MEANS, beliefText } from "./bits";
 
 const FEW = 5;
 
@@ -31,8 +31,8 @@ export function WorldBar({ ws, onShowWorlds }: { ws: Workspace; onShowWorlds: ()
                     {o.gap ? " (a gap)" : ""}
                   </span>
                   {v.uncertain && (o.chance > 0 || !o.gap) && (
-                    <span className="muted small" title={LIKELY_MEANS}>
-                      {likelyText(o.chance)}
+                    <span className="muted small" title={`Belief: ${BELIEF_MEANS.toLowerCase()}. Prior belief, before any evidence: ${beliefText(o.weight)}.`}>
+                      {beliefText(o.chance)}
                     </span>
                   )}
                 </DdItemButton>

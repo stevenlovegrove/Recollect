@@ -63,20 +63,24 @@ function displayValue(v: unknown, names?: (s: string) => string): string {
 }
 
 /**
- * How likely an option of something uncertain is now: its weight, given whatever rules worlds out and
- * whatever's been pinned or found out. Something that's someone's to choose has no likelihood, so it's null.
+ * How strongly an option of something uncertain is believed now (`chance`: its weight, given whatever rules
+ * worlds out and whatever's been pinned or found out), and before any evidence (`weight`). Something that's
+ * someone's to choose isn't believed, so it's null.
  */
-export function chanceOf(ws: Workspace, decision: string, option: string): number | null {
+export function beliefOf(ws: Workspace, decision: string, option: string): { chance: number; weight: number } | null {
   const v = ws.view?.worlds.vars.find((x) => x.id === decision);
   if (!v?.uncertain) return null;
-  return v.options.find((o) => o.id === option)?.chance ?? null;
+  return v.options.find((o) => o.id === option) ?? null;
 }
 
 /** A chance as a percentage, saying when it's almost but not quite certain either way. */
-export const likelyText = (p: number) => (p > 0 && p < 0.005 ? "<1%" : p < 1 && p > 0.995 ? ">99%" : `${Math.round(p * 100)}%`);
+export const beliefText = (p: number) => (p > 0 && p < 0.005 ? "<1%" : p < 1 && p > 0.995 ? ">99%" : `${Math.round(p * 100)}%`);
 
-/** What a likelihood means, for a tooltip. */
-export const LIKELY_MEANS = "How likely, given the evidence and anything pinned or found out";
+/** What a belief means, for a tooltip. */
+export const BELIEF_MEANS = "How strongly it's believed, given the evidence and anything pinned or found out";
+
+/** What a prior belief means, for a tooltip. */
+export const PRIOR_MEANS = "How strongly it was believed before any evidence: its weight, out of all its options'";
 
 /** A cell in one line, for a card or a table. */
 export function cellText(cell: Cell, names?: (s: string) => string): string {
