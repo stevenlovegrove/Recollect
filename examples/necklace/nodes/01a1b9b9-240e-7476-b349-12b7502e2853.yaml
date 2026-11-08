@@ -1,0 +1,9 @@
+id: 01a1b9b9-240e-7476-b349-12b7502e2853
+components:
+  body: “It was me or Cy.”
+  name: Says[Ava]
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: Suspect[Ava] = "thief" || Suspect[Cy] = "thief"

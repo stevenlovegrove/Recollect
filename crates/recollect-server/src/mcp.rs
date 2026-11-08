@@ -45,6 +45,9 @@ A table can be a table of choices: give the table node a `domain` and each row i
 itself. For a puzzle, make a table for each kind of thing, such as `Pet[Zebra]` choosing a house, and write each clue as a formula \
 naming the rows it's about, with nothing to label: `Nationality[English] = Colour[Red]`. Say all different with `distinct`: \
 `distinct(rows)` as the table's own value, `distinct(q in rows: q + q.row)` where `q.row` is a row's key, or `distinct(Cell[A1], Cell[A2])`. \
+Anywhere, `Arrived.rows` is a table's rows by its name and `Left[v.row]` finds the row with the same key as one being gone over: \
+`count(v in Arrived.rows: v < 9.5 && Left[v.row] > 9.5) = 1`. A statement someone made is a row whose formula is what they said, so \
+\"Dee is lying\" is `!Says[Dee]`. \
 Write a whole table with one op: `{\"op\": \"table\", \"name\": \"Year\", \"columns\": {\"balance\": {\"formula\": \"prev.balance * (1 + rate)\", \
 \"labels\": {\"rate\": \"Rate\"}}}, \"range\": [0, 10], \"rows\": [{\"key\": 0, \"balance\": 1000}]}`, with `is_a` for a table that's a kind of \
 another and `alternative_of` to make every row an option of a decision.\n\

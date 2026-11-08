@@ -32,6 +32,8 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "eight-queens", title: "Eight queens", about: "A table with a row for each row of the board, choosing the column its queen is in. One formula on the table says no two share a column or a diagonal. There are 92 boards.", group: "puzzle", systems: &[], build: eight_queens },
     Sample { name: "sudoku", title: "4×4 sudoku", about: "A table of sixteen cells, each choosing a number, and a clue for each row, column and box: distinct(Cell[A1], Cell[A2], …). There are 288 grids.", group: "puzzle", systems: &[], build: sudoku },
     Sample { name: "knights-and-knaves", title: "Knights and knaves", about: "A says “we are both knaves”. Knights always tell the truth, and knaves always lie.", group: "puzzle", systems: &[], build: knights_and_knaves },
+    Sample { name: "necklace", title: "Who took the necklace?", about: "Five suspects, and a thing each of them said. Exactly one took it, two of them are lying, and the thief is one of the liars. Each statement is a formula, so “Dee is lying” is !Says[Dee], and the clues are about whole tables: count(s in Says.rows: !s) = 2.", group: "puzzle", systems: &[], build: necklace },
+    Sample { name: "gallery", title: "The night of the theft", about: "Five visitors came to a gallery one evening, each on the hour, and the painting went at half past nine, when only one of them was there. When did each come and go, and who took it? Two tables, Arrived and Left, and four clues.", group: "puzzle", systems: &[], build: gallery },
     Sample { name: "zebra", title: "The zebra puzzle", about: "Who owns the zebra, and who drinks water? A table for each kind of thing, whose rows choose a house, and the clues written as they read: Nationality[English] = Colour[Red]. About 3 × 10¹⁷ combinations, and the clues leave exactly one.", group: "puzzle", systems: &[], build: zebra },
 ];
 
@@ -378,6 +380,41 @@ fn zebra(b: &mut Build) {
     for (table, _) in tables {
         p.rule(table, "Each in a different house", "distinct(rows)");
     }
+}
+
+fn necklace(b: &mut Build) {
+    let mut p = Puzzle::new(b, "What happened");
+    let names = ["Ava", "Ben", "Cy", "Dee", "Eli"];
+    p.table("Suspect", &["innocent", "thief"], &names);
+    // What each said, as a formula that's true exactly when it is.
+    let said = [
+        ("Ava", "“It was me or Cy.”", r#"Suspect[Ava] = "thief" || Suspect[Cy] = "thief""#),
+        ("Ben", "“Dee took it.”", r#"Suspect[Dee] = "thief""#),
+        ("Cy", "“Dee is lying.”", "!Says[Dee]"),
+        ("Dee", "“It wasn't Eli.”", r#"Suspect[Eli] != "thief""#),
+        ("Eli", "“Cy took it.”", r#"Suspect[Cy] = "thief""#),
+    ];
+    for (who, quote, text) in said {
+        let row = format!("Says[{who}]");
+        p.b.formula(&row, text).set(&row, Body(quote.to_string()));
+    }
+    p.clue("Exactly one of them took it", r#"count(s in Suspect.rows: s = "thief") = 1"#);
+    p.clue("Two of them are lying", "count(s in Says.rows: !s) = 2");
+    p.clue("The thief is one of the liars", r#"all(s in Suspect.rows: s != "thief" || !Says[s.row])"#);
+}
+
+fn gallery(b: &mut Build) {
+    let mut p = Puzzle::new(b, "What happened");
+    let names = ["Iris", "Jonah", "Kit", "Lena", "Marco"];
+    p.table("Arrived", &["7", "8", "9", "10", "11"], &names);
+    p.table("Left", &["8", "9", "10", "11", "12"], &names);
+    p.rule("Arrived", "No two arrived at the same hour", "distinct(rows)");
+    p.rule("Left", "Everyone left after they arrived", "all(v in rows: v > Arrived[v.row])");
+    p.clue("Only one of them was there at half past nine, when the painting went", "count(v in Arrived.rows: v < 9.5 && Left[v.row] > 9.5) = 1");
+    p.clue("Lena arrived just as Kit left", "Arrived[Lena] = Left[Kit]");
+    p.clue("Iris stayed three hours", "Left[Iris] - Arrived[Iris] = 3");
+    p.clue("Marco had gone before Lena arrived", "Left[Marco] <= Arrived[Lena]");
+    p.clue("Marco stayed two hours", "Left[Marco] - Arrived[Marco] = 2");
 }
 
 /// The `recollect.toml` for a sample.

@@ -1,0 +1,8 @@
+id: 01a1b9b9-240e-7476-b349-12bcb343ea65
+components:
+  name: Exactly one of them took it
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: 'count(s in Suspect.rows: s = "thief") = 1'

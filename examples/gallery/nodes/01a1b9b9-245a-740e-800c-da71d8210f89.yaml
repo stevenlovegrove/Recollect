@@ -1,0 +1,8 @@
+id: 01a1b9b9-245a-740e-800c-da71d8210f89
+components:
+  name: Lena arrived just as Kit left
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: Arrived[Lena] = Left[Kit]

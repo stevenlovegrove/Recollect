@@ -444,6 +444,11 @@ Queen[1] … Queen[8]
 
 Each row is a choice of column, and `q.row` is a row's key, so the table's formula says no two queens share a column or a diagonal. The puzzles are written this way. The zebra puzzle has a table for each kind of thing, such as `Pet[Zebra]` and `Drink[Water]`, whose rows choose a house, and each clue is a formula naming the rows it's about, with nothing to label: `Nationality[English] = Colour[Red]`, or `abs(Smoke[Kools] - Pet[Horse]) = 1` for "next to". The sudoku's cells are a table too, and each row, column and box is a clue such as `distinct(Cell[A1], Cell[A2], Cell[A3], Cell[A4])`. That's 45 nodes for the zebra puzzle rather than 90, 10 for eight queens rather than 37, and 31 for the sudoku rather than 74, and the solutions are the same.
 
+A formula anywhere can go over a table's rows by its name, as `count(v in Arrived.rows: v < 9.5)`, and find a row by the key of one it's going over, as `Left[v.row]`. Two crime puzzles are written this way:
+
+- **Who took the necklace?** `Suspect[Ava]` … `Suspect[Eli]` each choose innocent or thief, and `Says[Ava]` … are what each said, as formulas: Cy's "Dee is lying" is `!Says[Dee]`. The clues are `count(s in Suspect.rows: s = "thief") = 1`, `count(s in Says.rows: !s) = 2` and `all(s in Suspect.rows: s != "thief" || !Says[s.row])`, so the thief is one of the two liars.
+- **The night of the theft** is a timeline: `Arrived` and `Left` say when five visitors came and went, and the painting went at half past nine, when `count(v in Arrived.rows: v < 9.5 && Left[v.row] > 9.5) = 1`. Four clues such as `Arrived[Lena] = Left[Kit]` leave one evening.
+
 The engine keeps an index of names, so finding a table's rows or a row's neighbour doesn't mean reading every name. Renaming a node, linking a table to a kind, or removing a row reaches everything that could take a cell from somewhere else as a result. `tests/tables.rs` checks this against a newly built graph through random renames, kinds and edits, and `tests/toy_table.rs` in the systems checks the formulas.
 
 ## Comparing options

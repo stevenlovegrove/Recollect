@@ -1,0 +1,15 @@
+id: 01a1b9b9-245a-740e-800c-da6a734e0ef1
+components:
+  body: Everyone left after they arrived
+  domain:
+  - '8'
+  - '9'
+  - '10'
+  - '11'
+  - '12'
+  name: Left
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: 'all(v in rows: v > Arrived[v.row])'

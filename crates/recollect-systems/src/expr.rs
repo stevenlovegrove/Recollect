@@ -509,7 +509,7 @@ impl Parser {
             }
         }
         // `max(a, b)` is two numbers, and only a group spelled out as one can be gone over.
-        let of_group = matches!(args.first(), Some(Expr::Path(p)) if matches!(p[0].as_str(), "in" | "out" | "with" | "rows"));
+        let of_group = matches!(args.first(), Some(Expr::Path(p)) if matches!(p[0].as_str(), "in" | "out" | "with" | "rows") || p.get(1).is_some_and(|r| r == "rows"));
         // `distinct(a, b, c)` is the values given, and `distinct(group)` goes over the group.
         let many = func == "distinct" && args.len() != 1;
         if FOLDS.contains(&func.as_str()) && (!NEEDS_START.contains(&func.as_str()) || of_group) && !many {
@@ -536,7 +536,7 @@ fn short_fold(func: String, mut args: Vec<Expr>) -> Result<Expr, String> {
     let (1, Some(Expr::Path(path))) = (args.len(), args.pop()) else {
         return Err(format!("{func} takes one group, such as {func}(line) or {func}(x in line: x)"));
     };
-    let whole = if matches!(path[0].as_str(), "in" | "out" | "with") { 2 } else { 1 };
+    let whole = if matches!(path[0].as_str(), "in" | "out" | "with") || path.get(1).is_some_and(|p| p == "rows") { 2 } else { 1 };
     if path.len() < whole {
         return Err(format!("{} needs to say which kind", path[0]));
     }

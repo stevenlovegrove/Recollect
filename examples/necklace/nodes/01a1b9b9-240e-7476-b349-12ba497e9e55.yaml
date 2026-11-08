@@ -1,0 +1,9 @@
+id: 01a1b9b9-240e-7476-b349-12ba497e9e55
+components:
+  body: “It wasn't Eli.”
+  name: Says[Dee]
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: Suspect[Eli] != "thief"

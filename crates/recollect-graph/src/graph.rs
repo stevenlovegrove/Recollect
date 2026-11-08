@@ -1377,6 +1377,12 @@ impl Cx<'_> {
         self.s.g.table_here(self.id).map(|t| self.s.g.rows(&t)).unwrap_or_default()
     }
 
+    /// The rows of the table with this name, as `Arrived.rows` reads them from anywhere.
+    pub fn rows_of(&self, table: &str) -> Vec<Entity> {
+        self.s.note(Dep::Scan(Name::NAME.to_string()));
+        self.s.g.rows(table)
+    }
+
     /// The row this many along from this rule's node, if it's a numbered row and there's one there:
     /// the one before is -1.
     pub fn row_along(&self, by: i64) -> Option<Entity> {

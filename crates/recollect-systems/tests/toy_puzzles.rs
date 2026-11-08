@@ -245,6 +245,36 @@ fn distinct_is_every_pair_differing() {
     assert_eq!(q.count(), 0);
 }
 
+#[test]
+fn a_clue_can_go_over_any_tables_rows_and_find_a_row_by_another_rows_key() {
+    let mut p = Puzzle::new();
+    let options = ["1", "2", "3"];
+    for t in ["A", "B"] {
+        p.g.set(t, Domain(options.iter().map(|s| s.to_string()).collect()));
+        for k in ["x", "y"] {
+            let e = p.g.e(&format!("{t}[{k}]"));
+            p.vars.push(Space::global().uniform(&e.to_string(), &options));
+        }
+    }
+    // For each key, A's row is below B's: three ways for x and three for y.
+    let clue = p.constraint(&[], "all(a in A.rows: a < B[a.row])");
+    assert_eq!(p.count(), 9);
+    p.g.g.set_rule(clue, "value", EXPR, json!({ "text": "count(A.rows) = 2 && sum(B.rows) = 6" }));
+    assert_eq!(p.count(), 9, "short forms too: B's two rows add to 6 only as 3 and 3, and A's are free");
+
+    // A new row is part of the group.
+    let z = p.g.e("A[z]");
+    p.vars.push(Space::global().uniform(&z.to_string(), &options));
+    assert_eq!(p.count(), 0, "now A has three rows");
+
+    p.g.g.set_rule(clue, "value", EXPR, json!({ "text": "A.rows + 1" }));
+    let err = format!("{:?}", p.g.g.get::<ValueCell>(clue).unwrap_err());
+    assert!(err.contains("A.rows is a group of rows"), "{err}");
+    p.g.g.set_rule(clue, "value", EXPR, json!({ "text": "all(a in A.rows: B[a.row] > 0)" }));
+    let err = format!("{:?}", p.g.g.get::<ValueCell>(clue).unwrap_err());
+    assert!(err.contains("no row B[z]"), "{err}");
+}
+
 // ---------- sudoku ----------
 
 fn sudoku4() -> Puzzle {

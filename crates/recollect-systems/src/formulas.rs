@@ -310,6 +310,10 @@ impl<'c, 'a> Expander<'c, 'a> {
         if root == "rows" {
             return Ok(self.cx.rows());
         }
+        // Another table's rows, by its name, as `Arrived.rows`.
+        if rest == ["rows"] && !self.labels.contains_key(root) {
+            return Ok(self.cx.rows_of(root));
+        }
         // No links yet is fine for a group: a total with no lines is 0.
         Ok(self.labels.get(root).cloned().unwrap_or_default())
     }
@@ -338,7 +342,7 @@ impl<'c, 'a> Expander<'c, 'a> {
                 {
                     return Ok(Binding::Node(n));
                 }
-            } else if matches!(root, "in" | "out" | "with" | "rows") {
+            } else if matches!(root, "in" | "out" | "with" | "rows") || (path.len() == 2 && path[1] == "rows") {
                 return Ok(Binding::Group(self.group(path, scope)?));
             } else if path.len() == 1 && !scope.is_macro() && root != "self" {
                 let nodes = self.group(path, scope)?;
@@ -376,7 +380,7 @@ impl<'c, 'a> Expander<'c, 'a> {
                 if scope.is_macro() {
                     return failed(format!("a macro can only use its parameters, not {table}[…]"));
                 }
-                let key = self.key(key)?;
+                let key = self.key(key, scope)?;
                 match self.cx.row_at(table, &key) {
                     Some(n) => Ok(self.read(n, path)),
                     None => failed(format!("there's no row {table}[{key}]")),
@@ -420,6 +424,7 @@ impl<'c, 'a> Expander<'c, 'a> {
             })),
             "in" | "out" | "with" | "rows" => failed(format!("{}.… is a group of nodes, so it needs something like sum({}.…)", root, root)),
             _ => match self.labels.get(root).map(Vec::as_slice) {
+                None if rest.first().is_some_and(|r| r == "rows") => failed(format!("{root}.rows is a group of rows, so it needs something like count({root}.rows)")),
                 None | Some([]) => failed(format!("no input called {root}")),
                 Some([one]) => Ok(self.read(*one, rest)),
                 Some(many) => failed(format!("{root} is {} nodes, so it needs something like sum({root})", many.len())),
@@ -429,9 +434,9 @@ impl<'c, 'a> Expander<'c, 'a> {
 
     /// Which row `Year[…]` means. It has to be known without looking at any world, so it's a number, a
     /// name, or worked out from `row` with plain arithmetic, as `Year[row - 1]` is.
-    fn key(&self, e: &Expr) -> Result<Key, Error> {
+    fn key(&self, e: &Expr, scope: &Scope) -> Result<Key, Error> {
         let number = |e: &Expr| -> Result<i64, Error> {
-            match self.key(e)? {
+            match self.key(e, scope)? {
                 Key::Num(n) => Ok(n),
                 Key::Text(t) => failed(format!("{t} isn't a number, so it can't be added to")),
             }
@@ -443,6 +448,14 @@ impl<'c, 'a> Expander<'c, 'a> {
                 Some(k) => k,
                 None => return failed("row is only something on a row of a table"),
             },
+            // The key of a row being gone over, as `Left[p.row]` in `count(p in Arrived.rows: …)`.
+            Expr::Path(p) if p.len() == 2 && p[1] == "row" && matches!(scope.vars.get(&p[0]), Some(Binding::Node(_))) => {
+                let Some(Binding::Node(n)) = scope.vars.get(&p[0]) else { unreachable!("matched above") };
+                match self.cx.row_key_of(*n) {
+                    Some(k) => k,
+                    None => return failed(format!("{} isn't a row of a table, so it has no key", p[0])),
+                }
+            }
             Expr::Path(p) if p.len() == 1 => Key::Text(p[0].clone()),
             Expr::Neg(a) => Key::Num(-number(a)?),
             Expr::Bin(op @ (BinOp::Add | BinOp::Sub | BinOp::Mul), a, b) => {
@@ -453,7 +466,7 @@ impl<'c, 'a> Expander<'c, 'a> {
                     _ => a * b,
                 })
             }
-            _ => return failed("a row's key is a number, a name, or worked out from row, such as Year[3], Car[Hatchback] or Year[row - 1]"),
+            _ => return failed("a row's key is a number, a name, or worked out from row, such as Year[3], Car[Hatchback], Year[row - 1] or Left[p.row]"),
         })
     }
 

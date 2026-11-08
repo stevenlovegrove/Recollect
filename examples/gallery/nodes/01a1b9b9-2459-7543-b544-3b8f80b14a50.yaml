@@ -1,0 +1,31 @@
+id: 01a1b9b9-2459-7543-b544-3b8f80b14a50
+components:
+  name: What happened
+  requires: null
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: all(constraint)
+links:
+- to: 01a1b9b9-2459-7543-b544-3b9048465fa6
+  components:
+    label: constraint
+- to: 01a1b9b9-245a-740e-800c-da6a734e0ef1
+  components:
+    label: constraint
+- to: 01a1b9b9-245a-740e-800c-da70850c64fb
+  components:
+    label: constraint
+- to: 01a1b9b9-245a-740e-800c-da71d8210f89
+  components:
+    label: constraint
+- to: 01a1b9b9-245a-740e-800c-da7263f25616
+  components:
+    label: constraint
+- to: 01a1b9b9-245a-740e-800c-da73397142b3
+  components:
+    label: constraint
+- to: 01a1b9b9-245a-740e-800c-da7424ca82fe
+  components:
+    label: constraint
