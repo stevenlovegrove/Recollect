@@ -1,0 +1,8 @@
+id: 01a1b94e-7949-73e6-ad5c-76bab367a55f
+components:
+  name: After 30 years
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: Year[30].balance

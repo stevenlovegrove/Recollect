@@ -43,6 +43,9 @@ function nodeHeight(n: GraphNode) {
 /** Which way a map reads: what comes first goes at the top, or on the left. */
 type Direction = "down" | "right";
 
+/** Marks a row nobody wrote, wherever one is shown. */
+export const UNWRITTEN = "◇";
+
 type CardData = {
   node: GraphNode;
   direction: Direction;
@@ -64,7 +67,7 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
   const { node, direction, selected, recent, dim, entering, leaving, linking, out, lines, kinds } = data;
   return (
     <div
-      className={["card", isDropped(node) && "dead", out && "out", selected && "selected", recent && "recent", dim && "dim", entering && "entering", leaving && "leaving", linking && "linking"].filter(Boolean).join(" ")}
+      className={["card", node.unwritten && "unwritten", isDropped(node) && "dead", out && "out", selected && "selected", recent && "recent", dim && "dim", entering && "entering", leaving && "leaving", linking && "linking"].filter(Boolean).join(" ")}
       style={{ borderLeftColor: nodeColor(node), width: W }}
     >
       {/* Links point child → parent, and parents come first: leave from that side. */}
@@ -78,7 +81,8 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
         ))}
         {isNote(node) && !kinds.length && <span className="muted small">note</span>}
       </div>
-      <div className="card-title" title={node.name}>
+      <div className="card-title" title={node.unwritten ? `${node.name}: nobody wrote this row. It's worked out from its table, and isn't saved.` : node.name}>
+        {node.unwritten && <span className="unwritten-mark">{UNWRITTEN} </span>}
         {data.title}
       </div>
       {lines.map((l) => (
@@ -309,7 +313,9 @@ function LinkMenu({ ws, drop, onSwap, onDone }: { ws: Workspace; drop: LinkDrop;
 }
 
 function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { active: boolean; onContext: (t: CtxTarget) => void }) {
-  const g = ws.view!;
+  const view = ws.view!;
+  // A row nobody wrote is on the map when something written reads it, and only then.
+  const g = useMemo(() => ({ ...view, nodes: [...view.nodes, ...view.unwritten] }), [view]);
   // Rows of related tables with one key are one thing, so they're one card: the part made first stands for
   // the rest, and their links are its.
   const standsFor = useMemo(() => {
@@ -318,23 +324,21 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
     return m;
   }, [g.nodes]);
   const rep = (id: string) => standsFor.get(id) ?? id;
-  // What the map draws: links between cards, and what a row's formula reads as `prev` or `next`, which no
-  // link says. Each keeps the key of the link it came from.
+  // What the map draws: links between cards, and the rows a node reads by where they are, as `prev` or
+  // `Year[3]` do, which no link says. Each keeps the key of the link it came from.
   const links = useMemo(() => {
     const at = (id: string) => standsFor.get(id) ?? id;
     const out: (Link & { key: string })[] = [];
     for (const l of g.links) if (at(l.from) !== at(l.to)) out.push({ ...l, from: at(l.from), to: at(l.to), key: edgeKey(l) });
-    const rows = new Map(g.nodes.flatMap((n) => (n.row ? [[`${n.row.table}|${n.row.key}`, n.id] as const] : [])));
-    for (const n of g.nodes) {
-      if (typeof n.row?.key !== "number") continue;
-      const along = new Set<number>();
-      for (const c of Object.values(n.cells))
-        for (const m of (c.formula ?? "").matchAll(/\b(?:prev|next)(?:\.(?:prev|next))*\b/g)) along.add(m[0].split(".").reduce((t, w) => t + (w === "prev" ? -1 : 1), 0));
-      for (const by of along) {
-        const to = rows.get(`${n.row.table}|${n.row.key + by}`);
-        if (to) out.push({ from: at(n.id), to: at(to), kind: "label", value: by < 0 ? "prev" : "next", key: `e:${n.id}|along${by}|${to}` });
+    const byId = new Map(g.nodes.map((n) => [n.id, n]));
+    for (const n of g.nodes)
+      for (const to of n.reads ?? []) {
+        const [a, b] = [n.row, byId.get(to)?.row];
+        // The row before or after is called that, and anything further by its address.
+        const by = a && b && a.table === b.table && typeof a.key === "number" && typeof b.key === "number" ? b.key - a.key : null;
+        const value = by === -1 ? "prev" : by === 1 ? "next" : (byId.get(to)?.name ?? "");
+        if (byId.has(to) && at(n.id) !== at(to)) out.push({ from: at(n.id), to: at(to), kind: "label", value, key: `e:${n.id}|reads|${to}` });
       }
-    }
     return out;
   }, [g.nodes, g.links, standsFor]);
   const [hiddenFacts, setHiddenFacts] = useState<Set<Filter>>(new Set());

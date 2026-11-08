@@ -1,8 +1,0 @@
-id: 01a1b8f9-35c3-7375-a9af-ebbed0a2d674
-components:
-  name: F
-rules:
-  f:
-    rule: expr@1
-    params:
-      text: prev.f + prev.prev.f

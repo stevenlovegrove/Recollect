@@ -54,6 +54,10 @@ export interface GraphNode {
   row?: { table: string; key: number | string };
   /** The rows of related tables with the same key: with this one, they're one thing. */
   parts?: string[];
+  /** The rows its cells read by where they are, as `prev` or `Year[3]` do, rather than through a link. */
+  reads?: string[];
+  /** A row nobody wrote, worked out from its table and not saved, here because something written reads it. */
+  unwritten?: boolean;
 }
 
 export interface Link {
@@ -129,6 +133,8 @@ export interface View {
   /** If it's gone back: the newest event that follows from here. */
   latest: number | null;
   nodes: GraphNode[];
+  /** Rows nobody wrote that a node reads, so a map can show them. They aren't nodes anywhere else. */
+  unwritten: GraphNode[];
   links: Link[];
   components: ComponentInfo[];
   rules: RuleInfo[];

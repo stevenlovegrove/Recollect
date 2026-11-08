@@ -824,13 +824,15 @@ impl Graph {
         if e == Entity::whole() {
             return self.defaults.get(component).map(|b| (b.clone(), e));
         }
-        if !self.entities.contains(&e) && !self.is_implicit(e) {
+        let node = self.entities.contains(&e);
+        if !node && !self.is_implicit(e) {
             return None;
         }
         if let Some(b) = self.cells.get(&e).and_then(|c| c.get(component)) {
             return Some((b.clone(), e));
         }
-        self.from_kind(e, component).or_else(|| self.defaults.get(component).map(|b| (b.clone(), e)))
+        // A row nobody wrote isn't a node, so what every node has by default isn't its: it has its table's.
+        self.from_kind(e, component).or_else(|| self.defaults.get(component).filter(|_| node).map(|b| (b.clone(), e)))
     }
 
     /// The nearest that says what this cell is, of the other parts of the same row and then the kinds:
@@ -1049,7 +1051,8 @@ impl Graph {
     /// The components a node has a cell for, whichever way each is backed.
     pub fn components_of(&self, e: Entity) -> BTreeSet<String> {
         let own = self.cells.get(&e).into_iter().flat_map(|c| c.keys());
-        let mut out: BTreeSet<String> = own.chain(self.defaults.keys()).cloned().collect();
+        let defaults = self.defaults.keys().filter(|_| self.entities.contains(&e));
+        let mut out: BTreeSet<String> = own.chain(defaults).cloned().collect();
         out.extend(self.taken(e));
         out
     }

@@ -26,8 +26,8 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "invoice", title: "Invoice", about: "Two lines, a subtotal, tax and a total. Edit a number and only what it reaches reruns.", group: "sheet", systems: &[], build: invoice },
     Sample { name: "trip-budget", title: "Trip budget", about: "A budget with decisions left open: the total is exact in every world, and so is what would put it over.", group: "sheet", systems: &["plan"], build: trip_budget },
     Sample { name: "choosing-a-car", title: "Choosing a car", about: "Petrol and electric cars as tables: what every car has, and what only petrol or electric cars have. What each costs a year over mileage you can only guess at, and which can get to Edinburgh without stopping.", group: "sheet", systems: &["plan"], build: choosing_a_car },
-    Sample { name: "compound-interest", title: "Compound interest", about: "A table of years. One formula on Year works out each from the year before, Year[0] says where it starts, and a top-up you might make in year 5 changes only the years after it.", group: "sheet", systems: &["plan"], build: compound_interest },
-    Sample { name: "fibonacci", title: "Fibonacci", about: "A table where each row adds the two before it: prev.f + prev.prev.f. Cells that are shared run once, so 80 terms take 79 formula runs.", group: "sheet", systems: &[], build: fibonacci },
+    Sample { name: "compound-interest", title: "Compound interest", about: "A table of years. One formula on Year works out each from the year before, and only Year[0] and Year[5] are written: the rest are worked out as far as they're asked for. A top-up you might make in year 5 changes only the years after it.", group: "sheet", systems: &["plan"], build: compound_interest },
+    Sample { name: "fibonacci", title: "Fibonacci", about: "A table where each row adds the two before it: prev.f + prev.prev.f. Only the first two rows are written, and asking for F[80] works out the rest, each once: 79 formula runs.", group: "sheet", systems: &[], build: fibonacci },
     Sample { name: "australia", title: "Colouring Australia", about: "Each region is a choice and each border a constraint. There are 18 colourings. Pin a region and see what that forces.", group: "puzzle", systems: &[], build: australia },
     Sample { name: "eight-queens", title: "Eight queens", about: "One choice per row, and one constraint per pair of rows. There are 92 boards.", group: "puzzle", systems: &[], build: eight_queens },
     Sample { name: "sudoku", title: "4×4 sudoku", about: "Sixteen cells, and a constraint between each pair that can't match. There are 288 grids.", group: "puzzle", systems: &[], build: sudoku },
@@ -36,7 +36,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "5";
+pub const FORMAT: &str = "6";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -214,10 +214,8 @@ fn compound_interest(b: &mut Build) {
     // One formula for every year, on the table. Year[0] says its own, so it's where the chain starts.
     b.set("Rate", ValueCell::num(0.05));
     b.formula_on("Year", "balance", "prev.balance * (1 + rate)").label("Year", "Rate", "rate");
+    // Only rows with something of their own are written. The rest are there to be read, as far as asked.
     b.put("Year[0]", "balance", json!(1000.0));
-    for i in 1..=10 {
-        b.e(&format!("Year[{i}]"));
-    }
     // A choice five years in: the years before it have one balance, and the years after have one for each answer.
     b.set("Top up in year 5?", Decision::default()).formula("Top up in year 5?", "pick(in.alternative)");
     for (option, amount) in [("No top-up", 0.0), ("Add 500", 500.0)] {
@@ -225,14 +223,13 @@ fn compound_interest(b: &mut Build) {
     }
     b.formula_on("Year[5]", "balance", "prev.balance * (1 + rate) + top_up");
     b.label("Year[5]", "Rate", "rate").label("Year[5]", "Top up in year 5?", "top_up");
+    b.formula("After 30 years", "Year[30].balance");
 }
 
 fn fibonacci(b: &mut Build) {
     b.formula_on("F", "f", "prev.f + prev.prev.f");
     b.put("F[0]", "f", json!(0)).put("F[1]", "f", json!(1));
-    for i in 2..=80 {
-        b.e(&format!("F[{i}]"));
-    }
+    b.formula("The 80th", "F[80].f");
 }
 
 /// A puzzle's root, and what its constraints have in common.

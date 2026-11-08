@@ -4,6 +4,7 @@ import type { ViewProps } from "./MapView";
 import { TableCell } from "./TableView";
 import { LinePlot, numberOf } from "./SweepChart";
 import { label } from "../theme";
+import { UNWRITTEN } from "./MapView";
 
 /** Numbered rows in order, then the rest as they were made. */
 function byRow(a: GraphNode, b: GraphNode): number {
@@ -49,9 +50,15 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
   // from the table, and nothing about them is saved.
   const first = numbered ? (rows[0].row!.key as number) : 0;
   const last = numbered ? (rows[rows.length - 1].row!.key as number) : 0;
+  // Ten rows on from the first, to start with, so a table that only writes where it starts still shows.
   const [upTo, setUpTo] = useState<number | null>(null);
-  const to = Math.min(Math.max(upTo ?? last, last), last + 999);
-  const more = useRows(ws, table, last + 1, to, ws.world, numbered && to > last);
+  const to = Math.min(Math.max(upTo ?? first + 10, last), first + 999);
+  const run = useRows(ws, table, first, to, ws.world, numbered);
+  const written = new Map(rows.map((r) => [r.id, r]));
+  // Every row from the first to as far as asked, written or not, in order.
+  const shown: { node: GraphNode; key: string | number; unwritten: boolean }[] = numbered
+    ? (run ?? []).map((r) => ({ node: written.get(r.id) ?? { id: r.id, name: `${table}[${r.key}]`, cells: r.cells, unwritten: true }, key: r.key, unwritten: !r.written }))
+    : rows.map((r) => ({ node: r, key: r.row!.key, unwritten: false }));
 
   return (
     <>
@@ -77,10 +84,11 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
               ))}
             </tr>
           )}
-          {rows.map((r) => (
-            <tr key={r.id} className={r.id === selected ? "selected" : ""} onClick={() => onSelect(r.id)}>
-              <td className="sheet-name" title={r.name}>
-                {String(r.row!.key)}
+          {shown.map(({ node: r, key, unwritten }) => (
+            <tr key={r.id} className={`${r.id === selected ? "selected" : ""} ${unwritten ? "implicit-row" : ""}`} onClick={() => !unwritten && onSelect(r.id)}>
+              <td className="sheet-name" title={unwritten ? `Nobody wrote ${r.name}. It's worked out from ${table}, and isn't saved: add it to say something of its own.` : r.name}>
+                {unwritten && <span className="unwritten-mark">{UNWRITTEN} </span>}
+                {String(key)}
               </td>
               {columns.map((c) => {
                 const cell = r.cells[c];
@@ -88,22 +96,10 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
                 const taken = cell && !cell.own;
                 return (
                   <td key={c} className={`sheet-cell ${taken ? "taken" : ""} ${cell?.error ? "err" : ""} ${ws.recentCells.has(`${r.id}|${c}`) ? "ran" : ""}`} title={taken && cell.kind ? `From ${ws.byId.get(cell.kind)?.name ?? "elsewhere"}` : undefined}>
-                    <TableCell ws={ws} node={r} c={c} cell={cell} />
+                    <TableCell ws={ws} node={r} c={c} cell={cell} readOnly={unwritten} />
                   </td>
                 );
               })}
-            </tr>
-          ))}
-          {(more ?? []).map((r) => (
-            <tr key={r.key} className="implicit-row">
-              <td className="sheet-name" title="Nobody wrote this row. It's worked out from the table, and isn't saved: add it to say something of its own.">
-                {r.key}
-              </td>
-              {columns.map((c) => (
-                <td key={c} className="sheet-cell taken">
-                  <TableCell ws={ws} node={{ id: r.id, name: `${table}[${r.key}]`, cells: r.cells }} c={c} cell={r.cells[c]} readOnly />
-                </td>
-              ))}
             </tr>
           ))}
         </tbody>
@@ -112,7 +108,9 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
         <div className="table-new small">
           <span className="muted">Show up to row</span>
           <input type="number" aria-label="Show rows up to" value={to} min={last} onChange={(e) => setUpTo(Number(e.target.value))} />
-          {to > last && <span className="muted">Rows after {last} are worked out from {table}, and aren't saved.</span>}
+          <span className="muted">
+            {UNWRITTEN} marks a row nobody wrote: it's worked out from {table}, and isn't saved.
+          </span>
         </div>
       )}
       <NewRow ws={ws} table={table} rows={rows} />

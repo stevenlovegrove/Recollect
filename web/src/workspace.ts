@@ -129,7 +129,8 @@ export function useWorkspace(): Workspace {
     else refresh();
   }, [world, refresh]);
 
-  const byId = useMemo(() => new Map((view?.nodes ?? []).map((n) => [n.id, n])), [view]);
+  // Rows nobody wrote that something reads can be looked up too, though they're not in `nodes`.
+  const byId = useMemo(() => new Map([...(view?.nodes ?? []), ...(view?.unwritten ?? [])].map((n) => [n.id, n])), [view]);
   const arranging = useMemo(() => (view?.components ?? []).filter((c) => c.arranges).map((c) => c.name), [view?.components]);
   const reversed = useMemo(() => (view?.components ?? []).filter((c) => c.reversed).map((c) => c.name), [view?.components]);
   const partKind = arranging.includes("part_of") ? "part_of" : arranging.find((k) => !reversed.includes(k));

@@ -839,13 +839,22 @@ async fn rows_nobody_wrote_can_be_looked_at() {
     let c = Client::new();
     c.open("compound-interest").await;
     let v = c.view(json!({})).await;
-    let rows = c.post("/api/rows", json!({ "table": "Year", "from": 9, "to": 12, "world": { id(&v, "Top up in year 5?"): id(&v, "No top-up") } })).await;
+    let rows = c.post("/api/rows", json!({ "table": "Year", "from": 4, "to": 12, "world": { id(&v, "Top up in year 5?"): id(&v, "No top-up") } })).await;
     let rows = rows.as_array().unwrap();
-    assert_eq!(rows.iter().map(|r| (r["key"].as_i64().unwrap(), r["written"].as_bool().unwrap())).collect::<Vec<_>>(), vec![(9, true), (10, true), (11, false), (12, false)]);
-    let twelve = rows[3]["cells"]["balance"]["value"].as_f64().unwrap();
+    assert_eq!(rows.iter().take(3).map(|r| (r["key"].as_i64().unwrap(), r["written"].as_bool().unwrap())).collect::<Vec<_>>(), vec![(4, false), (5, true), (6, false)]);
+    let twelve = rows[8]["cells"]["balance"]["value"].as_f64().unwrap();
     assert!((twelve - 1000.0 * 1.05f64.powi(12)).abs() < 1e-6, "{twelve}");
     let after = c.view(json!({})).await;
     assert_eq!(after["nodes"].as_array().unwrap().len(), v["nodes"].as_array().unwrap().len(), "and they aren't nodes");
+
+    // The view carries the rows nobody wrote that something written reads, and says who reads what.
+    let names = |v: &Value| v.as_array().unwrap().iter().map(|n| n["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    assert_eq!(names(&v["unwritten"]), vec!["Year[4]", "Year[30]"], "what Year[5] reads as prev, and what After 30 years asks for");
+    let year4 = v["unwritten"][0]["id"].clone();
+    assert_eq!(node(&v, "Year[5]")["reads"], json!([year4]));
+    assert!(v["unwritten"][0]["reads"].is_null(), "and a row nobody wrote doesn't bring the one before it too");
+    let cells: Vec<&String> = v["unwritten"][0]["cells"].as_object().unwrap().keys().collect();
+    assert_eq!(cells, vec!["balance"], "its cells are its table's, not every node's");
 
     // A formula reading a cell the table doesn't say is refused, naming the row it's on.
     let why = refused(&c, json!([{ "op": "add_node", "id": "new:x", "name": "Far", "formula": "Year[40].colour" }])).await;

@@ -1,0 +1,12 @@
+id: 01a1b94e-7949-73e6-ad5c-76b415b7e014
+components:
+  name: Year
+rules:
+  balance:
+    rule: expr@1
+    params:
+      text: prev.balance * (1 + rate)
+links:
+- to: 01a1b94e-7949-73e6-ad5c-76b3694981ca
+  components:
+    label: rate

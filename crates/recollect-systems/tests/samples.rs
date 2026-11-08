@@ -129,7 +129,12 @@ fn the_trip_budget_is_exact_with_its_choices_open() {
 #[test]
 fn compound_interest_and_fibonacci_reach_their_known_values() {
     // A table's own column, worked out row by row from the one before.
-    let column = |o: &Opened, row: &str, c: &str| -> Value { o.g().get_runtime(o.id(row), c).unwrap().unwrap_or_else(|| panic!("{row} has no {c}")).value };
+    // Most rows aren't written, so they're found by where they are.
+    let column = |o: &Opened, row: &str, c: &str| -> Value {
+        let at = recollect_graph::table::row_of(row).unwrap();
+        let e = o.g().row_at(&at.table, &at.key).unwrap_or_else(|| panic!("no row {row}"));
+        o.g().get_runtime(e, c).unwrap().unwrap_or_else(|| panic!("{row} has no {c}")).value
+    };
     let o = open("compound-interest");
     // With the top-up in year 5 still open, the last year is one of two balances.
     let last: Vec<f64> = serde_json::from_value::<recollect_graph::worlds::Worldly<Val>>(column(&o, "Year[10]", "balance")).unwrap().0.cases().iter().map(|(_, v)| if let Val::Num(n) = v { *n } else { panic!("{v:?}") }).collect();
@@ -138,6 +143,7 @@ fn compound_interest_and_fibonacci_reach_their_known_values() {
     let o = open("fibonacci");
     assert_eq!(column(&o, "F[80]", "f").as_f64().unwrap(), 23416728348467685.0);
     assert_eq!(o.g().take_ran().iter().filter(|(_, c)| c == "f").count(), 79);
+    assert_eq!(o.number("The 80th"), 23416728348467685.0, "and a formula can ask for it");
 }
 
 #[test]

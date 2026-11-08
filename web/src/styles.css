@@ -2875,8 +2875,17 @@ tr.pruned {
 }
 .table-grid .implicit-row .sheet-name {
   font-style: italic;
-  opacity: 0.6;
 }
 .table-new input[type="number"] {
   width: 6em;
+}
+/* A row nobody wrote: worked out from its table, and not saved. */
+.card.unwritten {
+  border-style: dashed;
+  opacity: 0.8;
+}
+.unwritten-mark {
+  color: var(--accent);
+  font-style: normal;
+  font-weight: 600;
 }

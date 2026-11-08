@@ -91,6 +91,13 @@ pub struct NodeView {
     /// The rows of related tables with the same key: with this one, they're one thing.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<Entity>,
+    /// The rows its cells read by where they are, as `prev` or `Year[3]` do, rather than through a link.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reads: Vec<Entity>,
+    /// A row nobody wrote, here because something that was written reads it. It's worked out from its
+    /// table and isn't saved.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unwritten: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -108,7 +115,18 @@ fn node_view(g: &Graph, e: Entity, name: String, cells: BTreeMap<String, CellVie
             recollect_graph::table::Key::Text(t) => json!(t),
         },
     });
-    NodeView { id: e, name, cells, row, parts: g.parts_of(e) }
+    // What its cells read last time they ran, which they just did.
+    let mut reads: Vec<Entity> = cells
+        .keys()
+        .flat_map(|c| g.reads_of(e, c))
+        .filter_map(|d| match d {
+            recollect_graph::Dep::Cell((x, _)) if x != e && g.row_of(x).is_some() && g.link_value(e, x, "label").is_none() => Some(x),
+            _ => None,
+        })
+        .collect();
+    reads.sort();
+    reads.dedup();
+    NodeView { id: e, name, cells, row, parts: g.parts_of(e), reads, unwritten: !g.contains(e) }
 }
 
 #[derive(Debug, Serialize)]
@@ -185,6 +203,8 @@ pub struct View {
     /// If it's gone back: the newest event that follows from here, to return to.
     pub latest: Option<u64>,
     pub nodes: Vec<NodeView>,
+    /// Rows nobody wrote that a node here reads, so a map can show them: see `NodeView::unwritten`.
+    pub unwritten: Vec<NodeView>,
     pub links: Vec<LinkView>,
     pub components: Vec<ComponentInfo>,
     pub rules: Vec<recollect_graph::RuleInfo>,
@@ -378,11 +398,21 @@ pub fn view(o: &Open, world: &World) -> View {
     let picks = Space::global().picks(world);
     let playing = in_play(g, catalog, &picks);
     let mut vars = BTreeMap::new();
-    let nodes = g
-        .entities()
-        .map(|e| {
-            let cells = g.components_of(e).into_iter().filter(|c| !catalog.is_internal(c)).filter_map(|c| cell_view(g, catalog, e, &c, &picks, &playing, &labels, &mut vars).map(|v| (c, v))).collect();
-            node_view(g, e, recollect_systems::label_of(g, e), cells)
+    let mut node = |e: Entity, name: String| {
+        let cells = g.components_of(e).into_iter().filter(|c| !catalog.is_internal(c)).filter_map(|c| cell_view(g, catalog, e, &c, &picks, &playing, &labels, &mut vars).map(|v| (c, v))).collect();
+        node_view(g, e, name, cells)
+    };
+    let nodes: Vec<NodeView> = g.entities().map(|e| node(e, recollect_systems::label_of(g, e))).collect();
+    // Only what something written reads: a row nobody wrote that reads another doesn't bring that one too.
+    let mut unwritten: Vec<(recollect_graph::table::Row, Entity)> = nodes.iter().flat_map(|n| n.reads.iter().copied()).filter(|e| !g.contains(*e)).filter_map(|e| Some((g.row_of(e)?, e))).collect();
+    unwritten.sort_by(|a, b| (&a.0.table, &a.0.key).cmp(&(&b.0.table, &b.0.key)));
+    unwritten.dedup_by_key(|(_, e)| *e);
+    let unwritten = unwritten
+        .into_iter()
+        .map(|(row, e)| {
+            let mut n = node(e, format!("{}[{}]", row.table, row.key));
+            n.reads.clear();
+            n
         })
         .collect();
     let mut links = Vec::new();
@@ -398,6 +428,7 @@ pub fn view(o: &Open, world: &World) -> View {
         last_seq: o.log.last_seq(),
         latest: o.log.last_seq().and_then(|h| o.log.newest_after(h)),
         nodes,
+        unwritten,
         links,
         components: catalog.components().filter(|c| !c.internal).cloned().collect(),
         rules: g.registry().list().into_iter().filter(|r| !r.key.starts_with("check/")).collect(),
