@@ -30,7 +30,6 @@ function around(cell: Cell | undefined): [number, number] {
 }
 
 const STEPS = 24;
-const [W, H, LEFT, RIGHT, TOP, BOTTOM] = [640, 240, 64, 112, 12, 30];
 
 /**
  * How each line moves as one input goes from a little to a lot. Every point is what you'd see with that
@@ -44,7 +43,6 @@ export function SweepChart({ ws, lines, inputs, title }: { ws: Workspace; lines:
   const [from, to] = range?.for === input ? [range.lo, range.hi] : [lo, hi];
   const xs = useMemo(() => Array.from({ length: STEPS + 1 }, (_, i) => from + ((to - from) * i) / STEPS), [from, to]);
   const [ys, setYs] = useState<(number | null)[][] | null>(null);
-  const [hover, setHover] = useState<number | null>(null);
   const key = `${ws.view?.last_seq}|${input}|${from}|${to}|${lines.map((l) => l.id + l.read.node + l.read.component + JSON.stringify(l.world)).join()}`;
 
   useEffect(() => {
@@ -60,21 +58,8 @@ export function SweepChart({ ws, lines, inputs, title }: { ws: Workspace; lines:
     };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const all = (ys ?? []).flat().filter((v): v is number => v !== null);
-  const [ylo, yhi] = all.length ? [Math.min(...all), Math.max(...all)] : [0, 1];
-  const ypad = (yhi - ylo || Math.abs(yhi) || 1) * 0.08;
-  const [y0, y1] = [ylo - ypad, yhi + ypad];
-  const px = (x: number) => LEFT + ((x - from) / (to - from || 1)) * (W - LEFT - RIGHT);
-  const py = (y: number) => TOP + (1 - (y - y0) / (y1 - y0 || 1)) * (H - TOP - BOTTOM);
-  const ticks = [0, 1, 2, 3].map((i) => y0 + ((y1 - y0) * i) / 3);
-  // Each line's name at its end, nudged apart where lines end close together.
-  const ends = (ys ?? [])
-    .map((row, li) => ({ li, y: [...row].reverse().find((v) => v !== null) }))
-    .filter((e): e is { li: number; y: number } => e.y !== undefined && e.y !== null)
-    .map((e) => ({ li: e.li, at: py(e.y) }))
-    .sort((a, b) => a.at - b.at);
-  for (let i = 1; i < ends.length; i++) ends[i].at = Math.max(ends[i].at, ends[i - 1].at + 16);
   const inputName = inputs.find((i) => i.node === input)?.name ?? "";
+  const all = (ys ?? []).flat().filter((v): v is number => v !== null);
 
   return (
     <div className="sweep">
@@ -92,10 +77,44 @@ export function SweepChart({ ws, lines, inputs, title }: { ws: Workspace; lines:
         <span className="muted">to</span>
         <input type="number" aria-label="To" value={+to.toPrecision(6)} onChange={(e) => setRange({ for: input, lo: from, hi: Number(e.target.value) })} />
       </div>
+      <LinePlot xs={xs} ys={ys} names={lines.map((l) => l.name)} xName={inputName} label={`${title} for each option as ${inputName} goes from ${valueText(from)} to ${valueText(to)}`} />
+      {ys === null && <div className="muted small">Working it out…</div>}
+      {ys !== null && !all.length && <div className="muted small">Nothing here changes with {inputName}, or it still depends on a choice.</div>}
+    </div>
+  );
+}
+
+const [W, H, LEFT, RIGHT, TOP, BOTTOM] = [640, 240, 64, 112, 12, 30];
+
+/**
+ * Lines over a run of numbers, one per name, with each named at its end and a crosshair that reads them
+ * all. A null is a gap in a line.
+ */
+export function LinePlot({ xs, ys, names, xName, label }: { xs: number[]; ys: (number | null)[][] | null; names: string[]; xName: string; label: string }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const [from, to] = [xs[0] ?? 0, xs[xs.length - 1] ?? 1];
+  const last = xs.length - 1;
+  const all = (ys ?? []).flat().filter((v): v is number => v !== null);
+  const [ylo, yhi] = all.length ? [Math.min(...all), Math.max(...all)] : [0, 1];
+  const ypad = (yhi - ylo || Math.abs(yhi) || 1) * 0.08;
+  const [y0, y1] = [ylo - ypad, yhi + ypad];
+  const px = (x: number) => LEFT + ((x - from) / (to - from || 1)) * (W - LEFT - RIGHT);
+  const py = (y: number) => TOP + (1 - (y - y0) / (y1 - y0 || 1)) * (H - TOP - BOTTOM);
+  const ticks = [0, 1, 2, 3].map((i) => y0 + ((y1 - y0) * i) / 3);
+  // Each line's name at its end, nudged apart where lines end close together.
+  const ends = (ys ?? [])
+    .map((row, li) => ({ li, y: [...row].reverse().find((v) => v !== null) }))
+    .filter((e): e is { li: number; y: number } => e.y !== undefined && e.y !== null)
+    .map((e) => ({ li: e.li, at: py(e.y) }))
+    .sort((a, b) => a.at - b.at);
+  for (let i = 1; i < ends.length; i++) ends[i].at = Math.max(ends[i].at, ends[i - 1].at + 16);
+
+  return (
+    <>
       <div className="sweep-legend small">
-        {lines.map((l, i) => (
-          <span key={l.id}>
-            <i className="sweep-swatch" style={{ background: `var(--series-${(i % 8) + 1})` }} /> {l.name}
+        {names.map((n, i) => (
+          <span key={n + i}>
+            <i className="sweep-swatch" style={{ background: `var(--series-${(i % 8) + 1})` }} /> {n}
           </span>
         ))}
       </div>
@@ -103,13 +122,13 @@ export function SweepChart({ ws, lines, inputs, title }: { ws: Workspace; lines:
         viewBox={`0 0 ${W} ${H}`}
         className="sweep-plot"
         role="img"
-        aria-label={`${title} for each option as ${inputName} goes from ${valueText(from)} to ${valueText(to)}`}
+        aria-label={label}
         onMouseLeave={() => setHover(null)}
         onMouseMove={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           const x = ((e.clientX - r.left) / r.width) * W;
-          const i = Math.round(((x - LEFT) / (W - LEFT - RIGHT)) * STEPS);
-          setHover(i >= 0 && i <= STEPS ? i : null);
+          const i = Math.round(((x - LEFT) / (W - LEFT - RIGHT)) * last);
+          setHover(i >= 0 && i <= last ? i : null);
         }}
       >
         {ticks.map((t, i) => (
@@ -120,19 +139,19 @@ export function SweepChart({ ws, lines, inputs, title }: { ws: Workspace; lines:
             </text>
           </g>
         ))}
-        {[0, STEPS / 2, STEPS].map((i) => (
-          <text key={i} x={px(xs[i])} y={H - 10} textAnchor={i === 0 ? "start" : i === STEPS ? "end" : "middle"} className="sweep-tick">
+        {[...new Set([0, Math.round(last / 2), last])].map((i) => (
+          <text key={i} x={px(xs[i])} y={H - 10} textAnchor={i === 0 ? "start" : i === last ? "end" : "middle"} className="sweep-tick">
             {valueText(+xs[i].toPrecision(3))}
           </text>
         ))}
         {ys?.map((row, li) => {
           const pts = row.map((y, i) => (y === null ? null : `${px(xs[i])},${py(y)}`));
           const d = pts.reduce<string>((acc, p, i) => (p === null ? acc : `${acc}${i === 0 || pts[i - 1] === null ? "M" : "L"}${p}`), "");
-          return <path key={lines[li].id} d={d} fill="none" stroke={`var(--series-${(li % 8) + 1})`} strokeWidth={2} strokeLinejoin="round" />;
+          return <path key={names[li]} d={d} fill="none" stroke={`var(--series-${(li % 8) + 1})`} strokeWidth={2} strokeLinejoin="round" />;
         })}
         {ends.map((e) => (
           <text key={e.li} x={W - RIGHT + 6} y={e.at + 4} className="sweep-label">
-            {lines[e.li].name}
+            {names[e.li]}
           </text>
         ))}
         {hover !== null && ys && (
@@ -146,17 +165,15 @@ export function SweepChart({ ws, lines, inputs, title }: { ws: Workspace; lines:
       {hover !== null && ys && (
         <div className="sweep-tip small">
           <b>
-            {inputName} {valueText(+xs[hover].toPrecision(4))}
+            {xName} {valueText(+xs[hover].toPrecision(4))}
           </b>
-          {lines.map((l, li) => (
-            <span key={l.id}>
-              <i className="sweep-swatch" style={{ background: `var(--series-${(li % 8) + 1})` }} /> {l.name} {ys[li]?.[hover] === null || ys[li]?.[hover] === undefined ? "–" : valueText(+ys[li][hover]!.toFixed(2))}
+          {names.map((n, li) => (
+            <span key={n + li}>
+              <i className="sweep-swatch" style={{ background: `var(--series-${(li % 8) + 1})` }} /> {n} {ys[li]?.[hover] === null || ys[li]?.[hover] === undefined ? "–" : valueText(+ys[li][hover]!.toFixed(2))}
             </span>
           ))}
         </div>
       )}
-      {ys === null && <div className="muted small">Working it out…</div>}
-      {ys !== null && !all.length && <div className="muted small">Nothing here changes with {inputName}, or it still depends on a choice.</div>}
-    </div>
+    </>
   );
 }

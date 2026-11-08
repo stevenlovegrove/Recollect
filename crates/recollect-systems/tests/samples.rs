@@ -131,7 +131,10 @@ fn compound_interest_and_fibonacci_reach_their_known_values() {
     // A table's own column, worked out row by row from the one before.
     let column = |o: &Opened, row: &str, c: &str| -> Value { o.g().get_runtime(o.id(row), c).unwrap().unwrap_or_else(|| panic!("{row} has no {c}")).value };
     let o = open("compound-interest");
-    assert!((column(&o, "Year[10]", "balance").as_f64().unwrap() - 1628.894626777442).abs() < 1e-6, "{}", column(&o, "Year[10]", "balance"));
+    // With the top-up in year 5 still open, the last year is one of two balances.
+    let last: Vec<f64> = serde_json::from_value::<recollect_graph::worlds::Worldly<Val>>(column(&o, "Year[10]", "balance")).unwrap().0.cases().iter().map(|(_, v)| if let Val::Num(n) = v { *n } else { panic!("{v:?}") }).collect();
+    let (lo, hi) = (last.iter().copied().fold(f64::MAX, f64::min), last.iter().copied().fold(f64::MIN, f64::max));
+    assert!((lo - 1628.894626777442).abs() < 1e-6 && (hi - lo - 500.0 * 1.05f64.powi(5)).abs() < 1e-6, "{last:?}");
     let o = open("fibonacci");
     assert_eq!(column(&o, "F[80]", "f").as_f64().unwrap(), 23416728348467685.0);
     assert_eq!(o.g().take_ran().iter().filter(|(_, c)| c == "f").count(), 79);

@@ -25,8 +25,8 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "critical-path", title: "Critical path", about: "A plain schedule with no decisions: dates go forward over the dependencies, and slack comes from following them backward.", group: "plan", systems: &["plan", "schedule"], build: critical_path },
     Sample { name: "invoice", title: "Invoice", about: "Two lines, a subtotal, tax and a total. Edit a number and only what it reaches reruns.", group: "sheet", systems: &[], build: invoice },
     Sample { name: "trip-budget", title: "Trip budget", about: "A budget with decisions left open: the total is exact in every world, and so is what would put it over.", group: "sheet", systems: &["plan"], build: trip_budget },
-    Sample { name: "choosing-a-car", title: "Choosing a car", about: "Petrol and electric cars, what each costs a year over mileage you can only guess at, and which can get to Edinburgh without stopping. A kind says what a mile costs, so a car only says its mpg.", group: "sheet", systems: &["plan"], build: choosing_a_car },
-    Sample { name: "compound-interest", title: "Compound interest", about: "A table of years. One formula on Year works out each from the year before, and Year[0] says where it starts.", group: "sheet", systems: &[], build: compound_interest },
+    Sample { name: "choosing-a-car", title: "Choosing a car", about: "Petrol and electric cars as tables: what every car has, and what only petrol or electric cars have. What each costs a year over mileage you can only guess at, and which can get to Edinburgh without stopping.", group: "sheet", systems: &["plan"], build: choosing_a_car },
+    Sample { name: "compound-interest", title: "Compound interest", about: "A table of years. One formula on Year works out each from the year before, Year[0] says where it starts, and a top-up you might make in year 5 changes only the years after it.", group: "sheet", systems: &["plan"], build: compound_interest },
     Sample { name: "fibonacci", title: "Fibonacci", about: "A table where each row adds the two before it: prev.f + prev.prev.f. Cells that are shared run once, so 80 terms take 79 formula runs.", group: "sheet", systems: &[], build: fibonacci },
     Sample { name: "australia", title: "Colouring Australia", about: "Each region is a choice and each border a constraint. There are 18 colourings. Pin a region and see what that forces.", group: "puzzle", systems: &[], build: australia },
     Sample { name: "eight-queens", title: "Eight queens", about: "One choice per row, and one constraint per pair of rows. There are 92 boards.", group: "puzzle", systems: &[], build: eight_queens },
@@ -185,6 +185,10 @@ fn choosing_a_car(b: &mut Build) {
     for cell in ["price", "cost_per_mile", "insurance", "range"] {
         b.formula_on("Which car?", cell, &format!("pick(o in in.alternative: o.{cell})"));
     }
+    // Three tables. Every car has a price, insurance and a range, so those are Car's. Only petrol cars
+    // have an mpg, and only electric ones a kWh a mile. Petrol car[Hatchback] and Car[Hatchback] are two
+    // parts of one car, and each reads what the other says.
+    b.link("Petrol car", "Car", IsA).link("Electric car", "Car", IsA);
     let cars: [(&str, &str, &str, f64, f64, f64, f64); 4] = [
         ("Hatchback", "Petrol car", "mpg", 52.0, 18000.0, 500.0, 550.0),
         ("Estate", "Petrol car", "mpg", 44.0, 24000.0, 550.0, 600.0),
@@ -193,8 +197,10 @@ fn choosing_a_car(b: &mut Build) {
         ("Hybrid", "Petrol car", "cost_per_mile", 0.09, 26000.0, 550.0, 650.0),
     ];
     for (car, kind, cell, v, price, insurance, range) in cars {
-        b.put(car, cell, json!(v)).put(car, "price", json!(price)).put(car, "insurance", json!(insurance)).put(car, "range", json!(range));
-        b.link(car, kind, IsA).link(car, "Which car?", Alternative::default());
+        let row = format!("Car[{car}]");
+        b.put(&row, "price", json!(price)).put(&row, "insurance", json!(insurance)).put(&row, "range", json!(range));
+        b.link(&row, "Which car?", Alternative::default());
+        b.put(&format!("{kind}[{car}]"), cell, json!(v));
     }
     // Losing 15% of its value each year it's kept, running it, and insuring it.
     b.formula("Yearly cost", "car.price * (1 - 0.85 ^ years) / years + miles * car.cost_per_mile + car.insurance");
@@ -212,6 +218,13 @@ fn compound_interest(b: &mut Build) {
     for i in 1..=10 {
         b.e(&format!("Year[{i}]"));
     }
+    // A choice five years in: the years before it have one balance, and the years after have one for each answer.
+    b.set("Top up in year 5?", Decision::default()).formula("Top up in year 5?", "pick(in.alternative)");
+    for (option, amount) in [("No top-up", 0.0), ("Add 500", 500.0)] {
+        b.set(option, ValueCell::num(amount)).link(option, "Top up in year 5?", Alternative::default());
+    }
+    b.formula_on("Year[5]", "balance", "prev.balance * (1 + rate) + top_up");
+    b.label("Year[5]", "Rate", "rate").label("Year[5]", "Top up in year 5?", "top_up");
 }
 
 fn fibonacci(b: &mut Build) {

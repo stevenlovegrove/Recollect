@@ -16,7 +16,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import ELK from "elkjs/lib/elk.bundled.js";
-import type { GraphNode } from "../api";
+import type { GraphNode, Link } from "../api";
 import type { Workspace } from "../workspace";
 import { GLYPH, compColor, dominant, factsOf, isDropped, isNote, label as labelOf, nodeColor } from "../theme";
 import { Brackets, CompBadges, casesOf, cellText, edgeKey, parseEdgeKey, reading, truthWords } from "../bits";
@@ -57,6 +57,7 @@ type CardData = {
   lines: { name: string; text: string; full: string; trivial: boolean }[];
   /** The names of what it's a kind of. */
   kinds: string[];
+  title: string;
 };
 
 function Card({ data }: NodeProps<RFNode<CardData>>) {
@@ -77,7 +78,9 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
         ))}
         {isNote(node) && !kinds.length && <span className="muted small">note</span>}
       </div>
-      <div className="card-title">{node.name}</div>
+      <div className="card-title" title={node.name}>
+        {data.title}
+      </div>
       {lines.map((l) => (
         <div key={l.name} className={`card-foot ${l.trivial ? "trivial" : ""}`}>
           <span className="card-foot-k" title={`${labelOf(l.name)}: ${l.full}`}>{labelOf(l.name)}</span> <span className="card-foot-v"><Brackets text={l.text} /></span>
@@ -307,6 +310,33 @@ function LinkMenu({ ws, drop, onSwap, onDone }: { ws: Workspace; drop: LinkDrop;
 
 function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { active: boolean; onContext: (t: CtxTarget) => void }) {
   const g = ws.view!;
+  // Rows of related tables with one key are one thing, so they're one card: the part made first stands for
+  // the rest, and their links are its.
+  const standsFor = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const n of g.nodes) if (n.parts?.length) m.set(n.id, [n.id, ...n.parts].sort()[0]);
+    return m;
+  }, [g.nodes]);
+  const rep = (id: string) => standsFor.get(id) ?? id;
+  // What the map draws: links between cards, and what a row's formula reads as `prev` or `next`, which no
+  // link says. Each keeps the key of the link it came from.
+  const links = useMemo(() => {
+    const at = (id: string) => standsFor.get(id) ?? id;
+    const out: (Link & { key: string })[] = [];
+    for (const l of g.links) if (at(l.from) !== at(l.to)) out.push({ ...l, from: at(l.from), to: at(l.to), key: edgeKey(l) });
+    const rows = new Map(g.nodes.flatMap((n) => (n.row ? [[`${n.row.table}|${n.row.key}`, n.id] as const] : [])));
+    for (const n of g.nodes) {
+      if (typeof n.row?.key !== "number") continue;
+      const along = new Set<number>();
+      for (const c of Object.values(n.cells))
+        for (const m of (c.formula ?? "").matchAll(/\b(?:prev|next)(?:\.(?:prev|next))*\b/g)) along.add(m[0].split(".").reduce((t, w) => t + (w === "prev" ? -1 : 1), 0));
+      for (const by of along) {
+        const to = rows.get(`${n.row.table}|${n.row.key + by}`);
+        if (to) out.push({ from: at(n.id), to: at(to), kind: "label", value: by < 0 ? "prev" : "next", key: `e:${n.id}|along${by}|${to}` });
+      }
+    }
+    return out;
+  }, [g.nodes, g.links, standsFor]);
   const [hiddenFacts, setHiddenFacts] = useState<Set<Filter>>(new Set());
   const [hiddenRels, setHiddenRels] = useState<Set<string>>(new Set());
   const [layoutPref, setLayoutPrefState] = useState<LayoutPref>(() => loadLayoutPref(g.workspace.dir));
@@ -601,9 +631,9 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
   // puzzle every link is a label, so each name can be shown or hidden.
   const rels = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const e of g.links) counts.set(relOf(e), (counts.get(relOf(e)) ?? 0) + 1);
+    for (const e of links) counts.set(relOf(e), (counts.get(relOf(e)) ?? 0) + 1);
     return [...counts].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [g.links]);
+  }, [links]);
   // A system says which links shape a map, and you can say otherwise.
   const shapes = useCallback(
     (rel: string) => layoutPref.layoutBy[rel] ?? (rel.startsWith(LABEL_REL) ? ws.arranging.includes("label") : !!(ws.arranging.includes(rel) || ws.info(rel)?.orders)),
@@ -615,13 +645,13 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
 
   // A node is shown if any of its facts (or "none") is enabled.
   const visible = useMemo(() => {
-    let ids = new Set(g.nodes.filter((n) => (showDead || !isDropped(n)) && factsFor(n).some((c) => !hiddenFacts.has(c))).map((n) => n.id));
+    let ids = new Set(g.nodes.filter((n) => !standsFor.has(n.id) || standsFor.get(n.id) === n.id).filter((n) => (showDead || !isDropped(n)) && factsFor(n).some((c) => !hiddenFacts.has(c))).map((n) => n.id));
     if (focus > 0 && selectedNode && ids.has(selectedNode)) {
       const near = new Set([selectedNode]);
       let frontier = [selectedNode];
       for (let d = 0; d < focus; d++) {
         const next: string[] = [];
-        for (const e of g.links)
+        for (const e of links)
           for (const [a, b] of [
             [e.from, e.to],
             [e.to, e.from],
@@ -635,7 +665,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
       ids = near;
     }
     return ids;
-  }, [g.nodes, g.links, hiddenFacts, showDead, focus, selectedNode]);
+  }, [g.nodes, links, standsFor, hiddenFacts, showDead, focus, selectedNode]);
 
   const q = query.trim().toLowerCase();
   const matches = (n: GraphNode) => !q || `${n.id} ${n.name}`.toLowerCase().includes(q);
@@ -677,20 +707,20 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
   const layoutEdges = useMemo(() => {
     const seen = new Set<string>();
     // A link's other kinds decide for it, so a label on a `part_of` doesn't pull it the other way.
-    const others = new Set(g.links.filter((e) => e.kind !== "label" && shapes(relOf(e))).map((e) => `${e.from}|${e.to}`));
+    const others = new Set(links.filter((e) => e.kind !== "label" && shapes(relOf(e))).map((e) => `${e.from}|${e.to}`));
     // A formula taken from a kind reads what the kind labels, so that goes beneath the node it runs for too.
     const taken = g.nodes.flatMap((n) =>
       [...new Set(Object.values(n.cells).filter((c) => !c.own && c.kind && c.formula).map((c) => c.kind!))].flatMap((k) =>
-        g.links.filter((l) => l.from === k && l.kind === "label").map((l) => ({ ...l, from: n.id })),
+        links.filter((l) => l.from === k && l.kind === "label").map((l) => ({ ...l, from: rep(n.id) })),
       ),
     );
-    return [...g.links, ...taken].filter((e) => {
+    return [...links, ...taken].filter((e) => {
       const key = `${e.from}|${e.to}`;
       if (!shapes(relOf(e)) || !visible.has(e.from) || !visible.has(e.to) || seen.has(key) || (e.kind === "label" && others.has(key))) return false;
       seen.add(key);
       return true;
     });
-  }, [g.nodes, g.links, shapes, visible]);
+  }, [g.nodes, links, shapes, visible]); // eslint-disable-line react-hooks/exhaustive-deps
   const layoutLinks = layoutEdges;
   const structureKey = useMemo(
     () =>
@@ -762,7 +792,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
           if (was) start.set(id, was);
           else {
             entering.current.add(id);
-            const nb = g.links.find((e) => (e.from === id && from.has(e.to)) || (e.to === id && from.has(e.from)));
+            const nb = links.find((e) => (e.from === id && from.has(e.to)) || (e.to === id && from.has(e.from)));
             start.set(id, (nb && from.get(nb.from === id ? nb.to : nb.from)) || target.get(id)!);
           }
         }
@@ -851,11 +881,14 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
               leaving: gone,
               linking: id === linkDrag?.from || id === linkDrag?.over,
               out: !!reading(node.cells.need)?.never,
-              lines: summaryLines(node),
+              lines: [node, ...(node.parts ?? []).flatMap((p) => ws.byId.get(p) ?? [])].flatMap(summaryLines).filter((l, i, all) => all.findIndex((x) => x.name === l.name) === i),
+              // A row is called by its key, under the tables it's in.
+              title: node.row ? String(node.row.key) : node.name,
               kinds: [
+                ...[node, ...(node.parts ?? []).flatMap((p) => ws.byId.get(p) ?? [])].flatMap((n) => (n.row ? [n.row.table] : [])),
                 ...ws.view!.links.filter((l) => l.from === id && l.kind === "is_a").map((l) => ws.byId.get(l.to)?.name ?? ""),
-                // Something other things are a kind of says so, since that's what it's for.
-                ...(ws.view!.links.some((l) => l.to === id && l.kind === "is_a") ? ["kind"] : []),
+                // Something other things are a kind of, or a table something's a row of, says so.
+                ...(ws.view!.links.some((l) => l.to === id && l.kind === "is_a") || (!node.row && ws.view!.nodes.some((n) => n.row?.table === node.name)) ? ["kind"] : []),
               ],
             },
           };
@@ -866,10 +899,10 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
 
   const rfEdges: RFEdge[] = useMemo(
     () =>
-      g.links
+      links
         .filter((e) => visible.has(e.from) && visible.has(e.to) && !hiddenRels.has(relOf(e)))
         .map((e) => {
-          const key = edgeKey(e);
+          const key = e.key;
           const isSel = key === selected;
           const hot = isSel || selected === e.from || selected === e.to;
           const arranges = ws.arranging.includes(e.kind);
@@ -887,7 +920,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
             zIndex: hot ? 10 : 0,
           };
         }),
-    [g.links, ws.arranging, ws.ends, visible, hiddenRels, selected],
+    [links, ws.arranging, ws.ends, visible, hiddenRels, selected],
   );
 
   const shownCount = present.filter(([f]) => !hiddenFacts.has(f)).length;

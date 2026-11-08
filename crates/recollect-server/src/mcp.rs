@@ -39,7 +39,10 @@ takes what it doesn't say from the node named `Year` or `Car`, as from a kind, w
 `prev.balance` for the row before (`next`, `prev.prev`, `row` for which row this is, and `rows` for all of them), so a recurrence is \
 one formula on the table and a starting value on the first row. If Petrol car `is_a` Car, then `Petrol car[Hatchback]` and \
 `Car[Hatchback]` are parts of one car: put what every car has on the Car row and what only petrol cars have on the Petrol car row. \
-A table's columns are cells of the workspace's own, such as `balance`, since `value` belongs to the formulas system.\n\
+A table's columns are cells of the workspace's own, such as `balance`, since `value` belongs to the formulas system. \
+Write a whole table with one op: `{\"op\": \"table\", \"name\": \"Year\", \"columns\": {\"balance\": {\"formula\": \"prev.balance * (1 + rate)\", \
+\"labels\": {\"rate\": \"Rate\"}}}, \"range\": [0, 10], \"rows\": [{\"key\": 0, \"balance\": 1000}]}`, with `is_a` for a table that's a kind of \
+another and `alternative_of` to make every row an option of a decision.\n\
 \n\
 Values that depend on open decisions are exact: each is the set of worlds where it holds, shown as a formula such as `calib∈{cad,free}`. \
 A world is one way every open choice could land. Tools that take a `world` read everything as it would be with those choices pinned, \

@@ -781,7 +781,7 @@ async fn held_out_tables_of_cars_and_years() {
     let c = Client::new();
     let dir = tempfile::tempdir().unwrap();
     c.post("/api/workspaces/new", json!({ "path": dir.path().join("tables"), "name": "Tables", "systems": ["plan"] })).await;
-    let done = c.post("/api/ops", json!({ "ops": [
+    c.post("/api/ops", json!({ "ops": [
         { "op": "add_node", "id": "new:fuel", "name": "Fuel price", "components": { "value": 1.45 } },
         { "op": "add_node", "id": "new:which", "name": "Which car?", "components": { "decision": {} } },
         { "op": "set", "id": "new:which", "component": "cost_per_mile", "formula": "pick(o in in.alternative: o.cost_per_mile)" },

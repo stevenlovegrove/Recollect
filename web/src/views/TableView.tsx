@@ -6,9 +6,42 @@ import { entryText, parseEntry } from "../cellEntry";
 import { entryOp, holdsFormula } from "../Inspector";
 import { DdItem, Dropdown } from "../Dropdown";
 import { label, nodeColor } from "../theme";
+import { TableGrid, tablesIn } from "./TableGrid";
 
-/** Rows are nodes and columns are components, as they really are. Typed-in numbers edit in place. */
-export function TableView({ ws, selected, onSelect }: ViewProps) {
+/**
+ * Rows are nodes and columns are components, as they really are. Typed-in numbers edit in place. A table a
+ * workspace's names make can be shown on its own, as a grid of its rows.
+ */
+export function TableView(props: ViewProps) {
+  const g = props.ws.view!;
+  const tables = useMemo(() => tablesIn(g.nodes), [g.nodes]);
+  const [showing, setShowing] = useState<string>("");
+  const table = tables.includes(showing) ? showing : "";
+  const pick = tables.length > 0 && (
+    <select className="small" value={table} onChange={(e) => setShowing(e.target.value)} aria-label="Which table">
+      <option value="">Every node</option>
+      {tables.map((t) => (
+        <option key={t} value={t}>
+          {t}
+        </option>
+      ))}
+    </select>
+  );
+  if (table) {
+    return (
+      <div className="scroll pad">
+        <div className="map-toolbar flat">
+          {pick}
+          <span className="muted">Faded cells are taken from the table, or from another part of the same thing. Typing in one says it for that row alone.</span>
+        </div>
+        <TableGrid {...props} table={table} />
+      </div>
+    );
+  }
+  return <EveryNode {...props} pick={pick} />;
+}
+
+function EveryNode({ ws, selected, onSelect, pick }: ViewProps & { pick: React.ReactNode }) {
   const g = ws.view!;
   const all = useMemo(() => {
     const present = new Set(g.nodes.flatMap((n) => Object.keys(n.cells)));
@@ -34,6 +67,7 @@ export function TableView({ ws, selected, onSelect }: ViewProps) {
   return (
     <div className="scroll pad">
       <div className="map-toolbar flat">
+        {pick}
         <Dropdown label={<>Columns {columns.length}/{all.length}</>}>
           {all.map((c) => (
             <DdItem key={c} checked={columns.includes(c)} onChange={() => toggle(c)} title={ws.info(c)?.about}>
@@ -73,14 +107,15 @@ export function TableView({ ws, selected, onSelect }: ViewProps) {
   );
 }
 
-function TableCell({ ws, node, c, cell }: { ws: ViewProps["ws"]; node: GraphNode; c: string; cell: Cell | undefined }) {
+/** `written` shows a formula as it's written rather than what it comes to, as a table's own row does. */
+export function TableCell({ ws, node, c, cell, written }: { ws: ViewProps["ws"]; node: GraphNode; c: string; cell: Cell | undefined; written?: boolean }) {
   if (!cell) return null;
   const nameOf = (s: string) => ws.byId.get(s)?.name ?? s;
   const r = reading(cell);
   // What can hold a formula is typed into, as in a spreadsheet, unless it comes from a rule of the column's.
   if (holdsFormula(ws, c) && (cell.source === "stored" || cell.formula !== undefined)) {
     const words = r && truthWords(c, r);
-    const shown = cell.error ? "#ERROR" : !words ? cellText(cell, nameOf) : "fixed" in words ? words.fixed : `${words.lead} ${r!.when}`;
+    const shown = written && cell.formula !== undefined ? `=${cell.formula}` : cell.error ? "#ERROR" : !words ? cellText(cell, nameOf) : "fixed" in words ? words.fixed : `${words.lead} ${r!.when}`;
     return <EntryCell key={`${cell.formula}|${JSON.stringify(cell.value)}|${shown}`} ws={ws} node={node} c={c} cell={cell} shown={shown} />;
   }
   if (cell.error) return <span title={cell.error}>#ERROR</span>;

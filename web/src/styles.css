@@ -2849,3 +2849,27 @@ tr.pruned {
   font-size: 26px;
 }
 
+
+/* A table's grid: the top row is what every row takes, and what a row takes rather than says is faded. */
+.table-grid .table-head-row td {
+  background: var(--panel-2, var(--panel));
+  border-bottom: 2px solid var(--border);
+}
+.table-grid .table-head-row .sheet-name {
+  font-style: italic;
+}
+.table-grid td.taken {
+  opacity: 0.55;
+}
+.table-new {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0 18px;
+}
+.table-new input {
+  width: 9em;
+}
+.table-chart {
+  max-width: 720px;
+}

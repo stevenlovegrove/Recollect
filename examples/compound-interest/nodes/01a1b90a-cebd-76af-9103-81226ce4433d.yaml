@@ -1,0 +1,8 @@
+id: 01a1b90a-cebd-76af-9103-81226ce4433d
+components:
+  name: No top-up
+  value: 0.0
+links:
+- to: 01a1b90a-cebd-76af-9103-8121f8c22463
+  components:
+    alternative: {}
