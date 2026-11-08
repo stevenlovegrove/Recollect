@@ -256,6 +256,41 @@ async fn the_zebra_puzzle_comes_back_solved() {
     assert_eq!(v["worlds"]["vars"].as_array().unwrap().len(), 25);
 }
 
+/// The case file: how likely each suspect is once the evidence has ruled worlds out, and which of the
+/// things in doubt is most worth finding out. The numbers are worked out by hand in the comments.
+#[tokio::test]
+async fn the_case_file_says_who_it_probably_was_and_what_to_find_out() {
+    let c = Client::new();
+    c.open("case-file").await;
+    let v = c.view(json!({})).await;
+    let var = |v: &Value, name: &str| v["worlds"]["vars"].as_array().unwrap().iter().find(|x| x["name"] == name).unwrap_or_else(|| panic!("no {name}")).clone();
+    let chance = |v: &Value, option: &str| {
+        let who = var(v, "Who took it?");
+        who["options"].as_array().unwrap().iter().find(|o| o["name"] == format!("Suspect[{option}]")).unwrap()["chance"].as_f64().unwrap()
+    };
+    // Of all the weight (9 for who, times the accounts'), the evidence leaves Tom half of his: he's ruled
+    // out only if he left at 9:40 (3/4) and cycled (2/3). Pryce is left only if he drove, Clara only if she went out.
+    // Tom 3·1/2, Pryce 3·1/4, Clara 2·1/3, someone else 1, over their total.
+    let total = 1.5 + 0.75 + 2.0 / 3.0 + 1.0;
+    for (who, w) in [("Tom", 1.5), ("Mr Pryce", 0.75), ("Clara", 2.0 / 3.0), ("Someone else", 1.0)] {
+        assert!((chance(&v, who) - w / total).abs() < 1e-9, "{who}: {} not {}", chance(&v, who), w / total);
+    }
+    let who = var(&v, "Who took it?");
+    assert!((who["sure"].as_f64().unwrap() - 1.5 / total).abs() < 1e-9, "Tom is likeliest");
+    // How Mr Pryce got home settles most: if he drove he's likeliest, and if not he's out.
+    let first = &who["clues"][0];
+    assert_eq!(first["var"], var(&v, "How did Mr Pryce get home?")["id"]);
+    assert!((first["sure"].as_f64().unwrap() - 0.479).abs() < 0.001, "{first}");
+
+    // Find out he was on the train, and he's out of it.
+    let pryce = var(&v, "How did Mr Pryce get home?");
+    let train = pryce["options"].as_array().unwrap().iter().find(|o| o["name"].as_str().unwrap().starts_with("On the 9:20")).unwrap()["id"].clone();
+    let v = c.view(json!({ pryce["id"].as_str().unwrap(): train })).await;
+    assert_eq!(chance(&v, "Mr Pryce"), 0.0);
+    assert!((chance(&v, "Tom") - 0.47).abs() < 0.01);
+    assert!(var(&v, "How did Mr Pryce get home?")["clues"].as_array().is_none_or(|c| c.is_empty()), "what's pinned isn't a question any more");
+}
+
 #[tokio::test]
 async fn the_plan_answers_where_work_stands_and_what_decisions_need() {
     let c = Client::new();

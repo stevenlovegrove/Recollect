@@ -1,0 +1,14 @@
+id: 01a1b9e4-a886-77bd-8ae3-1e319030b8e5
+components:
+  decision: {}
+  name: Who took it?
+  uncertain: null
+rules:
+  arrives:
+    rule: expr@1
+    params:
+      text: 'pick(o in in.alternative: o.arrives)'
+  from_garden:
+    rule: expr@1
+    params:
+      text: 'pick(o in in.alternative: o.from_garden)'

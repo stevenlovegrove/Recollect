@@ -1,8 +1,0 @@
-id: 01a1b9b9-240e-7476-b349-12bef4bacbc1
-components:
-  name: The thief is one of the liars
-rules:
-  value:
-    rule: expr@1
-    params:
-      text: 'all(s in Suspect.rows: s != "thief" || !Says[s.row])'

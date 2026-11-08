@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use recollect_graph::{Component, Entity, Name, Op, Storage};
 use serde_json::{Value, json};
 
+use crate::expr::Val;
 use crate::formulas::{At, Domain, EXPR, IsA, Label, Requires, Uncertain, ValueCell};
 use crate::notes::{Body, Drawing};
 use crate::plan::{Alternative, Decision, DependsOn, Done, Estimate, Goal, PartOf, Task, Unknown};
@@ -32,13 +33,12 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "eight-queens", title: "Eight queens", about: "A table with a row for each row of the board, choosing the column its queen is in. One formula on the table says no two share a column or a diagonal. There are 92 boards.", group: "puzzle", systems: &[], build: eight_queens },
     Sample { name: "sudoku", title: "4×4 sudoku", about: "A table of sixteen cells, each choosing a number, and a clue for each row, column and box: distinct(Cell[A1], Cell[A2], …). There are 288 grids.", group: "puzzle", systems: &[], build: sudoku },
     Sample { name: "knights-and-knaves", title: "Knights and knaves", about: "A says “we are both knaves”. Knights always tell the truth, and knaves always lie.", group: "puzzle", systems: &[], build: knights_and_knaves },
-    Sample { name: "necklace", title: "Who took the necklace?", about: "Five suspects, and a thing each of them said. Exactly one took it, two of them are lying, and the thief is one of the liars. Each statement is a formula, so “Dee is lying” is !Says[Dee], and the clues are about whole tables: count(s in Says.rows: !s) = 2.", group: "puzzle", systems: &[], build: necklace },
-    Sample { name: "gallery", title: "The night of the theft", about: "Five visitors came to a gallery one evening, each on the hour, and the painting went at half past nine, when only one of them was there. When did each come and go, and who took it? Two tables, Arrived and Left, and four clues.", group: "puzzle", systems: &[], build: gallery },
+    Sample { name: "case-file", title: "The Vane watch", about: "A case file. A watch went from Rosalind Vane's study one evening, and there are three people it could have been, or someone nobody has thought of. Each account is a node saying who gave it, with how far it's believed, and when each suspect could have reached the house is worked out from those. The Worlds tab gives how likely each suspect is, and what's most worth finding out next. Pin what you learn.", group: "reasoning", systems: &["plan"], build: case_file },
     Sample { name: "zebra", title: "The zebra puzzle", about: "Who owns the zebra, and who drinks water? A table for each kind of thing, whose rows choose a house, and the clues written as they read: Nationality[English] = Colour[Red]. About 3 × 10¹⁷ combinations, and the clues leave exactly one.", group: "puzzle", systems: &[], build: zebra },
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "7";
+pub const FORMAT: &str = "8";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -382,39 +382,87 @@ fn zebra(b: &mut Build) {
     }
 }
 
-fn necklace(b: &mut Build) {
-    let mut p = Puzzle::new(b, "What happened");
-    let names = ["Ava", "Ben", "Cy", "Dee", "Eli"];
-    p.table("Suspect", &["innocent", "thief"], &names);
-    // What each said, as a formula that's true exactly when it is.
-    let said = [
-        ("Ava", "“It was me or Cy.”", r#"Suspect[Ava] = "thief" || Suspect[Cy] = "thief""#),
-        ("Ben", "“Dee took it.”", r#"Suspect[Dee] = "thief""#),
-        ("Cy", "“Dee is lying.”", "!Says[Dee]"),
-        ("Dee", "“It wasn't Eli.”", r#"Suspect[Eli] != "thief""#),
-        ("Eli", "“Cy took it.”", r#"Suspect[Cy] = "thief""#),
-    ];
-    for (who, quote, text) in said {
-        let row = format!("Says[{who}]");
-        p.b.formula(&row, text).set(&row, Body(quote.to_string()));
-    }
-    p.clue("Exactly one of them took it", r#"count(s in Suspect.rows: s = "thief") = 1"#);
-    p.clue("Two of them are lying", "count(s in Says.rows: !s) = 2");
-    p.clue("The thief is one of the liars", r#"all(s in Suspect.rows: s != "thief" || !Says[s.row])"#);
-}
+fn case_file(b: &mut Build) {
+    let note = |b: &mut Build, name: &str, text: &str| {
+        b.set(name, Body(text.to_string()));
+    };
+    note(
+        b,
+        "The case",
+        "Saturday evening at Rosalind Vane's house. Her late husband's gold watch was in a locked case in the study. Clara saw it there at 9:00. Rosalind found the case open and the watch gone at 10:15. Times here are minutes past nine, so 9:40 is 40.",
+    );
 
-fn gallery(b: &mut Build) {
-    let mut p = Puzzle::new(b, "What happened");
-    let names = ["Iris", "Jonah", "Kit", "Lena", "Marco"];
-    p.table("Arrived", &["7", "8", "9", "10", "11"], &names);
-    p.table("Left", &["8", "9", "10", "11", "12"], &names);
-    p.rule("Arrived", "No two arrived at the same hour", "distinct(rows)");
-    p.rule("Left", "Everyone left after they arrived", "all(v in rows: v > Arrived[v.row])");
-    p.clue("Only one of them was there at half past nine, when the painting went", "count(v in Arrived.rows: v < 9.5 && Left[v.row] > 9.5) = 1");
-    p.clue("Lena arrived just as Kit left", "Arrived[Lena] = Left[Kit]");
-    p.clue("Iris stayed three hours", "Left[Iris] - Arrived[Iris] = 3");
-    p.clue("Marco had gone before Lena arrived", "Left[Marco] <= Arrived[Lena]");
-    p.clue("Marco stayed two hours", "Left[Marco] - Arrived[Marco] = 2");
+    // Something nobody chose: it happened one way, and these are how likely each seemed before the evidence.
+    let who = "Who took it?";
+    b.set(who, Decision::default()).set(who, Uncertain);
+    for cell in ["arrives", "from_garden"] {
+        b.formula_on(who, cell, &format!("pick(o in in.alternative: o.{cell})"));
+    }
+    let suspects: [(&str, f64, &str); 4] = [
+        ("Tom", 3.0, "Rosalind's nephew. He owes money, and he knew where the key to the case was kept."),
+        ("Mr Pryce", 3.0, "The neighbour. He collects watches, and offered to buy this one in May. She said no."),
+        ("Clara", 2.0, "The housekeeper. She has a key to the study, and was in the house all evening."),
+        ("Someone else", 1.0, "Someone nobody has thought of yet."),
+    ];
+    for (name, weight, about) in suspects {
+        let row = format!("Suspect[{name}]");
+        b.set(&row, Body(about.to_string())).link(&row, who, Alternative { weight: Some(weight), ..Alternative::default() });
+    }
+    b.set("Suspect[Someone else]", Unknown);
+
+    // What's in doubt, each a decision nobody made, whose options are the accounts.
+    let account = |b: &mut Build, question: &str, options: &[(&str, Val, f64, &str)]| {
+        b.set(question, Decision::default()).set(question, Uncertain).formula(question, "pick(in.alternative)");
+        for (option, value, weight, said) in options {
+            b.set(option, ValueCell::plain(value.clone())).set(option, Body(said.to_string())).link(option, question, Alternative { weight: Some(*weight), ..Alternative::default() });
+        }
+    };
+    account(
+        b,
+        "When did Tom leave the Red Lion?",
+        &[
+            ("At 9:40, as the barman says", Val::Num(40.0), 3.0, "The barman remembers calling time on Tom's tab at twenty to ten."),
+            ("At about 9:10, as Mrs Dale says", Val::Num(10.0), 1.0, "Mrs Dale was at the next table, and thinks he went just after nine. She'd had a few."),
+        ],
+    );
+    account(
+        b,
+        "How did Tom get to the house?",
+        &[
+            ("By bike, 25 minutes", Val::Num(25.0), 2.0, "Tom says his car was at the garage, so he cycled."),
+            ("By car, 10 minutes", Val::Num(10.0), 1.0, "The garage says he collected the car on Friday."),
+        ],
+    );
+    account(
+        b,
+        "How did Mr Pryce get home?",
+        &[
+            ("On the 9:20 train, at the house by 10:10", Val::Num(70.0), 3.0, "He has a ticket for the 9:20 from town. It gets in at 9:55, and the walk from the station is a quarter of an hour."),
+            ("He drove, home by 9:05", Val::Num(5.0), 1.0, "His neighbour on the other side heard a car on the drive just after nine."),
+        ],
+    );
+    account(
+        b,
+        "Did Clara go out into the garden?",
+        &[
+            ("No, as she says", Val::Bool(false), 2.0, "Clara says she was in the kitchen with the radio on all evening."),
+            ("Yes, as the cook thinks", Val::Bool(true), 1.0, "The cook found the back door unbolted at half past nine."),
+        ],
+    );
+
+    // When each could have been at the house, worked out from the accounts.
+    b.formula_on("Suspect[Tom]", "arrives", "left + travel").label("Suspect[Tom]", "When did Tom leave the Red Lion?", "left").label("Suspect[Tom]", "How did Tom get to the house?", "travel");
+    b.formula_on("Suspect[Mr Pryce]", "arrives", "home").label("Suspect[Mr Pryce]", "How did Mr Pryce get home?", "home");
+    b.put("Suspect[Clara]", "arrives", json!(0)).formula_on("Suspect[Clara]", "from_garden", "went_out").label("Suspect[Clara]", "Did Clara go out into the garden?", "went_out");
+    b.put("Suspect[Someone else]", "arrives", json!(0));
+    b.put("Suspect", "from_garden", json!(true));
+
+    // The evidence, which rules out the worlds it doesn't fit.
+    let evidence = |b: &mut Build, name: &str, formula: &str, about: &str| {
+        b.formula(name, formula).set(name, Requires).set(name, Body(about.to_string())).label(name, who, "who");
+    };
+    evidence(b, "Whoever took it was in the house by 10:00", "who.arrives <= 60", "The case was locked at 9:00 and empty at 10:15, and it would take a while to find the key, open it, and get away.");
+    evidence(b, "They came in from the garden", "who.from_garden", "Fresh mud on the study carpet, from the garden door to the case.");
 }
 
 /// The `recollect.toml` for a sample.

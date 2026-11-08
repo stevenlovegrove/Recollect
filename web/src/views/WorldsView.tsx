@@ -148,6 +148,7 @@ export function WorldsView({ ws, onSelect }: ViewProps) {
           {!w.vars.length ? <p className="muted">Every decision here has been made, so there's only one world.</p> : isBoard ? <Board ws={ws} /> : shared ? <Grid ws={ws} /> : <Lists ws={ws} />}
         </>
       )}
+      <WorthFindingOut ws={ws} onSelect={onSelect} />
 
       {g.nodes.some((n) => !above.has(n.id) && shownOf(n).length) && (
         <section className="world-values">
@@ -182,6 +183,12 @@ export function WorldsView({ ws, onSelect }: ViewProps) {
 
 function pinner(ws: ViewProps["ws"], v: VarView, o: OptionView) {
   return () => ws.pin(v.id, o.picked ? null : o.id);
+}
+
+/** An option as it reads: a row of a table by its key, as a map card does, and anything else by its name. */
+function optionName(ws: ViewProps["ws"], o: OptionView): string {
+  const row = ws.byId.get(o.id)?.row;
+  return row ? String(row.key) : o.name;
 }
 
 const onlyLeft = (v: VarView, o: OptionView) => o.possible && !o.picked && v.options.filter((x) => x.possible).length === 1;
@@ -273,14 +280,68 @@ function Lists({ ws }: { ws: ViewProps["ws"] }) {
           <div className="world-var">{v.name}</div>
           <div className="chips">
             {v.options.map((o) => (
-              <button key={o.id} className={`world-opt ${o.picked ? "picked" : ""} ${o.possible ? "" : "gone"} ${o.gap ? "gap" : ""}`} onClick={pinner(ws, v, o)}>
-                {o.name}
-                {!o.gap && v.options.length > 1 && <span className="muted small"> {Math.round(o.weight * 100)}%</span>}
+              <button key={o.id} className={`world-opt ${o.picked ? "picked" : ""} ${o.possible ? "" : "gone"} ${o.gap ? "gap" : ""}`} onClick={pinner(ws, v, o)} title={o.name}>
+                {optionName(ws, o)}
+                {v.options.length > 1 && (o.chance > 0 || !o.gap) && (
+                  <span className="muted small" title={`${percent(o.weight)} before the evidence and anything pinned`}>
+                    {" "}
+                    {percent(o.chance)}
+                  </span>
+                )}
               </button>
             ))}
           </div>
         </div>
       ))}
     </div>
+  );
+}
+
+const percent = (p: number) => (p > 0 && p < 0.005 ? "<1%" : p < 1 && p > 0.995 ? ">99%" : `${Math.round(p * 100)}%`);
+
+/**
+ * For something uncertain, what's most worth finding out next: each other open question, by how sure of
+ * the answer you'd be on average once you knew it. Pinning one is finding it out.
+ */
+function WorthFindingOut({ ws, onSelect }: { ws: ViewProps["ws"]; onSelect: (id: string) => void }) {
+  const w = ws.view!.worlds;
+  const open = w.vars.filter((v) => v.sure !== undefined);
+  // What the case is about: whatever has the most answers, such as who it was, which stays put as things
+  // are found out.
+  const usual = [...open].sort((a, b) => b.options.length - a.options.length || (b.clues?.length ?? 0) - (a.clues?.length ?? 0))[0];
+  const [wanted, setWanted] = useState<string | null>(null);
+  const target = open.find((v) => v.id === wanted) ?? usual;
+  if (!target || !w.vars.some((v) => v.clues?.length)) return null;
+  const likeliest = [...target.options].sort((a, b) => b.chance - a.chance)[0];
+  const nameOf = (id: string) => w.vars.find((v) => v.id === id)?.name ?? id;
+  return (
+    <section className="worth-finding-out">
+      <h4>
+        Worth finding out, for{" "}
+        <select className="small" value={target.id} onChange={(e) => setWanted(e.target.value)} aria-label="What to work out">
+          {open.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.name}
+            </option>
+          ))}
+        </select>
+      </h4>
+      <p className="muted small">
+        Likeliest now: {optionName(ws, likeliest)}, {percent(likeliest.chance)}.{target.clues?.length ? " Each of these, once known, would leave you this sure on average." : ""}
+      </p>
+      {!target.clues?.length && <p className="muted small">Nothing else that's open would change which is likeliest, on its own.</p>}
+      <ol>
+        {(target.clues ?? []).map((c) => (
+          <li key={c.var}>
+            <button className="link" onClick={() => onSelect(c.var)}>
+              {nameOf(c.var)}
+            </button>{" "}
+            <span className="muted small">
+              {percent(target.sure!)} → {percent(c.sure)}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }

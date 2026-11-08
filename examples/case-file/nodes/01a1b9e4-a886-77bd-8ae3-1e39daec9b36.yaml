@@ -1,0 +1,10 @@
+id: 01a1b9e4-a886-77bd-8ae3-1e39daec9b36
+components:
+  decision: {}
+  name: How did Tom get to the house?
+  uncertain: null
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: pick(in.alternative)

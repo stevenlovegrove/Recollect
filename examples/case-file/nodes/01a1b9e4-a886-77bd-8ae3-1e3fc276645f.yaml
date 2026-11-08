@@ -1,0 +1,10 @@
+id: 01a1b9e4-a886-77bd-8ae3-1e3fc276645f
+components:
+  decision: {}
+  name: Did Clara go out into the garden?
+  uncertain: null
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: pick(in.alternative)

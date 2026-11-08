@@ -1,3 +1,0 @@
-name = "Who took the necklace?"
-about = "Five suspects, and a thing each of them said. Exactly one took it, two of them are lying, and the thief is one of the liars. Each statement is a formula, so “Dee is lying” is !Says[Dee], and the clues are about whole tables: count(s in Says.rows: !s) = 2."
-systems = []

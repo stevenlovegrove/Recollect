@@ -101,6 +101,14 @@ export interface OptionView {
   gap: boolean;
   possible: boolean;
   picked: boolean;
+  /** How likely it is now, given what's pinned and what rules worlds out. */
+  chance: number;
+}
+
+/** Another open question, and how sure of this one knowing it would make you, on average. */
+export interface ClueView {
+  var: string;
+  sure: number;
 }
 
 export interface VarView {
@@ -109,6 +117,10 @@ export interface VarView {
   options: OptionView[];
   /** Not anyone's to choose, so what's expected averages over it. */
   uncertain: boolean;
+  /** For something uncertain that's still open: the chance of its likeliest answer now. */
+  sure?: number;
+  /** What would help most to find out, best first. */
+  clues?: ClueView[];
 }
 
 export interface WorldsView {

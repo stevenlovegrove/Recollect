@@ -1,0 +1,20 @@
+id: 01a1b9e4-a886-77bd-8ae3-1e323811122a
+components:
+  body: Rosalind's nephew. He owes money, and he knew where the key to the case was kept.
+  name: Suspect[Tom]
+rules:
+  arrives:
+    rule: expr@1
+    params:
+      text: left + travel
+links:
+- to: 01a1b9e4-a886-77bd-8ae3-1e319030b8e5
+  components:
+    alternative:
+      weight: 3.0
+- to: 01a1b9e4-a886-77bd-8ae3-1e36f7d0daac
+  components:
+    label: left
+- to: 01a1b9e4-a886-77bd-8ae3-1e39daec9b36
+  components:
+    label: travel

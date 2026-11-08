@@ -1,0 +1,10 @@
+id: 01a1b9e4-a886-77bd-8ae3-1e3854ceb550
+components:
+  body: Mrs Dale was at the next table, and thinks he went just after nine. She'd had a few.
+  name: At about 9:10, as Mrs Dale says
+  value: 10.0
+links:
+- to: 01a1b9e4-a886-77bd-8ae3-1e36f7d0daac
+  components:
+    alternative:
+      weight: 1.0

@@ -1,9 +1,0 @@
-id: 01a1b9b9-240e-7476-b349-12bb78d78348
-components:
-  body: “Cy took it.”
-  name: Says[Eli]
-rules:
-  value:
-    rule: expr@1
-    params:
-      text: Suspect[Cy] = "thief"

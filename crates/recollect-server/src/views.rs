@@ -147,6 +147,16 @@ pub struct OptionView {
     /// Some world still in play lands here.
     pub possible: bool,
     pub picked: bool,
+    /// How likely it is now: its weight, given what's pinned and whatever rules worlds out.
+    pub chance: f64,
+}
+
+/// Another open question, and how sure of this one's answer knowing it would make you.
+#[derive(Debug, Serialize)]
+pub struct ClueView {
+    pub var: String,
+    /// The chance of this question's likeliest answer, on average over what that one turns out to be.
+    pub sure: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -156,6 +166,12 @@ pub struct VarView {
     pub options: Vec<OptionView>,
     /// Not anyone's to choose, so what's expected averages over it.
     pub uncertain: bool,
+    /// For something uncertain that's still open: the chance of its likeliest answer now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sure: Option<f64>,
+    /// The other uncertain things that would help most to find out, best first, for working this out.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub clues: Vec<ClueView>,
 }
 
 #[derive(Debug, Serialize)]
@@ -324,6 +340,7 @@ fn worlds(g: &Graph, catalog: &Catalog, world: &World, picks: &Picks, labels: &L
     let mut unpicked = Vec::new();
     let mut count = Some(1u128);
     let mut views = Vec::new();
+    let held = in_play.prob();
     for (id, var) in &vars {
         let options = var.options();
         let weights = var.weights();
@@ -343,13 +360,19 @@ fn worlds(g: &Graph, catalog: &Catalog, world: &World, picks: &Picks, labels: &L
                     Some(p) => p == o,
                     None => !(&var.is(o) & &in_play).is_never(),
                 };
-                OptionView { id: o.clone(), name: labels.of(o), weight: weights[i], gap: gaps[i], possible, picked: picked == Some(o) }
+                let chance = match picked {
+                    Some(p) => f64::from(p == o),
+                    None if held > 0.0 => (&var.is(o) & &in_play).prob() / held,
+                    None => 0.0,
+                };
+                OptionView { id: o.clone(), name: labels.of(o), weight: weights[i], gap: gaps[i], possible, picked: picked == Some(o), chance }
             })
             .collect();
         let uncertain = id.parse::<Entity>().is_ok_and(|e| g.has_own(e, Uncertain::NAME));
-        views.push(VarView { id: id.clone(), name: labels.of(id), options: views_options, uncertain });
+        views.push(VarView { id: id.clone(), name: labels.of(id), options: views_options, uncertain, sure: None, clues: Vec::new() });
     }
     views.sort_by(|a, b| a.id.cmp(&b.id));
+    clues(&mut views, &vars, &in_play, held);
     let (count, solutions) = if constraint.is_some() {
         let n = in_play.count(&unpicked);
         let found = in_play.solutions(&unpicked, 300).into_iter().map(|mut s| {
@@ -361,6 +384,46 @@ fn worlds(g: &Graph, catalog: &Catalog, world: &World, picks: &Picks, labels: &L
         (count.map_or_else(|| "more than can be counted".to_string(), |n| n.to_string()), vec![])
     };
     WorldsView { picks: applied, vars: views, count, constrained: constraint.is_some(), solutions }
+}
+
+/// What's worth finding out. For each uncertain thing still open, how sure of it you'd be, on average,
+/// once you knew each other uncertain thing that's open: the chance of its likeliest answer, given what
+/// the other turns out to be, weighted by how likely that is. Only what would make you surer is listed,
+/// best first. What's someone's to choose isn't something to find out, so it's neither.
+fn clues(views: &mut [VarView], vars: &BTreeMap<String, Var>, in_play: &Bool, held: f64) {
+    /// Past this many, it's a puzzle rather than a case, and this would take a while.
+    const MOST: usize = 12;
+    if held <= 0.0 {
+        return;
+    }
+    let open: Vec<(String, Var, Vec<String>)> = views
+        .iter()
+        .filter(|v| v.uncertain && !v.options.iter().any(|o| o.picked) && v.options.iter().filter(|o| o.possible).count() > 1)
+        .filter_map(|v| Some((v.id.clone(), vars.get(&v.id)?.clone(), v.options.iter().filter(|o| o.possible).map(|o| o.id.clone()).collect())))
+        .take(MOST + 1)
+        .collect();
+    if open.len() > MOST {
+        return;
+    }
+    // The worlds where each open thing lands on each of its options, and is consistent with what's known.
+    let lands: Vec<Vec<Bool>> = open.iter().map(|(_, var, options)| options.iter().map(|o| &var.is(o) & in_play).collect()).collect();
+    for (t, (target, _, _)) in open.iter().enumerate() {
+        let sure = lands[t].iter().map(|b| b.prob()).fold(0.0, f64::max) / held;
+        let mut found: Vec<ClueView> = open
+            .iter()
+            .enumerate()
+            .filter(|(c, _)| *c != t)
+            .map(|(c, (id, _, _))| {
+                let after: f64 = lands[c].iter().map(|other| lands[t].iter().map(|b| (b & other).prob()).fold(0.0, f64::max)).sum::<f64>() / held;
+                ClueView { var: id.clone(), sure: after }
+            })
+            .filter(|c| c.sure > sure + 1e-9)
+            .collect();
+        found.sort_by(|a, b| b.sure.total_cmp(&a.sure));
+        let view = views.iter_mut().find(|v| v.id == *target).expect("an open one is in the views");
+        view.sure = Some(sure);
+        view.clues = found;
+    }
 }
 
 fn target_nodes(t: Target) -> Vec<Entity> {

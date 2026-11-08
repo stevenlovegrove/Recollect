@@ -2540,6 +2540,16 @@ tr.pruned {
 .world-values {
   margin-top: 18px;
 }
+.worth-finding-out {
+  margin-top: 18px;
+}
+.worth-finding-out ol {
+  margin: 6px 0 0;
+  padding-left: 22px;
+}
+.worth-finding-out li {
+  margin: 3px 0;
+}
 .board {
   display: inline-grid;
   border: 2px solid var(--text);

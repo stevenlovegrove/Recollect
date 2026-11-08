@@ -179,18 +179,6 @@ fn the_puzzles_have_their_known_answers() {
     assert_eq!(valid.count(&vars), 1);
     assert_eq!((solved[0]["A"].as_str(), solved[0]["B"].as_str()), ("knave", "knight"));
 
-    let (valid, vars, solved) = solutions(&open("necklace"), 10);
-    assert_eq!(valid.count(&vars), 1);
-    let thieves: Vec<&String> = solved[0].iter().filter(|(_, v)| *v == "thief").map(|(k, _)| k).collect();
-    assert_eq!(thieves, vec!["Suspect[Cy]"]);
-
-    let (valid, vars, solved) = solutions(&open("gallery"), 10);
-    assert_eq!(valid.count(&vars), 1);
-    let stay = |who: &str| (solved[0][&format!("Arrived[{who}]")].clone(), solved[0][&format!("Left[{who}]")].clone());
-    let stays: Vec<(String, String)> = ["Iris", "Jonah", "Kit", "Lena", "Marco"].iter().map(|w| stay(w)).collect();
-    let want = [("9", "12"), ("8", "9"), ("10", "11"), ("11", "12"), ("7", "9")];
-    assert_eq!(stays, want.map(|(a, l)| (a.to_string(), l.to_string())));
-
     let (valid, vars, solved) = solutions(&open("zebra"), 1);
     assert_eq!(valid.count(&vars), 1);
     assert_eq!(solved[0]["Pet[Zebra]"], solved[0]["Nationality[Japanese]"]);
