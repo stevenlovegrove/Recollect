@@ -236,8 +236,9 @@ sum      := term (("+" | "-") term)*
 term     := unary (("*" | "/") unary)*
 unary    := "-" unary | power
 power    := atom ("^" unary)?
-atom     := number | string | "true" | "false" | "undefined" | path | call | "(" expr ")"
+atom     := number | string | "true" | "false" | "undefined" | path | row | call | "(" expr ")"
 path     := name ("." name)*
+row      := name "[" expr "]" ("." name)*
 call     := name "(" (name "in" path ":" expr ("," expr)? | expr ("," expr)*)? ")"
 ```
 
@@ -248,6 +249,7 @@ call     := name "(" (name "in" path ":" expr ("," expr)? | expr ("," expr)*)? "
 | `self.need` | A cell on this node |
 | `prev.balance`, `next.left`, `prev.prev.f` | A cell on the row before or after this one in its table: see [Tables](#tables) |
 | `row` | Which row this is: its number, or its key |
+| `Year[100].balance`, `Year[row - 1]`, `Car[Hatchback].price` | A cell on a row of a table, by its key |
 | `rows` | The group of rows in this node's table |
 | `in.part_of`, `out.depends_on` | The group of nodes linked by that kind |
 | `with.task` | The group of nodes holding that component, using the engine's declared scans |
@@ -419,12 +421,14 @@ Year[0]:  balance 1000
 Year[1] … Year[10]
 ```
 
-- **A numbered row has neighbours.** `prev` is the row before, `next` the row after, and `prev.prev` the one before that. With no row there, as before `Year[0]` or at a gap, it's undefined, so the first row says its own value, as `Year[0]` does.
+- **A numbered row has neighbours.** `prev` is the row before, `next` the row after, and `prev.prev` the one before that. Before the first row there's nothing, so `prev` there is undefined, and the first row says its own value, as `Year[0]` does.
+- **A numbered table goes on by itself.** Past its last written row, and in any gap, there's a row nobody wrote, which takes every cell from the table. `Year[100].balance` works out each year up to it. Those rows exist only to be read: they're never saved, and they're the same each time they're asked for, so what's worked out on them stays in the memos. Reading a cell the table doesn't say on one of them is an error, naming the row, since nothing could ever fill it. They go up to 100,000 rows past the last written one.
+- **A formula can address any row** as `Year[3]`, `Year[row - 1]` or `Car[Hatchback]`. A key has to be known without looking at any world, so it's a number, a name, or plain arithmetic on `row`. A table whose name has spaces can't be addressed this way yet.
 - **`row` is which row this is,** a number for `Year[3]` and text for `Car[Hatchback]`, and `rows` is every row of the table, so `sum(rows.cost)` is a column's total.
 - **Rows of related tables with the same key are one thing.** If Petrol car `is_a` Car, then `Car[Hatchback]` and `Petrol car[Hatchback]` are parts of one car. Each table holds only what applies to it: every car has a price, and only petrol cars have an mpg. Each part reads the cells it doesn't say from the others, and then from the tables of all of them. What's more specific wins: a part's own word, then Petrol car's, then Car's. A petrol car with no `Car` row is still a car.
 - **A choice part way down changes only what comes after.** A row can say its own formula, such as `Year[5]` adding a top-up that's a decision. The rows before it have one value, and the rows after have one for each option.
 
-In the app, the Table tab shows any table as a grid: a column for each cell the table and the kinds above it say, the table's own formulas on the top row, and what a row takes rather than says faded. Typing in a faded cell says it for that row alone. A numbered table has a chart of a column down its rows, with a line for each answer to a choice the column waits on, so a choice at `Year[5]` shows where the lines part. On the map, a row is called by its key under its tables' names, the parts of one thing are one card, and an arrow goes from each row to what its formula reads as `prev` or `next`.
+In the app, the Table tab shows any table as a grid: a column for each cell the table and the kinds above it say, the table's own formulas on the top row, and what a row takes rather than says faded. Typing in a faded cell says it for that row alone. A numbered table can show rows past its last written one, read-only, and has a chart of a column down its rows, with a line for each answer to a choice the column waits on, so a choice at `Year[5]` shows where the lines part. On the map, a row is called by its key under its tables' names, the parts of one thing are one card, and an arrow goes from each row to what its formula reads as `prev` or `next`.
 
 The op `{"op": "table", "name": "Car", "is_a": .., "columns": {..}, "rows": [{"key": "Hatchback", ..}], "range": [0, 10], "alternative_of": ..}` writes a whole table at once. Rows that exist already are used, not made again. A decision's options are still links, since each says how likely it is or why it was ruled out, so `alternative_of` links every row, and adding a row in the grid links it as the others are.
 

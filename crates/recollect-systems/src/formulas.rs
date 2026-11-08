@@ -362,6 +362,16 @@ impl<'c, 'a> Expander<'c, 'a> {
                 Ok(self.add(Part::Bin(*op, a, b)))
             }
             Expr::Path(path) => self.path(path, scope),
+            Expr::Row { table, key, path } => {
+                if scope.is_macro() {
+                    return failed(format!("a macro can only use its parameters, not {table}[…]"));
+                }
+                let key = self.key(key)?;
+                match self.cx.row_at(table, &key) {
+                    Some(n) => Ok(self.read(n, path)),
+                    None => failed(format!("there's no row {table}[{key}]")),
+                }
+            }
             Expr::Fold { func, var, group, body, start } => self.fold(func, var, group, body, start.as_deref(), scope),
             Expr::Call(name, args) => self.call(name, args, scope),
         })
@@ -405,6 +415,36 @@ impl<'c, 'a> Expander<'c, 'a> {
                 Some(many) => failed(format!("{root} is {} nodes, so it needs something like sum({root})", many.len())),
             },
         }
+    }
+
+    /// Which row `Year[…]` means. It has to be known without looking at any world, so it's a number, a
+    /// name, or worked out from `row` with plain arithmetic, as `Year[row - 1]` is.
+    fn key(&self, e: &Expr) -> Result<Key, Error> {
+        let number = |e: &Expr| -> Result<i64, Error> {
+            match self.key(e)? {
+                Key::Num(n) => Ok(n),
+                Key::Text(t) => failed(format!("{t} isn't a number, so it can't be added to")),
+            }
+        };
+        Ok(match e {
+            Expr::Lit(Val::Num(n)) if n.fract() == 0.0 && n.abs() < 1e15 => Key::Num(*n as i64),
+            Expr::Lit(Val::Text(t)) => Key::Text(t.clone()),
+            Expr::Path(p) if p.len() == 1 && p[0] == "row" => match self.cx.row_key() {
+                Some(k) => k,
+                None => return failed("row is only something on a row of a table"),
+            },
+            Expr::Path(p) if p.len() == 1 => Key::Text(p[0].clone()),
+            Expr::Neg(a) => Key::Num(-number(a)?),
+            Expr::Bin(op @ (BinOp::Add | BinOp::Sub | BinOp::Mul), a, b) => {
+                let (a, b) = (number(a)?, number(b)?);
+                Key::Num(match op {
+                    BinOp::Add => a + b,
+                    BinOp::Sub => a - b,
+                    _ => a * b,
+                })
+            }
+            _ => return failed("a row's key is a number, a name, or worked out from row, such as Year[3], Car[Hatchback] or Year[row - 1]"),
+        })
     }
 
     fn fold(&self, func: &str, var: &str, group: &[String], body: &Expr, start: Option<&Expr>, scope: &Scope) -> Result<Id, Error> {

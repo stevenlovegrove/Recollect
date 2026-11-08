@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type GraphNode, type View } from "../api";
+import { api, type GraphNode, type RowCells } from "../api";
 import type { ViewProps } from "./MapView";
 import { TableCell } from "./TableView";
 import { LinePlot, numberOf } from "./SweepChart";
@@ -45,6 +45,13 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
     return [...cs].sort();
   }, [head, rows, lineage]);
   const numbered = rows.length > 0 && rows.every((r) => typeof r.row!.key === "number");
+  // A numbered table goes on past its last written row, as far as it's asked: those rows are worked out
+  // from the table, and nothing about them is saved.
+  const first = numbered ? (rows[0].row!.key as number) : 0;
+  const last = numbered ? (rows[rows.length - 1].row!.key as number) : 0;
+  const [upTo, setUpTo] = useState<number | null>(null);
+  const to = Math.min(Math.max(upTo ?? last, last), last + 999);
+  const more = useRows(ws, table, last + 1, to, ws.world, numbered && to > last);
 
   return (
     <>
@@ -87,10 +94,29 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
               })}
             </tr>
           ))}
+          {(more ?? []).map((r) => (
+            <tr key={r.key} className="implicit-row">
+              <td className="sheet-name" title="Nobody wrote this row. It's worked out from the table, and isn't saved: add it to say something of its own.">
+                {r.key}
+              </td>
+              {columns.map((c) => (
+                <td key={c} className="sheet-cell taken">
+                  <TableCell ws={ws} node={{ id: r.id, name: `${table}[${r.key}]`, cells: r.cells }} c={c} cell={r.cells[c]} readOnly />
+                </td>
+              ))}
+            </tr>
+          ))}
         </tbody>
       </table>
+      {numbered && (
+        <div className="table-new small">
+          <span className="muted">Show up to row</span>
+          <input type="number" aria-label="Show rows up to" value={to} min={last} onChange={(e) => setUpTo(Number(e.target.value))} />
+          {to > last && <span className="muted">Rows after {last} are worked out from {table}, and aren't saved.</span>}
+        </div>
+      )}
       <NewRow ws={ws} table={table} rows={rows} />
-      {numbered && <RowChart ws={ws} rows={rows} columns={columns} />}
+      {numbered && <RowChart ws={ws} table={table} from={first} to={to} columns={columns} />}
     </>
   );
 }
@@ -125,36 +151,55 @@ function NewRow({ ws, table, rows }: { ws: ViewProps["ws"]; table: string; rows:
   );
 }
 
+/** A numbered table's rows over a range, in one world, whether or not anyone wrote them. */
+function useRows(ws: ViewProps["ws"], table: string, from: number, to: number, world: Record<string, string>, wanted: boolean): RowCells[] | null {
+  const [rows, setRows] = useState<RowCells[] | null>(null);
+  const key = `${ws.view!.last_seq}|${table}|${from}|${to}|${JSON.stringify(world)}|${wanted}`;
+  useEffect(() => {
+    if (!wanted) return setRows(null);
+    let alive = true;
+    api
+      .rows(table, from, to, world)
+      .then((r) => alive && setRows(r))
+      .catch(() => alive && setRows([]));
+    return () => {
+      alive = false;
+    };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  return rows;
+}
+
 /**
- * A column down the rows. If it waits on a choice, there's a line for each option, each worked out with that
- * option pinned, so a choice part way down shows where the lines part.
+ * A column down the rows, written or not. If it waits on a choice, there's a line for each option, each
+ * worked out with that option pinned, so a choice part way down shows where the lines part.
  */
-function RowChart({ ws, rows, columns }: { ws: ViewProps["ws"]; rows: GraphNode[]; columns: string[] }) {
+function RowChart({ ws, table, from, to, columns }: { ws: ViewProps["ws"]; table: string; from: number; to: number; columns: string[] }) {
   const g = ws.view!;
   const vars = g.worlds.vars;
-  const numeric = columns.filter((c) => rows.some((r) => numberOf(r.cells[c], vars) !== null || r.cells[c]?.shown?.kind === "cond"));
+  const here = useRows(ws, table, from, to, ws.world, true);
+  const numeric = columns.filter((c) => (here ?? []).some((r) => numberOf(r.cells[c], vars) !== null || r.cells[c]?.shown?.kind === "cond"));
   const [chosen, setChosen] = useState<string | null>(null);
-  const column = numeric.includes(chosen ?? "") ? chosen! : numeric.find((c) => rows.some((r) => r.cells[c]?.formula)) ?? numeric[0];
+  const column = numeric.includes(chosen ?? "") ? chosen! : numeric.find((c) => (here ?? []).some((r) => r.cells[c]?.formula)) ?? numeric[0];
   // The first choice still to be made that the column waits on.
-  const choice = vars.find((v) => !v.uncertain && rows.some((r) => r.cells[column ?? ""]?.vars?.includes(v.id)));
-  const [pinned, setPinned] = useState<Record<string, View> | null>(null);
-  const key = `${g.last_seq}|${JSON.stringify(ws.world)}|${choice?.id}`;
+  const choice = vars.find((v) => !v.uncertain && (here ?? []).some((r) => r.cells[column ?? ""]?.vars?.includes(v.id)));
+  const [lines, setLines] = useState<{ name: string; rows: RowCells[] }[] | null>(null);
+  const key = `${g.last_seq}|${JSON.stringify(ws.world)}|${choice?.id}|${table}|${from}|${to}`;
   useEffect(() => {
-    if (!choice) return setPinned(null);
+    if (!choice) return setLines(null);
     let alive = true;
-    Promise.all(choice.options.filter((o) => o.possible).map((o) => api.view({ ...ws.world, [choice.id]: o.id }).then((v) => [o.id, v] as const)))
-      .then((rs) => alive && setPinned(Object.fromEntries(rs)))
+    const options = choice.options.filter((o) => o.possible);
+    Promise.all(options.map((o) => api.rows(table, from, to, { ...ws.world, [choice.id]: o.id }).then((rows) => ({ name: o.name, rows }))))
+      .then((ls) => alive && setLines(ls))
       .catch(() => {});
     return () => {
       alive = false;
     };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
-  if (!column) return null;
+  if (!column || !here) return null;
 
-  const xs = rows.map((r) => r.row!.key as number);
-  const down = (v: View) => rows.map((r) => numberOf(v.nodes.find((n) => n.id === r.id)?.cells[column], v.worlds.vars));
-  const options = choice ? choice.options.filter((o) => pinned?.[o.id]) : [];
-  const [names, ys] = choice ? [options.map((o) => o.name), pinned ? options.map((o) => down(pinned[o.id])) : null] : [[label(column)], [down(g)]];
+  const xs = here.map((r) => r.key);
+  const down = (rows: RowCells[]) => rows.map((r) => numberOf(r.cells[column], vars));
+  const [names, ys] = choice ? [(lines ?? []).map((l) => l.name), lines ? lines.map((l) => down(l.rows)) : null] : [[label(column)], [down(here)]];
 
   return (
     <div className="sweep table-chart">

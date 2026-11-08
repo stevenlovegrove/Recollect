@@ -108,12 +108,12 @@ function EveryNode({ ws, selected, onSelect, pick }: ViewProps & { pick: React.R
 }
 
 /** `written` shows a formula as it's written rather than what it comes to, as a table's own row does. */
-export function TableCell({ ws, node, c, cell, written }: { ws: ViewProps["ws"]; node: GraphNode; c: string; cell: Cell | undefined; written?: boolean }) {
+export function TableCell({ ws, node, c, cell, written, readOnly }: { ws: ViewProps["ws"]; node: GraphNode; c: string; cell: Cell | undefined; written?: boolean; readOnly?: boolean }) {
   if (!cell) return null;
   const nameOf = (s: string) => ws.byId.get(s)?.name ?? s;
   const r = reading(cell);
   // What can hold a formula is typed into, as in a spreadsheet, unless it comes from a rule of the column's.
-  if (holdsFormula(ws, c) && (cell.source === "stored" || cell.formula !== undefined)) {
+  if (!readOnly && holdsFormula(ws, c) && (cell.source === "stored" || cell.formula !== undefined)) {
     const words = r && truthWords(c, r);
     const shown = written && cell.formula !== undefined ? `=${cell.formula}` : cell.error ? "#ERROR" : !words ? cellText(cell, nameOf) : "fixed" in words ? words.fixed : `${words.lead} ${r!.when}`;
     return <EntryCell key={`${cell.formula}|${JSON.stringify(cell.value)}|${shown}`} ws={ws} node={node} c={c} cell={cell} shown={shown} />;

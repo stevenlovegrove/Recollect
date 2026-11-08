@@ -47,6 +47,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/events", get(events))
         .route("/api/try", post(try_formula))
         .route("/api/sweep", post(sweep))
+        .route("/api/rows", post(rows))
         .route("/api/files", get(file_list))
         .route("/api/file", get(file))
         .with_state(app)
@@ -152,6 +153,26 @@ async fn sweep(State(app): S, Json(body): Json<SweepBody>) -> Result<impl IntoRe
     }
     let swept = blocking(app, move |a| a.with(|o| views::sweep(o, &body.set, &body.values, &body.read, &body.world).map_err(AppError::Refused))).await?;
     Ok(Json(swept))
+}
+
+#[derive(Deserialize)]
+struct RowsBody {
+    table: String,
+    from: i64,
+    to: i64,
+    #[serde(default)]
+    world: World,
+}
+
+/// The most rows one ask can have.
+const MOST_ROWS: i64 = 1000;
+
+async fn rows(State(app): S, Json(body): Json<RowsBody>) -> Result<impl IntoResponse, AppError> {
+    if body.to < body.from || body.to - body.from >= MOST_ROWS {
+        return Err(AppError::Refused(format!("rows {} to {} isn't a run of up to {MOST_ROWS}", body.from, body.to)));
+    }
+    let rows = blocking(app, move |a| a.with(|o| Ok(views::rows(o, &body.table, body.from, body.to, &body.world)))).await?;
+    Ok(Json(rows))
 }
 
 #[derive(Deserialize)]

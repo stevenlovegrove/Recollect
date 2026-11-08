@@ -303,6 +303,17 @@ pub(crate) enum Backing {
     Broken(SavedRule, Error),
 }
 
+/// How far past its last written row a table goes on by itself.
+pub const MOST_IMPLICIT: i64 = 100_000;
+
+/// The handle of a row nobody wrote, which is the same whenever it's asked for. Two hashes of its name make
+/// up the 128 bits, so it can't be mistaken for a handle that was made.
+fn implicit_entity(table: &str, n: i64) -> Entity {
+    let name = format!("{table}[{n}]");
+    let fnv = |seed: u64| name.bytes().fold(seed, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3));
+    Entity(Uuid::from_u128((u128::from(fnv(0xcbf29ce484222325)) << 64) | u128::from(fnv(0x84222325cbf29ce4))))
+}
+
 /// The name a cell holds, if it's a name typed in.
 fn name_in(b: &Backing) -> Option<String> {
     match b {
@@ -396,6 +407,9 @@ pub struct Graph {
     inheriting: Option<Arc<Inheriting>>,
     /// Names, and the tables they make: see `table`.
     names: Names,
+    /// Numbered rows nobody wrote that something has asked for: see `row_at`. They're only ever read, so
+    /// they live here and in the memos, and never in a file.
+    implicit: Mutex<HashMap<Entity, Row>>,
     pub(crate) links: BTreeMap<(Entity, Entity), BTreeMap<String, Value>>,
     into: HashMap<Entity, BTreeSet<Entity>>,
     from: HashMap<Entity, BTreeSet<Entity>>,
@@ -606,7 +620,7 @@ impl Graph {
         }
         for (n, cells) in before {
             for c in cells {
-                if self.entities.contains(&n) && !self.has_own(n, &c) {
+                if (self.entities.contains(&n) || self.is_implicit(n)) && !self.has_own(n, &c) {
                     self.forget(n, &c);
                     self.touch(Dep::Backing((n, c.clone())));
                 }
@@ -711,6 +725,7 @@ impl Graph {
             defaults: self.defaults.clone(),
             inheriting: self.inheriting.clone(),
             names: self.names.clone(),
+            implicit: Mutex::new(self.implicit.lock().unwrap_or_else(PoisonError::into_inner).clone()),
             links: self.links.clone(),
             into: self.into.clone(),
             from: self.from.clone(),
@@ -809,7 +824,7 @@ impl Graph {
         if e == Entity::whole() {
             return self.defaults.get(component).map(|b| (b.clone(), e));
         }
-        if !self.entities.contains(&e) {
+        if !self.entities.contains(&e) && !self.is_implicit(e) {
             return None;
         }
         if let Some(b) = self.cells.get(&e).and_then(|c| c.get(component)) {
@@ -859,7 +874,7 @@ impl Graph {
     fn kinds_of(&self, n: Entity) -> Vec<Entity> {
         let Some(inh) = &self.inheriting else { return Vec::new() };
         let mut out = self.targets_of(n, &inh.through);
-        if let Some(row) = self.names.rows.get(&n) {
+        if let Some(row) = self.row_of(n) {
             out.extend(self.names.named.get(&row.table).into_iter().flatten().copied().filter(|t| *t != n));
         }
         out
@@ -897,7 +912,7 @@ impl Graph {
     /// The other rows with the same key, in tables related to this one's: one is a kind of the other,
     /// or they're kinds of the same thing. Together they're one thing, each saying some of its cells.
     fn parts(&self, e: Entity) -> Vec<Entity> {
-        let Some(row) = self.names.rows.get(&e) else { return Vec::new() };
+        let Some(row) = self.row_of(e) else { return Vec::new() };
         let mine = self.lineage(&row.table);
         let mut out: Vec<Entity> = Vec::new();
         for (table, rows) in &self.names.tables {
@@ -917,6 +932,7 @@ impl Graph {
         let mut out = self.sources_of(k, &inh.through);
         if let Some(name) = self.names.of.get(&k) {
             out.extend(self.rows(name).into_iter().filter(|r| *r != k));
+            out.extend(self.implicit.lock().unwrap_or_else(PoisonError::into_inner).iter().filter(|(_, r)| r.table == *name).map(|(e, _)| *e));
         }
         out.extend(self.parts(k));
         out
@@ -949,9 +965,44 @@ impl Graph {
         if self.inheriting.is_none() { Vec::new() } else { self.parts(e) }
     }
 
-    /// Which row of which table a node is, if its name says: see `table`.
-    pub fn row_of(&self, e: Entity) -> Option<&Row> {
-        self.names.rows.get(&e)
+    /// Which row of which table a node is, if its name says, or if it's a row nobody wrote: see `table`.
+    pub fn row_of(&self, e: Entity) -> Option<Row> {
+        self.names.rows.get(&e).cloned().or_else(|| self.implicit.lock().unwrap_or_else(PoisonError::into_inner).get(&e).cloned())
+    }
+
+    /// Whether this is a node of the graph, rather than a row nobody wrote or a handle from nowhere.
+    pub fn contains(&self, e: Entity) -> bool {
+        self.entities.contains(&e)
+    }
+
+    /// The rows nobody wrote that something has asked for, with what they'd be called.
+    pub fn implicit_rows(&self) -> Vec<(Entity, String)> {
+        self.implicit.lock().unwrap_or_else(PoisonError::into_inner).iter().map(|(e, r)| (*e, format!("{}[{}]", r.table, r.key))).collect()
+    }
+
+    fn is_implicit(&self, e: Entity) -> bool {
+        self.implicit.lock().unwrap_or_else(PoisonError::into_inner).contains_key(&e)
+    }
+
+    /// The row of a table with this key. That's the node with that name, if there is one. Otherwise, a
+    /// numbered table goes on past its first written row as far as it's asked, with rows nobody wrote
+    /// filling any gap: each takes all its cells from the table, and reading a cell the table doesn't say
+    /// is an error. Such a row only exists to be read, so it's never saved, and it's the same handle each
+    /// time, so what's worked out on it stays in the memos.
+    pub fn row_at(&self, table: &str, key: &table::Key) -> Option<Entity> {
+        let rows = self.names.tables.get(table)?;
+        if let Some(e) = rows.get(key).and_then(|s| s.first()) {
+            return Some(*e);
+        }
+        let table::Key::Num(n) = key else { return None };
+        let numbers = rows.iter().filter(|(_, s)| !s.is_empty()).filter_map(|(k, _)| if let table::Key::Num(m) = k { Some(*m) } else { None });
+        let (first, last) = numbers.fold((i64::MAX, i64::MIN), |(lo, hi), m| (lo.min(m), hi.max(m)));
+        if *n < first || *n > last.saturating_add(MOST_IMPLICIT) {
+            return None;
+        }
+        let e = implicit_entity(table, *n);
+        self.implicit.lock().unwrap_or_else(PoisonError::into_inner).entry(e).or_insert_with(|| Row { table: table.to_string(), key: key.clone() });
+        Some(e)
     }
 
     /// A table's rows: those with numbers in order, then the rest in the order they were made.
@@ -970,19 +1021,18 @@ impl Graph {
     }
 
     /// The table whose rows are around this node: its own, if it's a table, or the one it's a row of.
-    pub fn table_here(&self, e: Entity) -> Option<&str> {
-        match self.names.rows.get(&e) {
-            Some(row) => Some(&row.table),
-            None => self.names.of.get(&e).map(String::as_str),
+    pub fn table_here(&self, e: Entity) -> Option<String> {
+        match self.row_of(e) {
+            Some(row) => Some(row.table),
+            None => self.names.of.get(&e).cloned(),
         }
     }
 
-    /// The row this many along from a numbered row in the same table: the one before is -1.
+    /// The row this many along from a numbered row in the same table: the one before is -1. See `row_at`.
     pub fn row_along(&self, e: Entity, by: i64) -> Option<Entity> {
-        let row = self.names.rows.get(&e)?;
+        let row = self.row_of(e)?;
         let table::Key::Num(n) = row.key else { return None };
-        let at = table::Key::Num(n.checked_add(by)?);
-        self.names.tables.get(&row.table)?.get(&at)?.first().copied()
+        self.row_at(&row.table, &table::Key::Num(n.checked_add(by)?))
     }
 
     /// The node a node takes this cell from, if it takes it from a kind.
@@ -1034,7 +1084,7 @@ impl Session<'_> {
         let key: Key = (e, C::NAME.to_string());
         self.note(Dep::Cell(key.clone()));
         match self.g.backing(e, C::NAME) {
-            None => Ok(None),
+            None => self.missing(key),
             Some(Backing::Stored(v)) => decode(&key, &v).map(Some),
             Some(Backing::Broken(_, error)) => Err(error),
             Some(Backing::Computed(r)) => {
@@ -1057,7 +1107,7 @@ impl Session<'_> {
         let key: Key = (e, component.to_string());
         self.note(Dep::Cell(key.clone()));
         let value = match self.g.backing(e, component) {
-            None => None,
+            None => return self.missing(key),
             Some(Backing::Stored(v)) => Some(v),
             Some(Backing::Broken(_, error)) => return Err(error),
             Some(Backing::Computed(r)) => {
@@ -1066,6 +1116,12 @@ impl Session<'_> {
             }
         };
         Ok(value.map(|value| Runtime { name: component.to_string(), value }))
+    }
+
+    /// Nothing backs this cell. On a node, that's just a cell it doesn't have. On a row nobody wrote, it's
+    /// a cell its table doesn't say, which nothing could ever fill.
+    fn missing<T>(&self, key: Key) -> Cell<T> {
+        if self.g.is_implicit(key.0) { Err(Error::Missing(key)) } else { Ok(None) }
     }
 
     /// Make sure the memo for a cell about to be read is current.
@@ -1186,8 +1242,9 @@ impl Cx<'_> {
         let from = |at: Entity, i: &Inputs| i.incoming.iter().any(|k| g.has_link(other, at, k)) || i.outgoing.iter().any(|k| g.has_link(at, other, k));
         let reaches = |i: &Inputs| from(self.id, i) || (self.origin != self.id && from(self.origin, i)) || i.scans.iter().any(|c| g.backing(other, c).is_some());
         // Rows of the same table can always read each other, as `prev` does.
-        let same_table = g.row_of(other).is_some_and(|r| g.table_here(self.id) == Some(r.table.as_str()));
-        let reached = other == self.id || other == self.origin || other == Entity::whole() || same_table || reaches(self.inputs) || self.like().is_some_and(|r| reaches(&r.inputs));
+        // A row can be read by its address, as `prev` and `Year[3]` do.
+        let addressed = g.row_of(other).is_some();
+        let reached = other == self.id || other == self.origin || other == Entity::whole() || addressed || reaches(self.inputs) || self.like().is_some_and(|r| reaches(&r.inputs));
         if reached { Ok(()) } else { Err(self.undeclared(format!("{other}, which no declared link reaches"))) }
     }
 
@@ -1305,7 +1362,7 @@ impl Cx<'_> {
     /// anything reruns what read them.
     pub fn rows(&self) -> Vec<Entity> {
         self.s.note(Dep::Scan(Name::NAME.to_string()));
-        self.s.g.table_here(self.id).map(|t| self.s.g.rows(t)).unwrap_or_default()
+        self.s.g.table_here(self.id).map(|t| self.s.g.rows(&t)).unwrap_or_default()
     }
 
     /// The row this many along from this rule's node, if it's a numbered row and there's one there:
@@ -1315,10 +1372,16 @@ impl Cx<'_> {
         self.s.g.row_along(self.id, by)
     }
 
+    /// The row of a table with this key, as `Year[3]` addresses it: see `Graph::row_at`.
+    pub fn row_at(&self, table: &str, key: &table::Key) -> Option<Entity> {
+        self.s.note(Dep::Scan(Name::NAME.to_string()));
+        self.s.g.row_at(table, key)
+    }
+
     /// Which row this rule's node is in its table.
     pub fn row_key(&self) -> Option<table::Key> {
         self.s.note(Dep::Scan(Name::NAME.to_string()));
-        self.s.g.row_of(self.id).map(|r| r.key.clone())
+        self.s.g.row_of(self.id).map(|r| r.key)
     }
 
     pub fn scan(&self, component: &str) -> Result<Vec<Entity>, Error> {

@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use recollect_graph::table::Key;
 use recollect_graph::{Cell, Component, Cx, Entity, Error, Graph, Inputs, Name, Place, Registry, Runtime};
 use serde_json::{Value, json};
 
@@ -146,14 +147,68 @@ fn a_numbered_row_reads_the_one_before() {
     let order: Vec<Entity> = (0..4).map(|i| t.ids[&format!("Year[{i}]")]).collect();
     assert_eq!(t.g.rows("Year"), order);
 
-    // A gap means there's nothing before, and filling it brings it back.
+    // A gap is a row nobody wrote, which takes everything from the table. Year says nothing about a
+    // base, so that's an error, until it does.
     t.rename("Year[1]", "Spare");
-    assert_eq!(t.read("Year[2]", "amount"), Some(json!(1)));
+    let year2 = t.ids["Year[2]"];
+    assert!(matches!(t.g.get_runtime(year2, "amount"), Err(Error::Missing((_, c))) if c == "base"));
+    t.put("Year", "base", json!(0));
+    assert_eq!(t.read("Year[2]", "amount"), Some(json!(2)), "1 for Year[0], then 0 for the row nobody wrote, then its own 1");
     t.rename("Year[1]", "Year[1]");
     assert_eq!(t.read("Year[2]", "amount"), Some(json!(3)));
     // The first row says its own.
     t.put("Year[0]", "amount", json!(-3));
     assert_eq!((t.read("Year[1]", "amount"), t.read("Year[3]", "amount")), (Some(json!(-2)), Some(json!(0))));
+}
+
+#[test]
+fn a_numbered_table_goes_on_as_far_as_its_asked_and_none_of_that_is_saved() {
+    let mut t = T::new();
+    let year = t.e("Year");
+    t.g.set_rule(year, "amount", "tables/running", Value::Null);
+    t.put("Year", "base", json!(1));
+    t.put("Year[0]", "amount", json!(-3));
+    t.e("Year[1]");
+    let saved = t.g.save().unwrap();
+
+    // Year[100] was never written: it's worked out from the table, and so is every row before it.
+    let far = t.g.row_at("Year", &Key::Num(100)).expect("past the last row, it goes on");
+    assert_eq!(t.g.get_runtime(far, "amount").unwrap().unwrap().value, json!(3));
+    assert_eq!(t.g.row_at("Year", &Key::Num(100)), Some(far), "the same row each time");
+    assert_eq!(t.g.row_along(far, -1), t.g.row_at("Year", &Key::Num(99)));
+    assert!(matches!(t.g.get_runtime(far, "colour"), Err(Error::Missing(_))), "what the table doesn't say, it can't have");
+    assert_eq!(t.g.row_at("Year", &Key::Num(-1)), None, "before the first row, there's nothing");
+    assert_eq!(t.g.row_at("Year", &Key::Num(1 + recollect_graph::graph::MOST_IMPLICIT + 1)), None);
+    assert_eq!(t.g.row_at("Year", &Key::Text("x".to_string())), None, "only numbers go on by themselves");
+    assert_eq!(t.g.save().unwrap(), saved, "none of it is written down");
+    assert!(!t.g.entities().any(|e| e == far));
+
+    // It's remembered, and changes reach it.
+    t.g.take_ran();
+    t.g.get_runtime(far, "amount").unwrap();
+    assert!(t.g.take_ran().is_empty());
+    t.put("Year", "base", json!(-1));
+    assert_eq!(t.g.get_runtime(far, "amount").unwrap().unwrap().value, json!(-3));
+    // Writing one of those rows makes it an ordinary row, which the ones after it read instead.
+    t.put("Year[50]", "amount", json!(3));
+    assert_eq!(t.g.get_runtime(far, "amount").unwrap().unwrap().value, json!(-3), "clamped, fifty rows on");
+    let near = t.g.row_at("Year", &Key::Num(51)).unwrap();
+    assert_eq!(t.g.get_runtime(near, "amount").unwrap().unwrap().value, json!(2));
+}
+
+#[test]
+fn a_second_table_node_reaches_rows_nobody_wrote() {
+    // Found by the random test below: the rows nobody wrote were left out when a name moved what they take.
+    let mut t = T::new();
+    t.put("Other", "base", json!(-1));
+    let first = t.e("First");
+    t.g.set_rule(first, "amount", "tables/running", Value::Null);
+    t.put("Year[0]", "base", json!(1));
+    t.rename("First", "Year");
+    let one = t.g.row_at("Year", &Key::Num(1)).unwrap();
+    assert!(matches!(t.g.get_runtime(one, "amount"), Err(Error::Missing(_))));
+    t.rename("Other", "Year");
+    assert_eq!(t.g.get_runtime(one, "amount").unwrap().unwrap().value, json!(0), "the other node named Year says the base: -1, and 1 from Year[0]");
 }
 
 // ---------- memoisation has to stay invisible ----------
@@ -217,7 +272,8 @@ fn fresh(s: &State) -> (Graph, Vec<Entity>) {
 fn outcome(g: &Graph, e: Entity) -> Result<Option<Value>, ()> {
     match g.get_runtime(e, "amount") {
         Ok(v) => Ok(v.map(|r| r.value)),
-        Err(Error::Cycle(_)) => Err(()),
+        // Going round in a loop, or reading what a row nobody wrote can't have.
+        Err(Error::Cycle(_) | Error::Missing(_)) => Err(()),
         Err(e) => panic!("unexpected {e:?}"),
     }
 }
@@ -225,7 +281,7 @@ fn outcome(g: &Graph, e: Entity) -> Result<Option<Value>, ()> {
 #[test]
 fn a_long_lived_graph_with_tables_always_agrees_with_a_new_one() {
     let mut rng = Rng(0x2545F4914F6CDD1D);
-    let (mut edits, mut taken, mut with_prev) = (0usize, 0usize, 0usize);
+    let (mut edits, mut taken, mut with_prev, mut implicit) = (0usize, 0usize, 0usize, 0usize);
     for _ in 0..300 {
         let mut state = State::default();
         let (mut g, ids) = fresh(&state);
@@ -278,6 +334,15 @@ fn a_long_lived_graph_with_tables_always_agrees_with_a_new_one() {
                 taken += usize::from(new.kind_of(new_ids[i], "amount").is_some());
                 with_prev += usize::from(new.row_along(new_ids[i], -1).is_some());
             }
+            // And rows nobody wrote, read the same way.
+            for (table, n) in [("T", 4), ("U", 3), ("T", 1)] {
+                let (a, b) = (g.row_at(table, &Key::Num(n)), new.row_at(table, &Key::Num(n)));
+                assert_eq!(a.is_some(), b.is_some());
+                if let (Some(a), Some(b)) = (a, b) {
+                    assert_eq!(outcome(&g, a), outcome(&new, b), "{table}[{n}], with {state:?}");
+                    implicit += usize::from(!g.entities().any(|e| e == a));
+                }
+            }
             if edits % 10 == 0 {
                 let (reloaded, problems) = Graph::load(g.save().unwrap(), registry());
                 assert_eq!(problems, vec![]);
@@ -287,7 +352,8 @@ fn a_long_lived_graph_with_tables_always_agrees_with_a_new_one() {
             }
         }
     }
-    println!("{edits} edits, {taken} answers taken from elsewhere, {with_prev} rows with one before");
+    println!("{edits} edits, {taken} answers taken from elsewhere, {with_prev} rows with one before, {implicit} reads of rows nobody wrote");
+    assert!(implicit > 300, "and rows nobody wrote");
     assert!(taken > 300, "the edits should actually exercise tables");
     assert!(with_prev > 300, "and rows reading the one before");
 }

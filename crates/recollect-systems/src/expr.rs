@@ -139,6 +139,8 @@ pub enum Expr {
     Lit(Val),
     /// `rate`, `rate.finish`, `self.need`, `whole.plan_end`.
     Path(Vec<String>),
+    /// `Year[3].balance`: a row of a table, by its key, and a cell on it. See `table`.
+    Row { table: String, key: Box<Expr>, path: Vec<String> },
     Call(String, Vec<Expr>),
     /// `sum(x in group: body)`. A group is `in.kind`, `out.kind`, `with.component`, or a name.
     /// `start` is what `max` and `min` begin from, and what `pick` gives if nothing's chosen.
@@ -202,7 +204,7 @@ pub fn inputs_of(e: &Expr) -> Inputs {
     }
     fn walk(e: &Expr, i: &mut Inputs) {
         match e {
-            Expr::Lit(_) | Expr::Path(_) => {}
+            Expr::Lit(_) | Expr::Path(_) | Expr::Row { .. } => {}
             Expr::Not(a) | Expr::Neg(a) => walk(a, i),
             Expr::Bin(_, a, b) => {
                 walk(a, i);
@@ -253,7 +255,7 @@ enum Tok {
     Sym(&'static str),
 }
 
-const SYMBOLS: &[&str] = &["&&", "||", "!=", "<=", ">=", "(", ")", ",", ".", ":", "+", "-", "*", "/", "^", "=", "<", ">", "!"];
+const SYMBOLS: &[&str] = &["&&", "||", "!=", "<=", ">=", "(", ")", "[", "]", ",", ".", ":", "+", "-", "*", "/", "^", "=", "<", ">", "!"];
 
 fn tokens(text: &str) -> Result<Vec<(Tok, usize)>, String> {
     let chars: Vec<char> = text.chars().collect();
@@ -461,6 +463,17 @@ impl Parser {
                 "false" => Ok(Expr::Lit(Val::Bool(false))),
                 "undefined" => Ok(Expr::Lit(Val::Undefined)),
                 _ if self.eat("(") => self.call(n),
+                _ if self.eat("[") => {
+                    self.deeper()?;
+                    let key = self.or()?;
+                    self.depth -= 1;
+                    self.expect("]")?;
+                    let mut path = Vec::new();
+                    while self.eat(".") {
+                        path.push(self.name()?);
+                    }
+                    Ok(Expr::Row { table: n, key: Box::new(key), path })
+                }
                 _ => Ok(Expr::Path(self.path_from(n)?)),
             },
         }

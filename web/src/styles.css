@@ -2873,3 +2873,10 @@ tr.pruned {
 .table-chart {
   max-width: 720px;
 }
+.table-grid .implicit-row .sheet-name {
+  font-style: italic;
+  opacity: 0.6;
+}
+.table-new input[type="number"] {
+  width: 6em;
+}

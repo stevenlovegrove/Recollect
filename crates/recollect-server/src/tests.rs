@@ -832,6 +832,26 @@ async fn held_out_tables_of_cars_and_years() {
     assert_eq!(cell(&v, "Year[10]", "balance")["vars"], json!([ids_of(&done, "new:top")]));
 }
 
+/// A numbered table goes on past its last row, worked out and never saved, and a row nobody wrote says
+/// what it's missing by name.
+#[tokio::test]
+async fn rows_nobody_wrote_can_be_looked_at() {
+    let c = Client::new();
+    c.open("compound-interest").await;
+    let v = c.view(json!({})).await;
+    let rows = c.post("/api/rows", json!({ "table": "Year", "from": 9, "to": 12, "world": { id(&v, "Top up in year 5?"): id(&v, "No top-up") } })).await;
+    let rows = rows.as_array().unwrap();
+    assert_eq!(rows.iter().map(|r| (r["key"].as_i64().unwrap(), r["written"].as_bool().unwrap())).collect::<Vec<_>>(), vec![(9, true), (10, true), (11, false), (12, false)]);
+    let twelve = rows[3]["cells"]["balance"]["value"].as_f64().unwrap();
+    assert!((twelve - 1000.0 * 1.05f64.powi(12)).abs() < 1e-6, "{twelve}");
+    let after = c.view(json!({})).await;
+    assert_eq!(after["nodes"].as_array().unwrap().len(), v["nodes"].as_array().unwrap().len(), "and they aren't nodes");
+
+    // A formula reading a cell the table doesn't say is refused, naming the row it's on.
+    let why = refused(&c, json!([{ "op": "add_node", "id": "new:x", "name": "Far", "formula": "Year[40].colour" }])).await;
+    assert!(why.contains("colour on Year[40]"), "{why}");
+}
+
 fn ids_of(done: &Value, k: &str) -> String {
     done["created"][k].as_str().unwrap().to_string()
 }

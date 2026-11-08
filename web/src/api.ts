@@ -33,6 +33,14 @@ export interface Cell {
   error?: string;
 }
 
+export interface RowCells {
+  key: number;
+  id: string;
+  /** Someone wrote it. Otherwise it's worked out from the table, and isn't saved. */
+  written: boolean;
+  cells: Record<string, Cell>;
+}
+
 export interface CellRef {
   node: string;
   component: string;
@@ -296,6 +304,8 @@ export const api = {
   tryFormula: (node: string, text: string, world: World) => post<Tried>("/api/try", { node, text, world }),
   /** What these cells would be with `set` typed in as each value in turn, with nothing changed. */
   sweep: (set: CellRef, values: number[], read: CellRef[], world: World) => post<{ at: number; cells: (Cell | null)[] }[]>("/api/sweep", { set, values, read, world }),
+  /** A numbered table's rows from one key to another, including rows nobody wrote, which are worked out from the table and never saved. */
+  rows: (table: string, from: number, to: number, world: World) => post<RowCells[]>("/api/rows", { table, from, to, world }),
   history: (node?: string) => req<EventView[]>(`/api/history${node ? `?node=${encodeURIComponent(node)}` : ""}`),
   files: () => req<FileInfo[]>("/api/files"),
   file: (path: string) => req<FileText>(`/api/file?path=${encodeURIComponent(path)}`),

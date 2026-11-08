@@ -37,7 +37,8 @@ to choose, such as how far someone will drive: its weights then say how likely e
 A name makes a table. A node named `Year[3]` is row 3 of the table `Year`, and `Car[Hatchback]` is the Hatchback row of `Car`: each \
 takes what it doesn't say from the node named `Year` or `Car`, as from a kind, with no `is_a` link needed. A formula there reads \
 `prev.balance` for the row before (`next`, `prev.prev`, `row` for which row this is, and `rows` for all of them), so a recurrence is \
-one formula on the table and a starting value on the first row. If Petrol car `is_a` Car, then `Petrol car[Hatchback]` and \
+one formula on the table and a starting value on the first row. A numbered table goes on past its last row by itself, so \
+`Year[100].balance` works without writing 100 rows: those rows take everything from the table and aren't saved. If Petrol car `is_a` Car, then `Petrol car[Hatchback]` and \
 `Car[Hatchback]` are parts of one car: put what every car has on the Car row and what only petrol cars have on the Petrol car row. \
 A table's columns are cells of the workspace's own, such as `balance`, since `value` belongs to the formulas system. \
 Write a whole table with one op: `{\"op\": \"table\", \"name\": \"Year\", \"columns\": {\"balance\": {\"formula\": \"prev.balance * (1 + rate)\", \

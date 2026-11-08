@@ -201,6 +201,14 @@ impl Labels {
     fn of(&self, s: &str) -> String {
         self.0.get(s).cloned().unwrap_or_else(|| s.to_string())
     }
+    /// What went wrong, in words. A row nobody wrote only exists once something has asked for it, which
+    /// may be after these labels were gathered, so it's named here.
+    fn error(&self, e: &Error, g: &Graph) -> String {
+        let mut names = self.0.clone();
+        names.extend(g.implicit_rows().into_iter().map(|(e, name)| (e.to_string(), name)));
+        describe_error(e, &Labels(names))
+    }
+
     fn read(&self, b: &Bool) -> Reading {
         Reading { when: b.show_with(&|s| self.of(s)), prob: b.prob(), always: b.is_always(), never: b.is_never() }
     }
@@ -260,7 +268,7 @@ fn cell_view(g: &Graph, catalog: &Catalog, e: Entity, c: &str, picks: &Picks, in
     if let Some(shown) = catalog.shown(g, e, c) {
         return match shown {
             Ok(None) => None,
-            Err(err) => Some(cell(None, None, Vec::new(), false, Some(describe_error(&err, labels)))),
+            Err(err) => Some(cell(None, None, Vec::new(), false, Some(labels.error(&err, g)))),
             Ok(Some(s)) => {
                 for v in s.vars() {
                     vars.insert(v.name(), v);
@@ -284,7 +292,7 @@ fn cell_view(g: &Graph, catalog: &Catalog, e: Entity, c: &str, picks: &Picks, in
     }
     match g.get_runtime(e, c) {
         Ok(None) => None,
-        Err(err) => Some(cell(None, None, Vec::new(), false, Some(describe_error(&err, labels)))),
+        Err(err) => Some(cell(None, None, Vec::new(), false, Some(labels.error(&err, g)))),
         Ok(Some(r)) => Some(cell(Some(r.value), None, Vec::new(), false, None)),
     }
 }
@@ -455,6 +463,35 @@ pub fn sweep(o: &Open, set: &CellRef, values: &[f64], read: &[CellRef], world: &
             Swept { at, cells: read.iter().map(|r| cell_view(&copy, catalog, r.node, &r.component, &picks, &playing, &labels, &mut vars)).collect() }
         })
         .collect())
+}
+
+/// One row of a numbered table, whether or not anyone wrote it.
+#[derive(Debug, Serialize)]
+pub struct RowCells {
+    pub key: i64,
+    pub id: Entity,
+    /// Someone wrote it, so it's a node like any other. Otherwise it's worked out from the table, and
+    /// isn't saved.
+    pub written: bool,
+    pub cells: BTreeMap<String, CellView>,
+}
+
+/// A numbered table's rows from one key to another, narrowed to `world`. Rows nobody wrote are there too,
+/// as far as the table goes on: see `Graph::row_at`.
+pub fn rows(o: &Open, table: &str, from: i64, to: i64, world: &World) -> Vec<RowCells> {
+    let g = o.log.graph();
+    let catalog = &o.built.catalog;
+    let labels = Labels(recollect_systems::labels(g));
+    let picks = Space::global().picks(world);
+    let playing = in_play(g, catalog, &picks);
+    let mut vars = BTreeMap::new();
+    (from..=to)
+        .filter_map(|n| {
+            let e = g.row_at(table, &recollect_graph::table::Key::Num(n))?;
+            let cells = g.components_of(e).into_iter().filter(|c| !catalog.is_internal(c)).filter_map(|c| cell_view(g, catalog, e, &c, &picks, &playing, &labels, &mut vars).map(|v| (c, v))).collect();
+            Some(RowCells { key: n, id: e, written: g.contains(e), cells })
+        })
+        .collect()
 }
 
 /// What the planning system has to say, narrowed to `world`, or nothing if it isn't active.

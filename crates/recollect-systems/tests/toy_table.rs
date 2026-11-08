@@ -57,10 +57,10 @@ fn a_tables_formula_runs_for_each_row_from_the_one_before() {
     assert!((number(&g, "Year[10]", "balance") - 2593.74246).abs() < 1e-3);
     assert_eq!(g.ran_cells().iter().filter(|c| c.starts_with("balance(")).count(), 10, "each row once");
 
-    // A gap breaks the chain, and filling it mends it.
+    // A gap is a row nobody wrote, which takes the table's formula like the rest, so nothing changes.
     let four = g.id("Year[4]");
     g.g.set(four, recollect_graph::Name("Spare".to_string()));
-    assert_eq!(cell(&g, "Year[5]", "balance").cases()[0].1, &Val::Undefined);
+    assert!((number(&g, "Year[10]", "balance") - 2593.74246).abs() < 1e-3);
     g.g.set(four, recollect_graph::Name("Year[4]".to_string()));
     assert!((number(&g, "Year[10]", "balance") - 2593.74246).abs() < 1e-3);
     g.assert_round_trips();
@@ -120,4 +120,42 @@ fn a_choice_part_way_down_a_table_changes_only_what_comes_after() {
     let (lo, hi) = (last.cases().iter().map(|(_, v)| at(v)).fold(f64::MAX, f64::min), last.cases().iter().map(|(_, v)| at(v)).fold(f64::MIN, f64::max));
     assert!((lo - 1628.894626777442).abs() < 1e-6);
     assert!((hi - lo - 500.0 * 1.05f64.powi(5)).abs() < 1e-6, "the top-up grows for the five years after");
+}
+
+#[test]
+fn a_formula_can_address_any_row_and_a_numbered_table_goes_on_by_itself() {
+    let mut g = N::with(plan::install);
+    years(&mut g);
+    // Year[100] was never written. Asking for it works out every year up to it from the table.
+    g.formula("Far", "Year[100].balance");
+    assert!((amount(&g, "Far") - 1000.0 * 1.05f64.powi(100)).abs() < 1e-6);
+    let saved = g.g.save().unwrap();
+    assert_eq!(saved.nodes.len(), g.g.entities().count(), "and none of those years is written down");
+    g.take_ran();
+    amount(&g, "Far");
+    assert!(g.ran().is_empty(), "they're remembered");
+    g.set("Rate", ValueCell::num(0.1));
+    assert!((amount(&g, "Far") - 1000.0 * 1.1f64.powi(100)).abs() < 1e-3, "and changes reach them");
+
+    // Year[row - 1] is the same as prev, and a key can be a name.
+    column(&mut g, "Year", "before", "Year[row - 1].balance");
+    assert!((number(&g, "Year[3]", "before") - number(&g, "Year[2]", "balance")).abs() < 1e-9);
+    put(&mut g, "Car[Hatchback]", "price", json!(18000));
+    g.formula("Price", "Car[Hatchback].price + Car[\"Hatchback\"].price");
+    assert_eq!(amount(&g, "Price"), 36000.0);
+
+    // What a table doesn't say, a row nobody wrote can't have, and before the first row there's nothing.
+    for (text, says) in [("Year[100].colour", "colour"), ("Year[-1].balance", "no row Year[-1]"), ("Car[Estate].price", "no row Car[Estate]"), ("Year[Rate].balance", "no row Year[Rate]")] {
+        g.formula("Bad", text);
+        let err = format!("{:?}", g.get::<ValueCell>("Bad"));
+        assert!(err.contains(says), "{text}: {err}");
+    }
+    g.assert_round_trips();
+}
+
+fn amount(g: &N, name: &str) -> f64 {
+    match g.get::<ValueCell>(name).unwrap().unwrap().0.0.cases().as_slice() {
+        [(_, Val::Num(n))] => *n,
+        other => panic!("{name} is {other:?}"),
+    }
 }
