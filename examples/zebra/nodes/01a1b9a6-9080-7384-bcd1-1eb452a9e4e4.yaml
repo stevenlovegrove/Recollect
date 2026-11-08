@@ -1,0 +1,15 @@
+id: 01a1b9a6-9080-7384-bcd1-1eb452a9e4e4
+components:
+  body: Each in a different house
+  domain:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  name: Colour
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: distinct(rows)

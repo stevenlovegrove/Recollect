@@ -1,0 +1,13 @@
+id: 01a1b9a6-8f98-71a2-a0f1-0bbdefe70650
+components:
+  name: A board
+  requires: null
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: all(constraint)
+links:
+- to: 01a1b9a6-8f98-71a2-a0f1-0bbe8c2df50b
+  components:
+    label: constraint

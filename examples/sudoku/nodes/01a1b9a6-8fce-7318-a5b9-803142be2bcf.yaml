@@ -1,0 +1,8 @@
+id: 01a1b9a6-8fce-7318-a5b9-803142be2bcf
+components:
+  name: Column 1 has each number once
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: distinct(Cell[A1], Cell[B1], Cell[C1], Cell[D1])

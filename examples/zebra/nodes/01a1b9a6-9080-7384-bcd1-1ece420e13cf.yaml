@@ -1,0 +1,8 @@
+id: 01a1b9a6-9080-7384-bcd1-1ece420e13cf
+components:
+  name: Coffee is drunk in the green house
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: Drink[Coffee] = Colour[Green]

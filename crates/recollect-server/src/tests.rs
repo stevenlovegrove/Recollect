@@ -249,8 +249,11 @@ async fn the_zebra_puzzle_comes_back_solved() {
     let v = c.view(json!({})).await;
     assert_eq!(v["worlds"]["count"], "1");
     let s = &v["worlds"]["solutions"][0];
-    assert_eq!(s[id(&v, "Zebra")], s[id(&v, "The Japanese")]);
-    assert_eq!(s[id(&v, "Water")], s[id(&v, "The Norwegian")]);
+    assert_eq!(s[id(&v, "Pet[Zebra]")], s[id(&v, "Nationality[Japanese]")]);
+    assert_eq!(s[id(&v, "Drink[Water]")], s[id(&v, "Nationality[Norwegian]")]);
+    // The tables are what the rows choose from, not choices themselves.
+    assert!(v["worlds"]["vars"].as_array().unwrap().iter().all(|x| x["id"] != id(&v, "Pet")));
+    assert_eq!(v["worlds"]["vars"].as_array().unwrap().len(), 25);
 }
 
 #[tokio::test]

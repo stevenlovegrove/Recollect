@@ -41,6 +41,10 @@ one formula on the table and a starting value on the first row. A numbered table
 `Year[100].balance` works without writing 100 rows: those rows take everything from the table and aren't saved. If Petrol car `is_a` Car, then `Petrol car[Hatchback]` and \
 `Car[Hatchback]` are parts of one car: put what every car has on the Car row and what only petrol cars have on the Petrol car row. \
 A table's columns are cells of the workspace's own, such as `balance`, since `value` belongs to the formulas system. \
+A table can be a table of choices: give the table node a `domain` and each row is a choice from it, while the table isn't a choice \
+itself. For a puzzle, make a table for each kind of thing, such as `Pet[Zebra]` choosing a house, and write each clue as a formula \
+naming the rows it's about, with nothing to label: `Nationality[English] = Colour[Red]`. Say all different with `distinct`: \
+`distinct(rows)` as the table's own value, `distinct(q in rows: q + q.row)` where `q.row` is a row's key, or `distinct(Cell[A1], Cell[A2])`. \
 Write a whole table with one op: `{\"op\": \"table\", \"name\": \"Year\", \"columns\": {\"balance\": {\"formula\": \"prev.balance * (1 + rate)\", \
 \"labels\": {\"rate\": \"Rate\"}}}, \"range\": [0, 10], \"rows\": [{\"key\": 0, \"balance\": 1000}]}`, with `is_a` for a table that's a kind of \
 another and `alternative_of` to make every row an option of a decision.\n\
@@ -67,7 +71,7 @@ than only describing it. Write {op: set, id, component: value, formula: \"prev *
 what you'd get with ordinary values there, so it needs no thought about worlds, and `a + b` works whether or not either varies. \
 Operators: + - * / = != < <= > >= && || !. A number, \\\"text\\\", true, false or undefined. `rate` is that node's value, `rate.finish` another of its cells, and `self.need` one of this node's. \
 Functions: if(c, a, b), defined(x), or(x, fallback), abs, min(a, b), max(a, b), round(x, places?), floor, ceil, and chose(decision, option), which is true where that decision lands on that option. \
-Over a group, which is a label, in.kind, out.kind or with.component: sum, product, all, any, count, and pick for a decision's value from its chosen option: sum(line), sum(t in with.task: if(t.need, t.estimate, 0)), pick(in.alternative). \
+Over a group, which is a label, in.kind, out.kind or with.component: sum, product, all, any, count, distinct, and pick for a decision's value from its chosen option: sum(line), sum(t in with.task: if(t.need, t.estimate, 0)), pick(in.alternative). \
 effort() is a plan's total days in each world, undefined where a gap is in play. Division by zero and missing inputs are undefined, only in the worlds where that's so, which says what isn't known. \
 A `requires` component on a node with a true-or-false value means only the worlds where it's true count, which is how to say a constraint must be met. \
 To reuse logic, a node with {macro: {params: [t], body: \"t.estimate * 100\"}} is a function its callers link to with a label. A formula with a type error or an unknown input is refused, with the reason.\n\

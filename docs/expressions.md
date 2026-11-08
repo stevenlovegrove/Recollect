@@ -172,6 +172,8 @@ or(x, fallback)        = if(defined(x), x, fallback)
 sum(x in G: e)         = e[x₁] + e[x₂] + … + 0
 all(x in G: e)         = e[x₁] && e[x₂] && … && true
 max(x in G: e, start)  = max(max(start, e[x₁]), e[x₂]) …
+distinct(x in G: e)    = e[x₁] != e[x₂] && e[x₁] != e[x₃] && … && true, every pair
+distinct(a, b, c)      = the same, over the values given
 pick(o in G: e)        = if(chose(self, o₁), e[o₁], if(chose(self, o₂), e[o₂], … undefined))
 pick(o in G: e, other) = the same, with other in place of undefined
 ```
@@ -432,7 +434,15 @@ In the app, the Table tab shows any table as a grid: a column for each cell the 
 
 The op `{"op": "table", "name": "Car", "is_a": .., "columns": {..}, "rows": [{"key": "Hatchback", ..}], "range": [0, 10], "alternative_of": ..}` writes a whole table at once. Rows that exist already are used, not made again. A decision's options are still links, since each says how likely it is or why it was ruled out, so `alternative_of` links every row, and adding a row in the grid links it as the others are.
 
-What a system owns still can't come from a table, and that includes `value`, so a table's columns are cells of the workspace's own, such as `balance`.
+What a system owns still can't come from a table, and that includes `value`, so a table's columns are cells of the workspace's own, such as `balance`. The one exception is a choice's options, its `domain`: a row takes its table's, as an instance takes its kind's, so a table can be a table of choices. The table isn't a choice itself, since its options are what its rows choose from, and its own `value` can be a formula over them:
+
+```
+Queen:     domain 1 … 8
+           value = distinct(rows) && distinct(q in rows: q + q.row) && distinct(q in rows: q - q.row)
+Queen[1] … Queen[8]
+```
+
+Each row is a choice of column, and `q.row` is a row's key, so the table's formula says no two queens share a column or a diagonal. The puzzles are written this way. The zebra puzzle has a table for each kind of thing, such as `Pet[Zebra]` and `Drink[Water]`, whose rows choose a house, and each clue is a formula naming the rows it's about, with nothing to label: `Nationality[English] = Colour[Red]`, or `abs(Smoke[Kools] - Pet[Horse]) = 1` for "next to". The sudoku's cells are a table too, and each row, column and box is a clue such as `distinct(Cell[A1], Cell[A2], Cell[A3], Cell[A4])`. That's 45 nodes for the zebra puzzle rather than 90, 10 for eight queens rather than 37, and 31 for the sudoku rather than 74, and the solutions are the same.
 
 The engine keeps an index of names, so finding a table's rows or a row's neighbour doesn't mean reading every name. Renaming a node, linking a table to a kind, or removing a row reaches everything that could take a cell from somewhere else as a result. `tests/tables.rs` checks this against a newly built graph through random renames, kinds and edits, and `tests/toy_table.rs` in the systems checks the formulas.
 

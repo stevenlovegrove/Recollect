@@ -1,3 +1,3 @@
 name = "4×4 sudoku"
-about = "Sixteen cells, and a constraint between each pair that can't match. There are 288 grids."
+about = "A table of sixteen cells, each choosing a number, and a clue for each row, column and box: distinct(Cell[A1], Cell[A2], …). There are 288 grids."
 systems = []

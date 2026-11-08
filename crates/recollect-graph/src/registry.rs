@@ -161,6 +161,9 @@ pub struct Registry {
     pub(crate) checks: Vec<CheckInfo>,
     /// The kind of link from a node to its kind, if nodes can take cells from one.
     pub(crate) inherits_through: Option<String>,
+    /// What systems say that a node still takes from its kind when it doesn't say it, as a row takes
+    /// its table's options.
+    pub(crate) passed_down: HashSet<String>,
     build: String,
 }
 
@@ -248,6 +251,13 @@ impl Registry {
     /// kind of link, as an instance does from its kind.
     pub fn inherit_through(&mut self, kind: &str) -> &mut Self {
         self.inherits_through = Some(kind.to_string());
+        self
+    }
+
+    /// Nodes take this from their kind too, if they don't say it, though a system says what it is: a
+    /// row of a table of choices has the options its table has.
+    pub fn passed_down(&mut self, component: &str) -> &mut Self {
+        self.passed_down.insert(component.to_string());
         self
     }
 

@@ -1,0 +1,46 @@
+id: 01a1b9a6-8fce-7318-a5b9-801a9090ac25
+components:
+  name: A grid
+  requires: null
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: all(constraint)
+links:
+- to: 01a1b9a6-8fce-7318-a5b9-802d8428ea52
+  components:
+    label: constraint
+- to: 01a1b9a6-8fce-7318-a5b9-802e54b2d07f
+  components:
+    label: constraint
+- to: 01a1b9a6-8fce-7318-a5b9-802fb532107a
+  components:
+    label: constraint
+- to: 01a1b9a6-8fce-7318-a5b9-8030ee2e2603
+  components:
+    label: constraint
+- to: 01a1b9a6-8fce-7318-a5b9-803142be2bcf
+  components:
+    label: constraint
+- to: 01a1b9a6-8fce-7318-a5b9-8032e09dcdf6
+  components:
+    label: constraint
+- to: 01a1b9a6-8fce-7318-a5b9-803392f7342a
+  components:
+    label: constraint
+- to: 01a1b9a6-8fce-7318-a5b9-80344029b2e5
+  components:
+    label: constraint
+- to: 01a1b9a6-8fce-7318-a5b9-8035abd51587
+  components:
+    label: constraint
+- to: 01a1b9a6-8fce-7318-a5b9-80363c125f78
+  components:
+    label: constraint
+- to: 01a1b9a6-8fce-7318-a5b9-8037a5308376
+  components:
+    label: constraint
+- to: 01a1b9a6-8fce-7318-a5b9-80386ca1e1f9
+  components:
+    label: constraint

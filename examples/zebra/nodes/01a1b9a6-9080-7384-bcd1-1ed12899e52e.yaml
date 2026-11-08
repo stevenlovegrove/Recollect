@@ -1,0 +1,8 @@
+id: 01a1b9a6-9080-7384-bcd1-1ed12899e52e
+components:
+  name: The Old Gold smoker owns snails
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: Smoke["Old Gold"] = Pet[Snails]

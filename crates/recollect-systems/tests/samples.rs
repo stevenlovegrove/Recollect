@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use recollect_graph::worlds::{Bool, Cond, Space, Var};
 use recollect_graph::{Component, Entity, Graph, Log, Name};
 use recollect_systems::expr::Val;
-use recollect_systems::formulas::{Domain, Requires, ValueCell, truth};
+use recollect_systems::formulas::{Requires, ValueCell, options_of, truth};
 use recollect_systems::plan::{self, Need, Pressure};
 use recollect_systems::samples::{SAMPLES, ops_of};
 use recollect_systems::schedule::{Finish, Slack};
@@ -76,7 +76,7 @@ fn solutions(o: &Opened, limit: usize) -> (Bool, Vec<Var>, Vec<BTreeMap<String, 
     let valid = truth(&g.get::<ValueCell>(puzzle).unwrap().unwrap());
     let mut vars = Vec::new();
     for e in g.entities() {
-        if let Some(Domain(options)) = g.get::<Domain>(e).unwrap() {
+        if let Some(options) = options_of(g, e) {
             let options: Vec<&str> = options.iter().map(String::as_str).collect();
             vars.push(Space::global().uniform(&e.to_string(), &options));
         }
@@ -181,8 +181,8 @@ fn the_puzzles_have_their_known_answers() {
 
     let (valid, vars, solved) = solutions(&open("zebra"), 1);
     assert_eq!(valid.count(&vars), 1);
-    assert_eq!(solved[0]["Zebra"], solved[0]["The Japanese"]);
-    assert_eq!(solved[0]["Water"], solved[0]["The Norwegian"]);
+    assert_eq!(solved[0]["Pet[Zebra]"], solved[0]["Nationality[Japanese]"]);
+    assert_eq!(solved[0]["Drink[Water]"], solved[0]["Nationality[Norwegian]"]);
 }
 
 #[test]

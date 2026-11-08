@@ -1,3 +1,3 @@
 name = "The zebra puzzle"
-about = "Who owns the zebra, and who drinks water? About 3 × 10¹⁷ combinations, and the rules leave exactly one."
+about = "Who owns the zebra, and who drinks water? A table for each kind of thing, whose rows choose a house, and the clues written as they read: Nationality[English] = Colour[Red]. About 3 × 10¹⁷ combinations, and the clues leave exactly one."
 systems = []

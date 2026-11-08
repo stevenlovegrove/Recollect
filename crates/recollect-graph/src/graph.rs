@@ -396,6 +396,15 @@ pub(crate) struct Inheriting {
     pub(crate) through: String,
     /// What the systems say: a kind only says what the workspace's own cells are.
     pub(crate) owned: HashSet<String>,
+    /// What the systems say that's still taken from a kind: see `Registry::passed_down`.
+    pub(crate) passed_down: HashSet<String>,
+}
+
+impl Inheriting {
+    /// Whether a node takes this cell from its kind when it doesn't say it.
+    pub(crate) fn takes(&self, component: &str) -> bool {
+        !self.owned.contains(component) || self.passed_down.contains(component)
+    }
 }
 
 #[derive(Default)]
@@ -428,7 +437,7 @@ impl Graph {
 
     /// A graph using these rules, and whatever defaults they set.
     pub fn with_registry(registry: Arc<Registry>) -> Self {
-        let inheriting = registry.inherits_through.as_ref().map(|through| Arc::new(Inheriting { through: through.clone(), owned: registry.owned() }));
+        let inheriting = registry.inherits_through.as_ref().map(|through| Arc::new(Inheriting { through: through.clone(), owned: registry.owned(), passed_down: registry.passed_down.clone() }));
         let mut g = Graph { defaults: registry.defaults.clone(), inheriting, registry, ..Self::default() };
         g.revision = 1;
         g
@@ -573,7 +582,7 @@ impl Graph {
     /// What backs this cell changed, here and for whatever takes it from here.
     fn rebacked(&mut self, e: Entity, component: &str) {
         self.touch(Dep::Backing((e, component.to_string())));
-        if !self.inheriting.as_ref().is_some_and(|i| !i.owned.contains(component)) {
+        if !self.inheriting.as_ref().is_some_and(|i| i.takes(component)) {
             return;
         }
         let takers = self.takers_all(e);
@@ -838,7 +847,7 @@ impl Graph {
     /// The nearest that says what this cell is, of the other parts of the same row and then the kinds:
     /// see `lookup`.
     fn from_kind(&self, e: Entity, component: &str) -> Option<(Backing, Entity)> {
-        self.inheriting.as_ref().filter(|i| !i.owned.contains(component))?;
+        self.inheriting.as_ref().filter(|i| i.takes(component))?;
         self.lookup(e).into_iter().find_map(|k| self.cells.get(&k).and_then(|c| c.get(component)).map(|b| (b.clone(), k)))
     }
 
@@ -957,7 +966,7 @@ impl Graph {
     /// The cells a node could take from elsewhere.
     fn taken(&self, n: Entity) -> BTreeSet<String> {
         let Some(inh) = &self.inheriting else { return BTreeSet::new() };
-        self.lookup(n).iter().flat_map(|k| self.cells.get(k).into_iter().flat_map(|c| c.keys())).filter(|c| !inh.owned.contains(*c)).cloned().collect()
+        self.lookup(n).iter().flat_map(|k| self.cells.get(k).into_iter().flat_map(|c| c.keys())).filter(|c| inh.takes(c)).cloned().collect()
     }
 
     // ---------- tables ----------
@@ -1383,8 +1392,13 @@ impl Cx<'_> {
 
     /// Which row this rule's node is in its table.
     pub fn row_key(&self) -> Option<table::Key> {
+        self.row_key_of(self.id)
+    }
+
+    /// Which row that node is in its table, as `q.row` reads it.
+    pub fn row_key_of(&self, e: Entity) -> Option<table::Key> {
         self.s.note(Dep::Scan(Name::NAME.to_string()));
-        self.s.g.row_of(self.id).map(|r| r.key)
+        self.s.g.row_of(e).map(|r| r.key)
     }
 
     pub fn scan(&self, component: &str) -> Result<Vec<Entity>, Error> {

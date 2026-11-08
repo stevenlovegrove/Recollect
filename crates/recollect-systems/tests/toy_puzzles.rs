@@ -172,6 +172,79 @@ fn n_queens_matches_the_known_counts() {
     }
 }
 
+/// The same, as a table: each row of `Queen` takes the table's options, so it's a choice of column,
+/// and the table says no two rows share a column or a diagonal.
+fn queens_table(n: usize) -> Puzzle {
+    let mut p = Puzzle::new();
+    let cols: Vec<String> = (0..n).map(|c| c.to_string()).collect();
+    p.g.set("Queen", Domain(cols.clone()));
+    let head = p.g.id("Queen");
+    p.g.g.set_rule(head, "value", EXPR, json!({ "text": "distinct(rows) && distinct(q in rows: q + q.row) && distinct(q in rows: q - q.row)" }));
+    p.g.g.link(p.puzzle, head, Label("constraint".to_string()));
+    let cols: Vec<&str> = cols.iter().map(String::as_str).collect();
+    for r in 0..n {
+        let e = p.g.e(&format!("Queen[{r}]"));
+        p.vars.push(Space::global().uniform(&e.to_string(), &cols));
+    }
+    p
+}
+
+#[test]
+fn n_queens_as_a_table_matches_the_known_counts() {
+    for (n, want) in [(4, 2), (5, 10), (6, 4), (8, 92)] {
+        let p = queens_table(n);
+        assert_eq!(p.count(), want, "{n} queens");
+        p.g.assert_round_trips();
+    }
+}
+
+#[test]
+fn a_tables_options_are_its_rows_choices_not_its_own() {
+    let mut p = Puzzle::new();
+    p.g.set("Pet", Domain(vec!["1".into(), "2".into()]));
+    let (dog, cat) = (p.g.e("Pet[Dog]"), p.g.e("Pet[Cat]"));
+    let value = |p: &Puzzle, e: Entity| p.g.g.get::<ValueCell>(e).unwrap().map(|v| v.0.0.cases().len());
+    assert_eq!(value(&p, dog), Some(2), "a row chooses from its table's options");
+    assert_eq!(value(&p, p.e("Pet")), None, "the table isn't a choice itself");
+
+    // A row can say its own options, and the table's are taken again when it stops.
+    p.g.set("Pet[Cat]", Domain(vec!["1".into(), "2".into(), "3".into()]));
+    assert_eq!(value(&p, cat), Some(3));
+    p.g.set("Pet", Domain(vec!["1".into(), "2".into(), "3".into(), "4".into()]));
+    assert_eq!(value(&p, dog), Some(4), "changing the table's options changes its rows'");
+    assert_eq!(value(&p, cat), Some(3));
+
+    // With no rows left, it's a choice like any other node with options.
+    let (d, c) = (p.e("Pet[Dog]"), p.e("Pet[Cat]"));
+    p.g.g.set(d, recollect_graph::Name("Dog".to_string()));
+    p.g.g.set(c, recollect_graph::Name("Cat".to_string()));
+    assert_eq!(value(&p, p.e("Pet")), Some(4));
+    assert_eq!(value(&p, d), None, "and what was a row isn't");
+    p.g.assert_round_trips();
+}
+
+#[test]
+fn distinct_is_every_pair_differing() {
+    let mut p = Puzzle::new();
+    for x in ["x", "y", "z"] {
+        p.choice(x, &["1", "2", "3"]);
+    }
+    p.constraint(&[("v", "x"), ("v", "y"), ("v", "z")], "distinct(v)");
+    assert_eq!(p.count(), 6);
+    let mut q = Puzzle::new();
+    for x in ["x", "y", "z"] {
+        q.choice(x, &["1", "2", "3"]);
+    }
+    let all = q.constraint(&[("x", "x"), ("y", "y"), ("z", "z")], "distinct(x, y, z)");
+    assert_eq!(q.count(), 6, "or the values listed out");
+    q.g.g.set_rule(all, "value", EXPR, json!({ "text": "distinct(x, y)" }));
+    assert_eq!(q.count(), 18);
+    q.g.g.set_rule(all, "value", EXPR, json!({ "text": "true" }));
+    q.constraint(&[("v", "x"), ("v", "y"), ("v", "z")], "distinct(n in v: n * n - 4 * n)");
+    // n² - 4n is -3, -4 and -3, so there are only two different values for three choices.
+    assert_eq!(q.count(), 0);
+}
+
 // ---------- sudoku ----------
 
 fn sudoku4() -> Puzzle {

@@ -1,0 +1,8 @@
+id: 01a1b9a6-9081-76c8-be09-f96368f728f9
+components:
+  name: Kools are smoked in the yellow house
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: Smoke[Kools] = Colour[Yellow]

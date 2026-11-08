@@ -29,14 +29,14 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "compound-interest", title: "Compound interest", about: "A table of years. One formula on Year works out each from the year before, and only Year[0] and Year[5] are written: the rest are worked out as far as they're asked for. A top-up you might make in year 5 changes only the years after it.", group: "sheet", systems: &["plan"], build: compound_interest },
     Sample { name: "fibonacci", title: "Fibonacci", about: "A table where each row adds the two before it: prev.f + prev.prev.f. Only the first two rows are written, and asking for F[80] works out the rest, each once: 79 formula runs.", group: "sheet", systems: &[], build: fibonacci },
     Sample { name: "australia", title: "Colouring Australia", about: "Each region is a choice and each border a constraint. There are 18 colourings. Pin a region and see what that forces.", group: "puzzle", systems: &[], build: australia },
-    Sample { name: "eight-queens", title: "Eight queens", about: "One choice per row, and one constraint per pair of rows. There are 92 boards.", group: "puzzle", systems: &[], build: eight_queens },
-    Sample { name: "sudoku", title: "4×4 sudoku", about: "Sixteen cells, and a constraint between each pair that can't match. There are 288 grids.", group: "puzzle", systems: &[], build: sudoku },
+    Sample { name: "eight-queens", title: "Eight queens", about: "A table with a row for each row of the board, choosing the column its queen is in. One formula on the table says no two share a column or a diagonal. There are 92 boards.", group: "puzzle", systems: &[], build: eight_queens },
+    Sample { name: "sudoku", title: "4×4 sudoku", about: "A table of sixteen cells, each choosing a number, and a clue for each row, column and box: distinct(Cell[A1], Cell[A2], …). There are 288 grids.", group: "puzzle", systems: &[], build: sudoku },
     Sample { name: "knights-and-knaves", title: "Knights and knaves", about: "A says “we are both knaves”. Knights always tell the truth, and knaves always lie.", group: "puzzle", systems: &[], build: knights_and_knaves },
-    Sample { name: "zebra", title: "The zebra puzzle", about: "Who owns the zebra, and who drinks water? About 3 × 10¹⁷ combinations, and the rules leave exactly one.", group: "puzzle", systems: &[], build: zebra },
+    Sample { name: "zebra", title: "The zebra puzzle", about: "Who owns the zebra, and who drinks water? A table for each kind of thing, whose rows choose a house, and the clues written as they read: Nationality[English] = Colour[Red]. About 3 × 10¹⁷ combinations, and the clues leave exactly one.", group: "puzzle", systems: &[], build: zebra },
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "6";
+pub const FORMAT: &str = "7";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -263,20 +263,28 @@ impl<'a> Puzzle<'a> {
         self.b.label(&root, &key, "constraint");
     }
 
-    fn same(&mut self, a: &str, b: &str) {
-        self.constraint(&[("a", a), ("b", b)], format!("{a} = {b}"), "a = b");
-    }
-
     fn different(&mut self, a: &str, b: &str) {
         self.constraint(&[("a", a), ("b", b)], format!("{a} ≠ {b}"), "a != b");
     }
 
-    fn adjacent(&mut self, a: &str, b: &str) {
-        self.constraint(&[("a", a), ("b", b)], format!("{a} next to {b}"), "abs(a - b) = 1");
+    /// A table of choices: each row takes the table's options.
+    fn table(&mut self, table: &str, options: &[&str], keys: &[&str]) {
+        self.choice(table, options);
+        for k in keys {
+            self.b.e(&format!("{table}[{k}]"));
+        }
     }
 
-    fn is(&mut self, choice: &str, value: &str) {
-        self.constraint(&[("choice", choice)], format!("{choice} is {value}"), &format!("choice = {value}"));
+    /// A clue, as the puzzle says it, and as a formula that names the rows it's about.
+    fn clue(&mut self, said: &str, text: &str) {
+        self.constraint(&[], said.to_string(), text);
+    }
+
+    /// What a table says about its rows, which goes towards the puzzle being solved.
+    fn rule(&mut self, table: &str, said: &str, text: &str) {
+        self.b.formula(table, text).set(table, Body(said.to_string()));
+        let root = self.root.clone();
+        self.b.label(&root, table, "constraint");
     }
 }
 
@@ -295,36 +303,37 @@ fn australia(b: &mut Build) {
 
 fn eight_queens(b: &mut Build) {
     let mut p = Puzzle::new(b, "A board");
+    // Each row of the board is a row of the table, which says which column its queen is in.
     let cols: Vec<String> = (1..=8).map(|c| c.to_string()).collect();
     let cols: Vec<&str> = cols.iter().map(String::as_str).collect();
-    for r in 1..=8 {
-        p.choice(&format!("Row {r}"), &cols);
-    }
-    for r1 in 1..=8 {
-        for r2 in r1 + 1..=8 {
-            let (a, b) = (format!("Row {r1}"), format!("Row {r2}"));
-            p.constraint(&[("a", &a), ("b", &b)], format!("{a} clear of {b}"), &format!("a != b && abs(a - b) != {}", r2 - r1));
-        }
-    }
+    let keys: Vec<String> = (1..=8).map(|r| r.to_string()).collect();
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    p.table("Queen", &cols, &keys);
+    p.rule("Queen", "No two share a column or a diagonal", "distinct(rows) && distinct(q in rows: q + q.row) && distinct(q in rows: q - q.row)");
 }
 
 fn sudoku(b: &mut Build) {
     let mut p = Puzzle::new(b, "A grid");
     p.b.set("Board with its boxes", Drawing(include_str!("drawings/sudoku.ts").to_string()));
-    let id = |r: usize, c: usize| format!("Cell {}{}", (b'A' + r as u8) as char, c + 1);
-    for r in 0..4 {
-        for c in 0..4 {
-            p.choice(&id(r, c), &["1", "2", "3", "4"]);
-            p.b.set(&id(r, c), At { row: r as u32, col: c as u32 });
-        }
+    let rows = ["A", "B", "C", "D"];
+    let keys: Vec<String> = rows.iter().flat_map(|r| (1..=4).map(move |c| format!("{r}{c}"))).collect();
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    p.table("Cell", &["1", "2", "3", "4"], &keys);
+    for (i, k) in keys.iter().enumerate() {
+        p.b.set(&format!("Cell[{k}]"), At { row: (i / 4) as u32, col: (i % 4) as u32 });
     }
-    for a in 0..16usize {
-        for b in a + 1..16 {
-            let (ra, ca, rb, cb) = (a / 4, a % 4, b / 4, b % 4);
-            if ra == rb || ca == cb || (ra / 2 == rb / 2 && ca / 2 == cb / 2) {
-                p.different(&id(ra, ca), &id(rb, cb));
-            }
-        }
+    let cells = |pick: &dyn Fn(usize, usize) -> bool| {
+        let named: Vec<String> = (0..16).filter(|i| pick(i / 4, i % 4)).map(|i| format!("Cell[{}]", keys[i])).collect();
+        format!("distinct({})", named.join(", "))
+    };
+    for (r, name) in rows.iter().enumerate() {
+        p.clue(&format!("Row {name} has each number once"), &cells(&|rr, _| rr == r));
+    }
+    for c in 0..4 {
+        p.clue(&format!("Column {} has each number once", c + 1), &cells(&|_, cc| cc == c));
+    }
+    for (r, c, name) in [(0, 0, "top left"), (0, 1, "top right"), (1, 0, "bottom left"), (1, 1, "bottom right")] {
+        p.clue(&format!("The {name} box has each number once"), &cells(&|rr, cc| rr / 2 == r && cc / 2 == c));
     }
 }
 
@@ -339,40 +348,35 @@ fn knights_and_knaves(b: &mut Build) {
 
 fn zebra(b: &mut Build) {
     let houses = ["1", "2", "3", "4", "5"];
-    let categories: [&[&str]; 5] = [
-        &["The Englishman", "The Spaniard", "The Ukrainian", "The Norwegian", "The Japanese"],
-        &["Red house", "Green house", "Ivory house", "Yellow house", "Blue house"],
-        &["Dog", "Snails", "Fox", "Horse", "Zebra"],
-        &["Coffee", "Tea", "Milk", "Juice", "Water"],
-        &["Old Gold", "Kools", "Chesterfield", "Lucky Strike", "Parliament"],
+    // A table for each kind of thing, whose rows say which house each is in.
+    let tables: [(&str, &[&str]); 5] = [
+        ("Nationality", &["English", "Spanish", "Ukrainian", "Norwegian", "Japanese"]),
+        ("Colour", &["Red", "Green", "Ivory", "Yellow", "Blue"]),
+        ("Pet", &["Dog", "Snails", "Fox", "Horse", "Zebra"]),
+        ("Drink", &["Coffee", "Tea", "Milk", "Juice", "Water"]),
+        ("Smoke", &["Old Gold", "Kools", "Chesterfield", "Lucky Strike", "Parliament"]),
     ];
     let mut p = Puzzle::new(b, "The street");
-    for cat in categories {
-        for v in cat {
-            p.choice(v, &houses);
-        }
+    for (table, rows) in tables {
+        p.table(table, &houses, rows);
     }
-    // The clues go first, so the search is narrow before the all-different constraints apply.
-    p.same("The Englishman", "Red house");
-    p.same("The Spaniard", "Dog");
-    p.same("Coffee", "Green house");
-    p.same("The Ukrainian", "Tea");
-    p.constraint(&[("a", "Green house"), ("b", "Ivory house")], "Green house = Ivory house + 1".to_string(), "a = b + 1");
-    p.same("Old Gold", "Snails");
-    p.same("Kools", "Yellow house");
-    p.is("Milk", "3");
-    p.is("The Norwegian", "1");
-    p.adjacent("Chesterfield", "Fox");
-    p.adjacent("Kools", "Horse");
-    p.same("Lucky Strike", "Juice");
-    p.same("The Japanese", "Parliament");
-    p.adjacent("The Norwegian", "Blue house");
-    for cat in categories {
-        for i in 0..5 {
-            for j in i + 1..5 {
-                p.different(cat[i], cat[j]);
-            }
-        }
+    // The clues go first, so the search is narrow before the rest apply.
+    p.clue("The Englishman lives in the red house", "Nationality[English] = Colour[Red]");
+    p.clue("The Spaniard owns the dog", "Nationality[Spanish] = Pet[Dog]");
+    p.clue("Coffee is drunk in the green house", "Drink[Coffee] = Colour[Green]");
+    p.clue("The Ukrainian drinks tea", "Nationality[Ukrainian] = Drink[Tea]");
+    p.clue("The green house is just right of the ivory house", "Colour[Green] = Colour[Ivory] + 1");
+    p.clue("The Old Gold smoker owns snails", r#"Smoke["Old Gold"] = Pet[Snails]"#);
+    p.clue("Kools are smoked in the yellow house", "Smoke[Kools] = Colour[Yellow]");
+    p.clue("Milk is drunk in the middle house", "Drink[Milk] = 3");
+    p.clue("The Norwegian lives in the first house", "Nationality[Norwegian] = 1");
+    p.clue("The Chesterfield smoker lives next to the man with the fox", "abs(Smoke[Chesterfield] - Pet[Fox]) = 1");
+    p.clue("Kools are smoked next to the house with the horse", "abs(Smoke[Kools] - Pet[Horse]) = 1");
+    p.clue("The Lucky Strike smoker drinks juice", r#"Smoke["Lucky Strike"] = Drink[Juice]"#);
+    p.clue("The Japanese smokes Parliament", "Nationality[Japanese] = Smoke[Parliament]");
+    p.clue("The Norwegian lives next to the blue house", "abs(Nationality[Norwegian] - Colour[Blue]) = 1");
+    for (table, _) in tables {
+        p.rule(table, "Each in a different house", "distinct(rows)");
     }
 }
 

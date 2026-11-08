@@ -151,10 +151,10 @@ pub enum Expr {
 }
 
 /// What's evaluated as itself, rather than being expanded into something else.
-pub const CORE: &[&str] = &["if", "defined", "has", "chose", "round", "floor", "ceil", "max", "min"];
+pub const CORE: &[&str] = &["if", "defined", "has", "chose", "round", "floor", "ceil", "max", "min", "distinct"];
 
 /// Functions that expand into one copy of their body for each node in a group.
-pub const FOLDS: &[&str] = &["sum", "product", "all", "any", "count", "pick", "max", "min"];
+pub const FOLDS: &[&str] = &["sum", "product", "all", "any", "count", "pick", "max", "min", "distinct"];
 
 /// Folds with no answer of their own for an empty group, so they have to be told where to begin.
 const NEEDS_START: &[&str] = &["max", "min"];
@@ -510,7 +510,9 @@ impl Parser {
         }
         // `max(a, b)` is two numbers, and only a group spelled out as one can be gone over.
         let of_group = matches!(args.first(), Some(Expr::Path(p)) if matches!(p[0].as_str(), "in" | "out" | "with" | "rows"));
-        if FOLDS.contains(&func.as_str()) && (!NEEDS_START.contains(&func.as_str()) || of_group) {
+        // `distinct(a, b, c)` is the values given, and `distinct(group)` goes over the group.
+        let many = func == "distinct" && args.len() != 1;
+        if FOLDS.contains(&func.as_str()) && (!NEEDS_START.contains(&func.as_str()) || of_group) && !many {
             return short_fold(func, args);
         }
         Ok(Expr::Call(func, args))

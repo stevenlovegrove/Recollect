@@ -245,6 +245,16 @@ impl<'c, 'a> Expander<'c, 'a> {
     }
 
     fn read(&self, node: Entity, path: &[String]) -> Id {
+        // A row's key isn't a cell, but it's read the same way, as `q.row` or `prev.row`.
+        if let [only] = path
+            && only == "row"
+        {
+            return self.lit(match self.cx.row_key_of(node) {
+                Some(Key::Num(n)) => Val::Num(n as f64),
+                Some(Key::Text(t)) => Val::Text(t),
+                None => Val::Undefined,
+            });
+        }
         self.add(match path {
             [] => Part::Read { node, component: ValueCell::NAME.to_string(), fields: vec![] },
             [component, fields @ ..] => Part::Read { node, component: component.clone(), fields: fields.to_vec() },
@@ -447,6 +457,18 @@ impl<'c, 'a> Expander<'c, 'a> {
         })
     }
 
+    /// No two of these the same: every pair differs.
+    fn distinct(&self, each: &[Id]) -> Id {
+        let mut acc = self.lit(Val::Bool(true));
+        for (i, a) in each.iter().enumerate() {
+            for b in &each[i + 1..] {
+                let differ = self.add(Part::Bin(BinOp::Ne, *a, *b));
+                acc = self.add(Part::Bin(BinOp::And, acc, differ));
+            }
+        }
+        acc
+    }
+
     fn fold(&self, func: &str, var: &str, group: &[String], body: &Expr, start: Option<&Expr>, scope: &Scope) -> Result<Id, Error> {
         let nodes = self.group(group, scope)?;
         let copy = |n: Entity| {
@@ -470,6 +492,11 @@ impl<'c, 'a> Expander<'c, 'a> {
             "any" => chain(BinOp::Or, Val::Bool(false)),
             "max" => chain(BinOp::Max, Val::Undefined),
             "min" => chain(BinOp::Min, Val::Undefined),
+            // No two the same: every pair differs.
+            "distinct" => {
+                let each = nodes.iter().map(|n| copy(*n)).collect::<Result<Vec<_>, _>>()?;
+                Ok(self.distinct(&each))
+            }
             "count" => {
                 let (one, zero) = (self.lit(Val::Num(1.0)), self.lit(Val::Num(0.0)));
                 let mut acc = zero;
@@ -560,6 +587,10 @@ impl<'c, 'a> Expander<'c, 'a> {
                 wants(2)?;
                 let (a, b) = (self.expand(&args[0], scope)?, self.expand(&args[1], scope)?);
                 Ok(self.add(Part::Bin(if name == "max" { BinOp::Max } else { BinOp::Min }, a, b)))
+            }
+            "distinct" => {
+                let each = args.iter().map(|a| self.expand(a, scope)).collect::<Result<Vec<_>, _>>()?;
+                Ok(self.distinct(&each))
             }
             "chose" => {
                 wants(2)?;
@@ -1131,11 +1162,23 @@ impl Compute for ChoiceOf {
     type Output = Option<ValueCell>;
     fn compute(&self, cx: &Cx) -> Result<Option<ValueCell>, Error> {
         let Some(Domain(options)) = cx.own::<Domain>()? else { return Ok(None) };
+        // A table's options are what its rows choose from: it isn't a choice itself.
+        if cx.row_key().is_none() && !cx.rows().is_empty() {
+            return Ok(None);
+        }
         let names: Vec<&str> = options.iter().map(String::as_str).collect();
         let var = Space::global().uniform(&cx.id().to_string(), &names);
         let is_numeric = numeric(&options);
         Ok(Some(ValueCell(Worldly(var.value().map(|o| if is_numeric { Val::Num(o.parse().expect("checked above")) } else { Val::Text(o.clone()) })))))
     }
+}
+
+/// The options a node chooses between, if it's a choice: it has options, said or taken from its kind or
+/// table, and it isn't a table, whose options are what its rows choose from.
+pub fn options_of(g: &Graph, e: Entity) -> Option<Vec<String>> {
+    let Domain(options) = g.get::<Domain>(e).ok()??;
+    let table = g.row_of(e).is_none() && g.table_here(e).is_some_and(|t| !g.rows(&t).is_empty());
+    (!table).then_some(options)
 }
 
 /// What type a node's value is. It's allowed to read whatever the formula on `value` can.
@@ -1218,7 +1261,7 @@ pub fn install(reg: &mut Registry) {
     reg.set_default(ChoiceOf).set_default(TypeOf).set_default(MacroOf);
     reg.on_nodes::<ValueCell>().on_nodes::<Domain>().on_nodes::<At>().on_nodes::<Requires>().on_nodes::<Uncertain>().on_nodes::<Macro>();
     reg.declare(Label::NAME, Place::Link, Some(valid_label));
-    reg.on_links::<IsA>().inherit_through(IsA::NAME);
+    reg.on_links::<IsA>().inherit_through(IsA::NAME).passed_down(Domain::NAME);
 }
 
 /// How a value reads. If it's only ever true or false, it reads as the worlds where it's true.

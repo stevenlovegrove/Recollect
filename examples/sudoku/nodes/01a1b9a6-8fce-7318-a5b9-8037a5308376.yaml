@@ -1,0 +1,8 @@
+id: 01a1b9a6-8fce-7318-a5b9-8037a5308376
+components:
+  name: The bottom left box has each number once
+rules:
+  value:
+    rule: expr@1
+    params:
+      text: distinct(Cell[C1], Cell[C2], Cell[D1], Cell[D2])
