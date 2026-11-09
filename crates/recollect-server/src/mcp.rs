@@ -13,35 +13,40 @@ use crate::app::{App, Open};
 use crate::views::{self, World};
 
 const INSTRUCTIONS: &str = "\
-Recollect holds a graph the user develops with your help. Nodes have no kind: a node is a bag of components, and a link between two \
-nodes is a bag of kinds. Some components are stored facts, and some are worked out by rules from those facts. get_overview lists what \
-this workspace's systems provide, and what each thing means. Start there.\n\
+Recollect holds a graph the user develops with your help. A node and an edge (from one node to another) are both entities. Each has \
+components, such as `task` or `decision` on a node and `part_of` or `label` on an edge, and each component brings cells: `task` brings \
+`estimate`, `decision` brings `chosen`, an `alternative` edge brings `weight`. A cell is only there on an entity that has its component. \
+What's in a cell is written there (a value or a formula), taken from the node's kind, or the component's default, which may be worked \
+out. Components require others (a task is work, which is part of a plan), and an edge's components bring components to its ends (an \
+`alternative` edge makes its source an `option` and its target a `decision`). get_overview lists every component and cell this \
+workspace's systems provide, and what each means. Start there.\n\
 \n\
-In a planning workspace, structure is coarse to fine. `part_of` links point child to parent, and all of a node's parts are needed. A \
-`decision` node's options are ordinary nodes linked to it by `alternative`, and only the option taken is needed, so work that several \
+In a planning workspace, structure is coarse to fine. `part_of` edges point child to parent, and all of a node's parts are needed. A \
+`decision` node's options are ordinary nodes with an `alternative` edge to it, and only the option taken is needed, so work that several \
 options share is simply part_of each of them, and is safe to do before deciding. Finding that overlap is worth effort. `depends_on` is \
 ordering, inherited by what's inside. An `unknown` node is a gap: it says something here isn't specified yet, and removing it is the \
 claim that it's closed. `done` is true or false, and is worked out from what's beneath unless a node says otherwise. A stated `done` \
-that disagrees with what's beneath gets a notice, so to finish something early, say so and drop what's left. \
-`dropped` means deliberately out of the picture. Any cell a formula can fill can be typed over like this, and \
-removing what was typed brings back what it's worked out to.\n\
+that disagrees with what's beneath gets a notice, so to finish something early, say so and drop what's left. `dropped` means \
+deliberately out of the picture. Any cell that's worked out can be written over, and taking away what was written brings back what \
+it's worked out to.\n\
 \n\
-A workspace can have cells of its own, such as `price` or `range`, which hold a value or a formula like any other. When several nodes \
-are the same kind of thing, make a node for the kind and link each to it by `is_a`: they take whatever of those cells they don't say \
-for themselves from it, and a formula on the kind runs for each of them, with `self` meaning that node and its other names labelled \
-once on the kind. A car's mpg goes on the car, and how mpg and the fuel price make a cost a mile goes on Petrol car. A decision can \
-give any cell of whichever option it lands on, as `range` = `pick(o in in.alternative: o.range)`, so what's worked out from the \
-chosen option reads it there, as `car.range >= trip`. Mark a decision `uncertain` when it isn't anyone's \
-to choose, such as how far someone will drive: its weights then say how likely each option is, and what's expected averages over it.\n\
+A workspace can have cells of its own, such as `price` or `range`, which no component brings and any node can have. When several nodes \
+are the same kind of thing, make a node for the kind and link each to it with an `is_a` edge: they have its components, and take any \
+cell they don't write themselves from it (except a node's own `name` and `value`), and a formula on the kind runs for each of them, \
+with `self` meaning that node and its other names labelled once on the kind. A car's mpg goes on the car, and how mpg and the fuel price \
+make a cost a mile goes on Petrol car. A decision can give any cell of whichever option it lands on, as `range` = \
+`pick(o in in.alternative: o.range)`, so what's worked out from the chosen option reads it there, as `car.range >= trip`. Give a \
+decision `uncertain` when it isn't anyone's to choose, such as how far someone will drive: its options' weights then say how far each \
+is believed, and what's expected averages over it.\n\
 \n\
 A name makes a table. A node named `Year[3]` is row 3 of the table `Year`, and `Car[Hatchback]` is the Hatchback row of `Car`: each \
-takes what it doesn't say from the node named `Year` or `Car`, as from a kind, with no `is_a` link needed. A formula there reads \
+takes what it doesn't say from the node named `Year` or `Car`, as from a kind, with no `is_a` edge needed. A formula there reads \
 `prev.balance` for the row before (`next`, `prev.prev`, `row` for which row this is, and `rows` for all of them), so a recurrence is \
 one formula on the table and a starting value on the first row. A numbered table goes on past its last row by itself, so \
 `Year[100].balance` works without writing 100 rows: those rows take everything from the table and aren't saved. If Petrol car `is_a` Car, then `Petrol car[Hatchback]` and \
 `Car[Hatchback]` are parts of one car: put what every car has on the Car row and what only petrol cars have on the Petrol car row. \
-A table's columns are cells of the workspace's own, such as `balance`, since `value` belongs to the formulas system. \
-A table can be a table of choices: give the table node a `domain` and each row is a choice from it, while the table isn't a choice \
+A table's columns are cells of the workspace's own, such as `balance`, since `value` is each node's own answer. \
+A table can be a table of choices: give the table node `options` and each row is a choice from them, while the table isn't a choice \
 itself. For a puzzle, make a table for each kind of thing, such as `Pet[Zebra]` choosing a house, and write each clue as a formula \
 naming the rows it's about, with nothing to label: `Nationality[English] = Colour[Red]`. Say all different with `distinct`: \
 `distinct(rows)` as the table's own value, `distinct(q in rows: q + q.row)` where `q.row` is a row's key, or `distinct(Cell[A1], Cell[A2])`. \
@@ -50,37 +55,42 @@ Anywhere, `Arrived.rows` is a table's rows by its name and `Left[v.row]` finds t
 \"Dee is lying\" is `!Says[Dee]`. \
 Write a whole table with one op: `{\"op\": \"table\", \"name\": \"Year\", \"columns\": {\"balance\": {\"formula\": \"prev.balance * (1 + rate)\", \
 \"labels\": {\"rate\": \"Rate\"}}}, \"range\": [0, 10], \"rows\": [{\"key\": 0, \"balance\": 1000}]}`, with `is_a` for a table that's a kind of \
-another and `alternative_of` to make every row an option of a decision.\n\
+another, `components` for what every row is, and `alternative_of` to make every row an option of a decision.\n\
 \n\
 Values that depend on open decisions are exact: each is the set of worlds where it holds, shown as a formula such as `calib∈{cad,free}`. \
 A world is one way every open choice could land. Tools that take a `world` read everything as it would be with those choices pinned, \
 keyed by choice and option, by name or handle. That's how to answer what-if questions, and it's the same code as really deciding.\n\
 \n\
 Typical jobs: ELABORATE a coarse node. DECOMPOSE it (get_tree first, reusing existing nodes wherever the same work appears, and stop \
-when a leaf could be started today). Find what's shared. Surface RISKS, linked by `contradicts` to what they threaten. Suggest what \
+when a leaf could be started today). Find what's shared. Surface RISKS, with a `contradicts` edge to what they threaten. Suggest what \
 would discriminate between the options of an open decision. Search before adding, and prefer dropping to deleting. Say why in every \
 rationale, and cite where claims came from in a node's `sources`. Reasons belong in the log, not in a node's text.\n\
 \n\
 Write with `propose`, which the user reviews in the inbox. Ops are: \
-{op: add_node, id: \"new:x\", name, body?, components?: {component: value}, rules?: {component: rule}, links?: [{to, kind, value?}]}; \
-{op: set, id, component, value} or {op: set, id, component, rule, params?} or {op: set, id, component} to remove it; \
-{op: link, from, to, kind, value} to add one kind to a link, or without `value` to remove it (use null as the value of a kind that holds nothing); \
-{op: delete_node, id}. Nodes can be named by handle or by name, and \"new:anything\" stands for a node that doesn't exist yet, the same \
-one wherever it appears in a change-set. So decide on a decision with {op: set, id: \"Which approach?\", component: decision, value: {chosen: <handle>}}.\n\
+{op: add_node, id: \"new:x\", name, body?, components?: [component], cells?: {cell: value or {formula, labels}}, links?: [{to, component, cells?}]}; \
+{op: add, id, component} and {op: remove, id, component}; \
+{op: set, id, cell, value} or {op: set, id, cell, formula, labels?} or {op: set, id, cell} to take away what's written; \
+the same with `from` and `to` in place of `id` for a cell of the edge between two nodes, such as an option's `weight`; \
+{op: link, from, to, component, cells?} and {op: unlink, from, to, component}; {op: delete_node, id}. Writing in a cell of a component \
+a node doesn't have gives it that component. Nodes can be named by handle or by name, and \"new:anything\" stands for a node that \
+doesn't exist yet, the same one wherever it appears in a change-set. So decide on a decision with {op: set, id: \"Which approach?\", \
+cell: chosen, value: <option's handle>}, and rule an option out with {op: set, from: <option>, to: <decision>, cell: ruled_out, value: \"why\"}.\n\
 \n\
-A node's `value` can be typed in, or a formula, and so can a task's `estimate`. That's how to state a claim the app can hold you to, rather \
-than only describing it. Write {op: set, id, component: value, formula: \"prev * (1 + rate)\", labels: {prev: \"Year 2\", rate: \"Rate\"}}, or give add_node `formula` and \
-`labels`. A label names a node for the formula, and several nodes under one label make a group. A formula means the same thing in every world: \
+A node's `value` can be typed in, or a formula, and so can a task's `estimate` and any of the workspace's own cells. That's how to state \
+a claim the app can hold you to, rather than only describing it. Write {op: set, id, cell: value, formula: \"prev * (1 + rate)\", labels: \
+{prev: \"Year 2\", rate: \"Rate\"}}. A label is an edge whose `called` cell is the name a formula on its source uses for its target, and \
+several nodes under one name make a group. A formula means the same thing in every world: \
 what you'd get with ordinary values there, so it needs no thought about worlds, and `a + b` works whether or not either varies. \
 Operators: + - * / = != < <= > >= && || !. A number, \\\"text\\\", true, false or undefined. `rate` is that node's value, `rate.finish` another of its cells, and `self.need` one of this node's. \
-Functions: if(c, a, b), defined(x), or(x, fallback), abs, min(a, b), max(a, b), round(x, places?), floor, ceil, and chose(decision, option), which is true where that decision lands on that option. \
-Over a group, which is a label, in.kind, out.kind or with.component: sum, product, all, any, count, distinct, and pick for a decision's value from its chosen option: sum(line), sum(t in with.task: if(t.need, t.estimate, 0)), pick(in.alternative). \
+Functions: if(c, a, b), defined(x), or(x, fallback), abs, min(a, b), max(a, b), round(x, places?), floor, ceil, has(x.c) (whether x has component c, or else something in cell c), and chose(decision, option), which is true where that decision lands on that option. \
+Over a group, which is a label, in.component or out.component (the nodes at the other end of those edges) or with.component (the nodes with it): sum, product, all, any, count, distinct, and pick for a decision's value from its chosen option: sum(line), sum(t in with.task: if(t.need, t.estimate, 0)), pick(in.alternative). \
+In a fold over edges, `o.via.weight` reads a cell of the edge `o` was reached along, and a formula on an edge reads its ends as `from` and `to`. \
 effort() is a plan's total days in each world, undefined where a gap is in play. Division by zero and missing inputs are undefined, only in the worlds where that's so, which says what isn't known. \
-A `requires` component on a node with a true-or-false value means only the worlds where it's true count, which is how to say a constraint must be met. \
-To reuse logic, a node with {macro: {params: [t], body: \"t.estimate * 100\"}} is a function its callers link to with a label. A formula with a type error or an unknown input is refused, with the reason.\n\
+A node with `requires` and a true-or-false value means only the worlds where it's true count, which is how to say a constraint must be met. \
+To reuse logic, a node with a `macro` cell {params: [t], body: \"t.estimate * 100\"} is a function its callers link to with a label. A formula with a type error or an unknown input is refused, with the reason.\n\
 \n\
-To show a problem the way it's really thought about, add a node with a `drawing` component holding TypeScript: `export function draw(world: World): string` returns SVG or HTML, and the Worlds tab can show it. \
-world.choices is [{id, name, options: [{id, name, possible, picked, gap, weight}]}], already narrowed to what's pinned, and world.nodes is [{id, name, cells}], with world.links, world.count and world.picks. \
+To show a problem the way it's really thought about, add a node with a `drawing` cell holding TypeScript: `export function draw(world: World): string` returns SVG or HTML, and the Worlds tab can show it. \
+world.choices is [{id, name, options: [{id, name, possible, picked, gap, weight}]}], already narrowed to what's pinned, and world.nodes is [{id, name, cells}], with world.edges, world.count and world.picks. \
 An element with data-pin-choice and data-pin-option pins that option when clicked, and unpins it if it's already pinned. Colours are CSS variables: --text, --muted, --accent, --bg, --panel, --border. \
 It runs sandboxed with no network, no DOM and no memory between worlds, so everything it shows has to come from `world`, and anything that would load or run something is removed from what it returns. There can be several drawings.";
 
@@ -146,7 +156,7 @@ pub struct SearchParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListParams {
-    /// Only nodes with this component.
+    /// Only nodes with this component, however they came to have it.
     pub component: Option<String>,
 }
 
@@ -193,12 +203,12 @@ pub struct ApplyParams {
 
 #[tool_router]
 impl RecollectMcp {
-    #[tool(description = "The workspace: which systems it uses, what every component and kind of link means, what checks currently report, its open choices, and how much is pending. Call first.")]
+    #[tool(description = "The workspace: which systems it uses, every component and the cells it brings and what each means, what checks currently report, its open choices, and how much is pending. Call first.")]
     async fn get_overview(&self) -> Result<String, String> {
         self.read(|o| Ok(views::overview(o)))
     }
 
-    #[tool(description = "One node: every component, stored or worked out, its links either way, and the history of what touched it. Takes a world to read it as it would be then.")]
+    #[tool(description = "One node: its components and why it has each, every cell and where what's in it comes from, its edges either way with their cells, and the history of what touched it. Takes a world to read it as it would be then.")]
     async fn get_node(&self, Parameters(p): Parameters<NodeParams>) -> Result<String, String> {
         self.read(|o| {
             let world = world_of(o, p.world)?;
