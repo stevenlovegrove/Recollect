@@ -9,7 +9,7 @@ import { label, nodeColor } from "../theme";
 import { TableGrid, tablesIn } from "./TableGrid";
 
 /**
- * Rows are nodes and columns are components, as they really are. Typed-in numbers edit in place. A table a
+ * Rows are nodes and columns are cells, as they really are. Typed-in numbers edit in place. A table a
  * workspace's names make can be shown on its own, as a grid of its rows.
  */
 export function TableView(props: ViewProps) {

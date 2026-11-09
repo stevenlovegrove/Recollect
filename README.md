@@ -31,11 +31,10 @@ UI development: run `npm run dev` in `web/`. Vite serves on :5173 and proxies `/
 
 | Path | What |
 |---|---|
-| `crates/recollect-graph` | The engine: entities and components, memoised rules, worlds as a value type, and the action log. See [docs/graph-core.md](docs/graph-core.md). |
+| `crates/recollect-graph` | The engine: nodes and edges with components and their cells, memoised computation, worlds as a value type, and the action log. See [docs/components.md](docs/components.md). |
 | `crates/recollect-systems` | What a workspace can be made of: notes, formulas, planning and scheduling, plus the samples. See [docs/expressions.md](docs/expressions.md) for formulas. |
 | `crates/recollect-server` | The `recollect` binary: workspaces, REST and WebSocket events, MCP, and watching files. |
 | `web/` | React, React Flow and ELK. |
 | `examples/` | The sample workspaces. To write them again, delete them and run `cargo run -p recollect-systems --example write_samples -- examples`. |
-| `crates/recollect-kernel` | The previous engine, kept only as what the tests compare against. |
 
 A workspace is plain files, so put it in git. Hand edits, `git pull` and other tools are picked up live, and recorded in the log.

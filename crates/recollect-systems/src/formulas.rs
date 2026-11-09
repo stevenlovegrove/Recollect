@@ -100,7 +100,7 @@ pub(crate) fn component_type(cell: &str) -> Type {
     match cell {
         "need" | "actionable" | "blocked" | "done" | "dropped" => Type::Bool,
         "estimate" | "start" | "finish" | "latest_start" | "latest_finish" | "slack" | "plan_end" | "weight" => Type::Number,
-        "name" | "body" | "choice" => Type::Text,
+        "name" | "body" => Type::Text,
         _ => Type::Any,
     }
 }
@@ -565,8 +565,8 @@ impl<'c, 'a> Expander<'c, 'a> {
             return self.call_macro(name, &body.params, &body.body, &body.uses, args, scope);
         }
         if let Some(m) = expr::library(name) {
-            // The library isn't a macro of the kind a workspace writes: it can follow what it says,
-            // which is why `inputs_of` looks inside it.
+            // The library isn't a macro of the kind a workspace writes: it can follow edges and scan, as
+            // `effort()` does, where a workspace's macro only has its parameters.
             let vars = self.bind(name, &m.params, args, scope)?;
             return self.expand(&m.body, &Scope { vars, ..Scope::default() });
         }

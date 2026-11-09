@@ -1,6 +1,6 @@
 # Drawings
 
-A drawing shows a problem the way it's really thought about: a sudoku with its boxes, a colouring as a map. It's a node with a `drawing` component holding TypeScript, so it's in the log, it can be proposed, reviewed and undone like anything else, and a workspace can have several. The Worlds tab has a **Show** menu to pick one or the default view, and remembers the choice per workspace in that browser.
+A drawing shows a problem the way it's really thought about: a sudoku with its boxes, a colouring as a map. It's a node with a `drawing` component, whose `drawing` cell holds TypeScript, so it's in the log, it can be proposed, reviewed and undone like anything else, and a workspace can have several. The Worlds tab has a **Show** menu to pick one or the default view, and remembers the choice per workspace in that browser.
 
 The app's own views stay general. Anything specific to one problem, such as where sudoku's boxes are, belongs in a drawing.
 
@@ -25,10 +25,12 @@ type World = {
   constrained: boolean;  // Whether anything rules worlds out.
   solutions: Record<string, string>[]; // The worlds in play, if there's a requirement. The first 300.
   picks: Record<string, string>;       // What's pinned.
-  nodes: { id: string; name: string; cells: Record<string, Cell> }[]; // Every node, with what the app shows of it.
-  links: { from: string; to: string; kind: string; value: unknown }[];
+  nodes: { id: string; name: string; cells: Record<string, Cell> }[]; // Every node, with what the app shows of its cells.
+  edges: { id: string; from: string; to: string; components: string[]; cells: Record<string, Cell> }[];
 };
 ```
+
+A `Cell` has the `value` it holds, a `formula` if one backs it, and where it comes from (`source` is `own`, `kind` or `default`). An option's `weight` is a cell of its `alternative` edge.
 
 A choice's `id` is its node's, so `world.nodes.find((n) => n.id === choice.id)?.cells.at?.value` is where it goes on a board. Types are stripped, not checked, so `World` doesn't have to be declared.
 

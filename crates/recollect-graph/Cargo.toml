@@ -3,7 +3,7 @@ name = "recollect-graph"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Prototype of a general compute core over a graph, with worlds as a value type on top. See docs/graph-core.md."
+description = "A compute core over a graph of nodes and edges, with components, cells and worlds. See docs/components.md."
 
 [dependencies]
 recollect-graph-macros = { path = "../recollect-graph-macros" }

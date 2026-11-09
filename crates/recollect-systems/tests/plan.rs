@@ -1,6 +1,5 @@
 //! Each scenario states what the planning system should do, going through the real write path.
-//! Most come from the old kernel's scenarios. Where the answer deliberately differs, the test says
-//! so: see "Differences from the old kernel" in docs/graph-core.md.
+//! Where the answer is a deliberate choice rather than the obvious one, the test says why.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;

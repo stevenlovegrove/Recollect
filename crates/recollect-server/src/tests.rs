@@ -981,3 +981,40 @@ async fn a_hand_edit_nobody_has_noticed_yet_stays_on_the_branch_it_was_made_on()
     c.app.checkout(seq, "you", "").unwrap();
     assert_eq!(cell(&c.view(json!({})).await, "Tax rate", "value")["value"], 0.7);
 }
+
+/// Taking a component away takes what was written in its cells, so nothing is left without its
+/// component, and undoing it brings both back.
+#[tokio::test]
+async fn taking_a_component_away_takes_its_cells() {
+    let c = Client::new();
+    c.open("calibration").await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "remove", "id": "Board detector", "component": "task" }], "why": "not a task" })).await;
+    let v = c.view(json!({})).await;
+    assert!(cell(&v, "Board detector", "estimate").is_null(), "{}", node(&v, "Board detector"));
+    let (_, history) = c.call("GET", "/api/history", None).await;
+    c.post("/api/undo", json!({ "seq": history[0]["seq"] })).await;
+    assert_eq!(cell(&c.view(json!({})).await, "Board detector", "estimate")["value"], 4.0);
+}
+
+/// Labels said with one formula replace that formula's names, and leave alone what another formula on
+/// the same node uses.
+#[tokio::test]
+async fn a_formulas_labels_leave_another_formulas_alone() {
+    let c = Client::new();
+    c.open("case-file").await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Clara", "cell": "arrives", "formula": "1 + 1", "labels": {} }] })).await;
+    let v = c.view(json!({})).await;
+    assert_eq!(cell(&v, "Clara", "arrives")["value"], 2.0);
+    assert!(cell(&v, "Clara", "from_garden")["error"].is_null(), "from_garden still reads garden: {}", cell(&v, "Clara", "from_garden"));
+}
+
+/// How far each answer is believed is what makes the worlds, so a weight that differs between them is
+/// an error in what the decision lands on, rather than quietly one of its values.
+#[tokio::test]
+async fn a_weight_that_differs_between_worlds_is_an_error() {
+    let c = Client::new();
+    c.open("case-file").await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "from": "Tom", "to": "Who took it?", "cell": "weight", "formula": "if(from.arrives > 40, 3, 1)" }] })).await;
+    let why = cell(&c.view(json!({})).await, "Who took it?", "choice")["error"].as_str().unwrap_or_default().to_string();
+    assert!(why.contains("differs between worlds"), "{why}");
+}

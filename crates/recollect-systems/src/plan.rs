@@ -182,7 +182,14 @@ fn choice(cx: &Cx) -> Cell<Choice> {
     for (o, edge) in cx.incoming(ALTERNATIVE) {
         if live_option(cx, o, edge)? {
             let gap = cx.has(o, UNKNOWN);
-            let weight = cx.get::<Weight>(edge)?.and_then(|w| w.0.0.cases().first().and_then(|(_, w)| **w)).unwrap_or(0.0);
+            // How far each answer is believed is what makes the worlds, so it can't differ between them.
+            let weight = match cx.get::<Weight>(edge)? {
+                None => 0.0,
+                Some(w) => match w.0.0.cases().as_slice() {
+                    [(_, w)] => w.unwrap_or(0.0),
+                    _ => return Err(Error::Failed(format!("the weight of {o} differs between worlds, and a weight has to be the same in all of them"))),
+                },
+            };
             options.push((o.to_string(), weight, gap));
         }
     }

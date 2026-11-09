@@ -1,202 +1,412 @@
 # Components, kinds and edges
 
-**Status:** proposal. Nothing here is built yet. It changes the model in [graph-core.md](graph-core.md), and once it's built that document is rewritten to match.
+**Status:** in use: the app runs on this. The engine is `crates/recollect-graph`, and the systems built on it are `crates/recollect-systems`. For the app, see [DESIGN.md](../DESIGN.md), and for the formula language, [expressions.md](expressions.md).
 
-## Why
+## Terms
 
-The engine grew up with a component meaning one cell, and with a rule as what fills a cell. Since then cells have become formulas, and kinds pass cells down. What's left of the old view shows:
-
-- **Every node has every cell a system defaults.** The plan system works out needed, done, waiting, waits for, can start and scope on every node. In the Vane watch, a case file with no work in it, all 20 nodes carry them, and they say "never", "nothing" and "nothing to finish".
-- **The inspector is a wall of values.** Cells are grouped by where they came from ("What it is", "Worked out"), not by what they're about. The badges on a card (Decision, Uncertain) are easy to find, but nothing ties a badge to the cells it means.
-- **Links hold data nothing can see.** An option's weight is JSON on its `alternative` link. It can't be a formula, has no default to fall back on, and until recently showed nowhere but the link's own panel.
-- **"Rule" means three things.** A Rust function filling one cell; the formula engine, which is one such rule (`expr@1`); and a check. Every computed cell saved in every sample's log is `expr@1`. Choosing some other rule for a cell is plumbing nothing uses.
+| Term | Meaning |
+|---|---|
+| **Entity** | A node or an edge. Both have components and cells in the same way |
+| **Edge** | From one node to another, one per ordered pair. It's there while it has a component |
+| **Component** | A facet of an entity, such as `decision`, `task` or `alternative`. It's what a badge shows, and it brings cells |
+| **Cell** | One named value on an entity. It's only there if the entity has the cell's component, or if no component brings it |
+| **Default** | What a cell is when nothing says otherwise: a value, a formula, or something built in |
+| **Kind** | A node others take components and cells from: what they link to by `is_a`, or the table they're a row of |
+| **System** | A function that adds components, their cells and their checks to a `Registry` |
+| **Check** | What's wrong with an entity that has some component. An invariant refuses a commit, and a notice only reports |
+| **Op** | One written-down change to the graph |
+| **Event** | One commit: who, when, why, its ops, and what undoes them |
+| **World** | One way every open choice could land |
 
 ## The model
 
-### Entities: nodes and edges
+### Entities
 
-An **entity** is a node or an edge. Both have components, cells, formulas and history in the same way. They differ only in that an edge has exactly one source and one target, fixed when it's made, and is drawn as an arrow.
+A node's handle is a UUIDv7, so nodes sort in creation order and nodes made on two machines never collide. An edge's handle is worked out from its two ends, so ops address it as `(from, to)`. Moving an end means removing one edge and making another. Edges join nodes, not other edges.
 
-There's one edge per ordered pair of nodes. The several relationships between two nodes, say `alternative` and `label`, are components on that one edge, as they're kinds in one bag today. An edge's id is derived from its pair, so ops can keep addressing it as `(from, to)`. Moving an end means removing the edge and making another. Deleting a node deletes its edges.
+Several relationships between two nodes, say `depends_on` and `label`, are components on the one edge between them. Taking an edge's last component takes the edge, and everything written on it. A node can only be removed once its edges are gone. The server's `delete_node` takes them first.
 
-Edges join nodes, not other edges, and aren't instances of kinds. Neither would change the model if it were allowed later.
+Nothing in the engine is looked up by name. `name` is a cell, two nodes can share one, and renaming a node reruns only what reads its name. The tests refer to nodes by name for readability, through a helper over handles (`tests/support`).
+
+The graph as a whole is an entity too, `Entity::whole()`. It has the components that go on the whole graph, such as `schedule`, and nothing can be written on it, so its cells are worked out once however many nodes read them.
 
 ### Components
 
-A **component** is a facet of an entity: Decision, Task, Requires, `alternative`. It's what a badge shows. It declares:
+A component declares:
 
-- its **name**, **icon** and a sentence saying what it means;
-- whether it goes **on nodes or on edges**;
-- its **cells**, each with a name, a type, a sentence, and a **default**: a value or a formula. Some are flagged as worth a line on a card, and some are internal (worked out for other cells, never shown);
-- the components it **requires**: on the same entity, or, for an edge component, on its source or target.
+- its **name**, an **icon**, and a sentence saying what it means;
+- where it goes: **on nodes, on edges, or on the whole graph**;
+- its **cells**, each with a type, a sentence and a default. Some are flagged as worth a line on a card, some as internal (plumbing for other cells), and some as quiet (for a view to read, not a person);
+- the components it **requires** on the same entity, and for an edge, the components it brings to its **source** and **target**;
+- whether it's **per entity**, so it can't come from a kind;
+- whether **every node** has it;
+- for an edge, whether it **arranges** a map (and which way up), or says what comes **first**;
+- its **checks**, and optionally a **constraint** on which worlds count.
 
-Every cell name belongs to exactly one component. `done` is Work's, `weight` is `alternative`'s. A workspace's own cells, such as a car's price, belong to the kind that says them (see below).
+Every cell name belongs to exactly one component. `done` is `part`'s and `weight` is `alternative`'s. A system can add cells to another system's component: the schedule adds `start`, `finish` and `slack` to `part`. A workspace's own cells, such as a car's `price`, belong to no component. Any node can have one, and a formula on one has its type checked as it runs.
 
-**Requiring brings.** Giving a node Uncertain gives it Decision too, if it hasn't one. An edge with `alternative` brings Option to its source and Decision to its target. A brought component shows as its own card, marked as brought by what needs it. It can't be removed while something still needs it, and it goes when the last of them does, unless it was also given directly.
+**Requiring brings.** Giving a node `uncertain` gives it `decision` too, and `decision` brings `part`. An edge with `alternative` brings `option` to its source and `decision` to its target. A node keeps a brought component while something brings it. Taking a component away only takes away what was given, so one that's also brought stays. The server's `remove` also clears what the node wrote in that component's cells, so nothing is left without its component, and undoing it brings both back.
 
-Formulas in a component's defaults can refer to the cells of anything it requires. That's what requiring is for, and the check of a formula on a component's default only has those names in scope.
-
-**Systems can add cells to another system's component.** The schedule system adds start, finish and slack to Work rather than inventing a component of its own. A component's cells are the ones every installed system gives it.
-
-### Kinds
-
-A **kind** is a node that others are an instance of, by `is_a`, or a table whose rows they are. A kind is a component made in the workspace rather than in code:
-
-- An instance has the kind's components. A "Bug" kind that has Task makes every bug a task.
-- An instance takes the kind's cells. "Car" with a price formula gives every car a price.
-- An instance shows the kind as a card of its own, holding the cells the kind gives.
-
-Components that hold per-instance state can't come from a kind. Decision's `chosen` is one: two instances can't share which option was taken. A component says whether it can.
+An entity says why it has each component: it was given it, every node has it, it takes it from a kind, another component requires it, or an edge brings it.
 
 ### Where a cell's value comes from
 
-For a cell on an entity:
+For a cell on an entity that has its component:
 
 1. what the entity says itself: a value or a formula;
-2. what its kinds say, nearest first, as now;
-3. a workspace override of the component's default, if there is one (today's `Default` op);
-4. the default of the component the cell belongs to.
+2. what its kinds say, nearest first;
+3. its component's default.
 
-That's only if the entity has the component, directly, from a kind, or brought by another. Otherwise the cell isn't there at all. There are no defaults that apply to every node. So a suspect in the Vane watch has its name, its notes and its own `arrives`, and nothing else.
+If the entity doesn't have the component, the cell isn't there at all. There are no defaults that apply to every node, so a suspect in the Vane watch has its name, its notes and its own `arrives`, and nothing else.
 
-### Values and formulas, not rules
+A cell holds a value or a formula, nothing else. A default can also be **built in**: Rust, given with `CellBuilder::builtin`. That's for what can't be a formula, such as what makes worlds (`choice`), and for what's simpler in Rust (`need`, `blockers`, `scope`). A built-in default has no written form, so it's never saved. A cell can be written over if it holds formulas, or isn't worked out by default.
 
-A cell holds a value or a formula. Nothing else.
-
-What the built-in rules do becomes **functions formulas can call**, written in Rust as now. Components use them in their defaults. For example, Part's `need` defaults to `need()` and Decision's `choice` to `choice()`. The functions see what rules see today: the entity, its edges, and the cells they reach, with every read tracked.
-
-This removes:
-
-- the `Compute` rule types and `#[rule]`, which become built-in functions;
-- `SavedRule`, `Stored::Rule`, `Storage::Rule`, `set_rule` ops, `RuleInfo` in the API, and `Cell.source: "rule"`;
-- `defaults_to` and `fills`, which are just a component's cell defaults now;
-- `RuntimeRule`, a rule with no Rust type meant for plugins, which becomes a function a plugin gives formulas.
-
-**Checks** keep their own name and their own registration. An invariant refuses an edit, and a notice reports. They're about whole entities, not cells, so they stay a separate thing.
+Taking away what an entity says brings back what it takes from its kind or default. Taking away a component keeps what the entity wrote in its cells, but a commit that leaves a written cell without its component is refused (`cell_without_component`).
 
 ### Formulas on edges
 
-A formula on an edge reads its ends as `from.` and `to.`, as a node's reads `self.`. `alternative`'s weight defaults to `if(has(from.unknown), 0, 1)`, which is the special case in `ChoiceRule` today.
+A formula on an edge reads its ends as `from.` and `to.`, as a node's reads `self.`. `alternative`'s `weight` defaults to `if(has(from.unknown), 0, 1)`: a gap has no weight unless someone gives it one.
 
-A formula that goes over edges keeps binding the node at the other end. `o in in.alternative` still gives the options. `o.via` is the edge it came through, so `o.via.weight` is that option's weight. Existing formulas don't change.
+A fold over edges binds the node at the other end, and `o.via` is the edge it came along. So `o in in.alternative` gives the options, and `o.via.weight` is that option's weight.
 
-## Components, as they'd be defined
+### Kinds
 
-What each system's components become, roughly. The cell names are today's where there's one.
+A kind is a node others are an instance of: what they link to by `is_a`, or the table they're a row of (see [Tables](expressions.md#tables)).
 
-**Named** is on every node, and can't be removed: `name`. A kind can give its instances a default name, as it gives any cell.
+- **An instance has its kind's components:** those the kind was given. A "Bug" kind that has `task` makes every bug a task.
+- **An instance takes its kind's cells** where it doesn't say them itself. "Car" with a price formula gives every car a price, and the formula runs for each car, with `self` meaning that car.
+- **Some things are about one entity alone,** so they're never taken from a kind. A component can be per entity: `decision` is, since two instances can't share which option was taken. So can a cell: `name` and `value` are, so a kind's own answer isn't each instance's, and a table's own `value`, such as a puzzle's `distinct(rows)`, isn't its rows'.
+- **A kind can have a kind.** Lookup goes first to the other parts of the same row, then to the kinds of all of them, then those kinds' kinds. Something more specific always comes first. Otherwise it's nearest first, and then the order nodes were made. A loop of kinds goes round once.
+- **An instance has all of its kind's components.** Something that's mostly like a kind but lacks one is a different kind, perhaps with what's shared as a kind of its own above both.
 
-**Notes**
+Which components and cells a node has depends on its kinds, so memos follow changes to a kind: changing a kind's cell reaches everything that takes it, however far down, and linking or unlinking a kind reaches every cell the node could take from it.
+
+### Checks
+
+```rust
+reg.check(UNKNOWN, "unknown_cannot_be_done", Severity::Invariant, |cx| {
+    let done = cx.own_is_stored(Done::NAME) && cx.own::<Done>()?.is_some_and(|d| !d.finished().is_never());
+    Ok(if done { vec!["a gap can't be done: remove it to close it".to_string()] } else { vec![] })
+});
+```
+
+A check belongs to a component and only runs on entities that have it. It's worked out in a cell of its own, `check/<name>`, so it's memoised like any other: setting `done` on something that isn't a gap runs nothing here.
+
+A commit also checks what it touched against the definitions: a component nothing provides, a component on the wrong kind of entity, a written cell without its component, a value of the wrong shape, a formula that can't be read, and an edge from a node to itself. These look only at the ops' targets.
+
+`reg.advice` is for what's worth saying about the graph as a whole, which no single entity's cells can see, such as an open decision holding work up. A component's **constraint** says which worlds count on each entity that has it: that's how `requires` works.
+
+## The components
+
+**Notes** (always there)
 
 | Component | On | Cells | Requires |
 |---|---|---|---|
-| Notes | node | `body`, in markdown | |
-| Sources | node | `sources` | |
-| Drawing | node | `drawing` | |
-| serves, supports, contradicts, constrains, supersedes, relates | edge | none | |
+| `named` | every node | `name` (per entity) | |
+| `notes` | node | `body`, in markdown | |
+| `sources` | node | `sources` | |
+| `drawing` | node | `drawing`: see [drawings.md](drawings.md) | |
+| `serves`, `supports`, `contradicts`, `constrains`, `supersedes`, `relates` | edge | none | |
 
-**Formulas**
+**Formulas** (always there)
 
 | Component | On | Cells | Requires |
 |---|---|---|---|
-| Value | node | `value` (typed, a formula, or a choice from its options); internal `value_type` | |
-| Options | node | `options` (today's `domain`). Brings a choice: `value` defaults to choosing one of them | Value |
-| At | node | `row`, `col` | Options |
-| Requires | node | none: its condition is `value`, which has to be true | Value |
-| Uncertain | node | none of its own: it says the choice isn't anyone's to make, so what's expected averages over it | Decision |
-| Macro | node | `params`, `body`; internal `macro_body` | |
-| label | edge | `called`: the name the source's formulas use for the target | |
-| is_a | edge | none | |
+| `value` | node | `value` (per entity): typed in, a formula, or by default a choice from its options; internal `value_type` | |
+| `options` | node | `options`: what `value` chooses between | `value` |
+| `at` | node | `at`: where a choice goes on a board | `options` |
+| `requires` | node | none. A constraint: only the worlds where `value` is true count | `value` |
+| `macro` | node | `macro` (`params`, `body`); internal `macro_body` | |
+| `label` | edge | `called`: the name a formula on the source uses for the target. Arranges a map upside down | |
+| `is_a` | edge | none. What kind of thing the source is | |
 
 **Plan**
 
 | Component | On | Cells | Requires |
 |---|---|---|---|
-| Part | node | `need` = `need()`; internal `can_start`, `can_finish` | |
-| Work | node | `done`, `dropped`, `waiting`, `waits_for`, `can_start`, `scope`; internal `scope_depth` | Part |
-| Task | node | `estimate` | Work |
-| Goal, Question, Risk | node | none of their own | Work |
-| Unknown | node | none of its own: a gap, still owed until it's closed | Work |
-| Decision | node | `chosen` (stored, per instance), `choice` = `choice()` | Part |
-| Option | node | `belief` = `belief()`, `prior_belief` = `prior_belief()`, given only when its decision is uncertain | Part |
-| part_of | edge | none | Part on its source |
-| alternative | edge | `weight`, `ruled_out` | Option on its source, Decision on its target |
-| depends_on | edge | `wait_for` (done, or started) | Work on its source |
+| `part` | node | `need`, `done`, `dropped`; internal `blockers`, `scope`, `scope_depth`, `can_start`, `can_finish` | |
+| `work` | node | `blocked`, shown as Waiting | `part` |
+| `task` | node | `estimate`, `actionable` | `work` |
+| `goal`, `question`, `risk`, `unknown` | node | none of their own | `work` |
+| `decision` | node, per entity | `chosen`, `choice` | `part` |
+| `uncertain` | node | none: it isn't anyone's choice, so what's expected averages over it | `decision` |
+| `option` | node | none of its own | `part` |
+| `part_of` | edge | none. Brings `part` to both ends | |
+| `alternative` | edge | `weight` (default `if(has(from.unknown), 0, 1)`), `ruled_out`. Brings `option` to its source and `decision` to its target | |
+| `depends_on` | edge | `wait_for`: `done` (the default) or `decided`. Brings `part` to both ends | |
 
-**Schedule** adds to Work: `start`, `finish`, `slack`, and the quiet `dates`; internal `latest_start`, `latest_finish`. `plan_end` is a cell on the whole graph, which is an entity with a component of its own.
+**Schedule** adds to `part`: `start`, `finish`, `slack`, and the quiet `dates`; internal `latest_start` and `latest_finish`. The whole graph has `schedule`, with `plan_end`.
 
-A few things follow from these tables:
+So `need` is only on what's in a plan's structure: what's part of something or has parts, an option, or work. A plain note on its own, a suspect with nothing beneath it, or a piece of evidence has none. A note that's part of something has `part`, so need still flows down through it.
 
-- **Belief and prior belief become cells.** The server stops working them out on the side, and `web/src/summary.ts` stops special-casing them. They're Option's cells, flagged for cards, like any other.
-- **Requires stops showing a second "Value" badge.** Value is brought by Requires, so its card sits under Requires'.
-- **Needed is on what's part of something,** brought by `part_of` and `alternative` edges, and on work and decisions. A plain note on its own, a suspect with nothing beneath it, or a piece of evidence has none. Needed still flows down through a plain note that's part of something, because that note has Part.
-- **A weight lives on its `alternative` edge,** as today, but now as a proper cell. It's about how far the option is believed as an answer to that decision, so it belongs to the relationship, not the option.
-- **Notes are a component like any other.** A node has them when someone adds them from ＋, so one that's never had any shows no empty notes box.
+A belief isn't a cell. It depends on what's pinned, so the server works it out for each view: an option's `chance` is how strongly it's believed among the worlds left, and its `weight` is its share of its decision's weights, before any evidence. The app shows both on the `option` and `uncertain` cards.
 
 ## What the app shows
 
-**The inspector is a stack of component cards**, one per component the entity has, kinds included, each with its icon:
+**The inspector is a stack of component cards,** one per component the entity has, kinds included, each with its icon and why the entity has it. A card can be folded away, and which are folded is remembered per component, not per node. A card lists its component's cells, each saying what it comes to and where that came from: written here, a kind, or the default. Any cell that can be written can be typed over, and clearing it goes back to where it came from. The name is at the top. The workspace's own cells go in a card of their own, and those taken from a kind in a card for that kind. An edge has the same cards.
 
-- **Collapsing.** A card can be collapsed. Which cards are collapsed is remembered per component, not per node.
-- **Its cells.** A card lists its component's cells, each showing what it comes to and where that came from: the component's default, a kind, or typed here. Any cell can be typed over, and clearing it goes back to where it came from.
-- **What it brings.** A brought component shows under what brought it.
-- **The rest.** The name stays at the top. Notes are a card like any other, added from ＋. A node's own cells that no kind gives go in a card of their own. The "What it is" and "Worked out" sections go.
+**A card on the map** shows as badges the components a node was given or takes from its kind, apart from `notes` and `sources`, and a line for each cell its components flag as worth one. A badge in the inspector scrolls to its card.
 
-**A card on the map** shows the components as badges, as now, and the cells their components flag for cards. Clicking a badge opens the inspector with that card in view.
+**The API** sends each entity's components, with why it has each, and its cells, and sends the components' definitions in the overview.
 
-**An edge's inspector** is the same component cards. **A node's link lists** show each edge's flagged cells beside it, as they show weights now, from either end.
+## Reading
 
-The **Table view's columns** are cells, as now, but only those of components something in view has.
+A computation sees one entity, and anything it can reach from there:
 
-**The API** sends each entity's components with their cells, and the components' definitions (name, icon, about, on, cells, requires) in place of today's `ComponentInfo` and `RuleInfo`. Edges get ids.
+| Read | Gives |
+|---|---|
+| `cx.own::<C>()` / `cx.own_value::<C>()` | This entity's cell, if it has it, or `Error::Missing` |
+| `cx.get::<C>(e)` / `cx.value::<C>(e)` / `cx.get_value(e, name)` | The same, for another entity, typed or by name |
+| `cx.incoming(c)` / `cx.outgoing(c)` | The edges with component `c`, each with the node at the other end |
+| `cx.sources(c)` / `cx.targets(c)` | Just those nodes |
+| `cx.scan(c)` | Every node with component `c` |
+| `cx.has(e, c)` | Whether an entity has a component |
+| `cx.backed(cell)` / `cx.own_is_stored(cell)` | How one of this entity's cells is backed, and whether a value is written there |
+| `cx.ends()` | An edge's source and target |
+| `cx.rows()`, `cx.row_along(n)`, `cx.row_at(table, key)` | Tables: see [expressions.md](expressions.md#tables) |
+
+Nothing is declared in advance. Every read is recorded, and that's what invalidation runs on.
+
+A cell's type in Rust is `#[cell]`, and `#[component]` names a component for asking whether something has it. JSON under a name is what a cell really holds, so `get::<C>` and `get_value(e, "name")` read the same cell. A typed cell keeps its native value in the memo, so typed reads don't pay for JSON. A value of the wrong shape is `Error::Malformed` in that cell when read typed, and the data itself is untouched.
+
+`Option` is presence: a computation can decide an entity has nothing in a cell. `Result` is failure: a cycle, a missing value, a malformed value, a formula that can't be read or a panic is an error in that cell and whatever reads it, like `#REF!`. Other cells are unaffected, and it heals when the cause goes.
+
+### Memoisation
+
+Built in, and it persists across edits. Each computed cell remembers its value, what it read, when it was last confirmed correct, and when its value last changed. On a read:
+
+1. Confirmed at this revision: return it.
+2. Otherwise check what it read. If none of that changed, it's confirmed without running.
+3. Otherwise run it. If the value comes out the same, "last changed" doesn't move, so readers don't rerun.
+
+Nothing runs until it's read.
+
+Step 2 checks reads **in the order they were made**. A computation is deterministic, so if its first reads are unchanged then so is its next. Checked in any other order, it can run something the cell no longer reads, part way through evaluating something else, and report a loop that isn't there.
+
+**A memo only stands for an unbroken run of being computed.** If a cell held a written value, or nothing, in between, the same answer coming back is still a change to its readers.
+
+### Concurrency
+
+A `Graph` is `Send + Sync`. Reading takes `&self` and writing `&mut self`, so shared use is an `RwLock<Graph>`. The memo sits behind its own lock, so concurrent readers fill it safely and a cell still runs once. Readers take turns on that lock while cells are worked out, so an expensive one delays other readers. That's internal: finer-grained evaluation could replace it without changing the API, but it would need to detect cycles that span threads.
 
 ## The log
 
-Ops become:
+A graph held by a `Log` only changes through `commit`: `log.graph()` gives `&Graph`, so the types enforce it. Its state is the replay of its events.
 
-- `spawn` and `despawn`, as now;
-- `add` and `remove` for giving or taking away a component;
-- `set` for one cell: a value, a formula, or nothing;
-- `link` and `unlink` for an edge with a component;
-- `default` for a workspace override of a component's cell default.
+```rust
+let (mut log, problems) = Log::open(dir, registry, "disk")?;
 
-Old logs are upgraded as they're read, and never rewritten:
+let seq = log.commit("steven", "CAD model is already accurate", vec![plan::choose(calib, cad)])?;
 
-- **A marker component** set on a node, such as `task` or `uncertain`, becomes `add`.
-- **A body** becomes `add notes` and `set body`. An empty one is dropped.
-- **A component that held a struct** becomes `add` plus `set`s of its cells. Decision `{chosen}` becomes `add decision` and `set chosen`.
-- **`Stored::Rule { rule: "expr@1", params: { text } }`** becomes a formula. No other rule appears in any saved log. Anything else is reported, not guessed at.
-- **A link with a value** becomes `link` plus `set`s of the edge's cells. `{weight: 3}` becomes `set weight 3` on the edge.
-- **The samples are regenerated,** and `samples::FORMAT` goes up.
+log.blame(On::Node { id: calib }, "chosen");   // who last wrote it, when and why
+log.history(Target::Node(calib));             // everything that touched it
+log.state_at(seq);                            // the graph just after that event, as a new Graph
+log.undo(seq, "steven", "changed my mind")?;  // appends the inverse; history isn't rewritten
+log.checkout(seq, "steven", "try another way")?; // go to any event; the next commit follows from it
+log.what_if(&ops);                            // the same code as a commit, writing nothing
+log.reconcile(&files, "git pull")?;           // an outside edit, as ordinary audited ops
+```
 
-## The kernel crate
+There are seven ops, each with an exact inverse:
 
-`recollect-kernel` is the first prototype ([kernel-spec.md](kernel-spec.md)). It's only a dev-dependency now, kept as a second implementation that `log_vs_kernel` and `plan_vs_kernel` check the engine against. Its model is the old one, a component as one value and links as bags, so after this it can't agree with the engine on anything interesting.
+| Op | JSON |
+|---|---|
+| Make a node | `{"op": "spawn", "id"}` |
+| Remove a node, once its edges are gone | `{"op": "despawn", "id"}` |
+| Give a node a component | `{"op": "add", "id", "component"}` |
+| Take one away | `{"op": "remove", "id", "component"}` |
+| Give an edge a component, making the edge if it's new | `{"op": "link", "from", "to", "component"}` |
+| Take one off an edge | `{"op": "unlink", "from", "to", "component"}` |
+| Write in a cell, or with neither field take away what's written | `{"op": "set", "id", "cell", "value"}`, or `"formula"`, with `"from"` and `"to"` in place of `"id"` for an edge |
 
-It's retired, along with those two tests. In their place:
+The server's op language, which the app and Claude write, comes down to these. It adds names for handles, `new:x` for a node that doesn't exist yet, `add_node`, `delete_node` (which unlinks the node's edges first), `table`, and `labels` with a formula. Writing in a cell of a component a node doesn't have gives it that component. See `crates/recollect-server/src/ops.rs`.
 
-- **The plan's semantics are tested explicitly,** including the mixed cases this makes matter: a plain note holding tasks, an option holding a note, a goal with a plain part, and a decision under a plain note.
-- **The random-edit test keeps everything that needs no second implementation:** replaying a log agrees with the live graph, and with its files reopened, and refusals are the same both ways.
+A commit is all or nothing. It applies its ops, runs the checks, and if anything is newly broken, takes the ops back out and returns `CommitError::Refused` with what and where. Nothing is logged and no file changes. Checks already broken, such as by a hand edit, don't block other work, and `log.violations()` lists what stands.
 
-## Building it
+`no_deadlock` needs no graph search. Everything in a plan has two internal cells, `can_start` (its parents started and what it depends on finished) and `can_finish` (it started and its parts finished). Work that can never complete is exactly a cycle among those, which the engine already reports.
 
-Each stage leaves the app working, with every test passing.
+### History is a tree
 
-1. **Edges as entities.** Give edges ids and cells, and turn link values into edge cells. Formulas get `from.`, `to.` and `.via`. The app's link lists read edge cells.
-2. **Components with cells.** Component definitions in the registry: cells, defaults, requirements, bringing, and which can come from a kind. A node's components are stored explicitly, and lookup is the four steps above. The systems declare their components, and universal defaults go.
-3. **Rules into formula functions.** The built-in rules become functions, and the rule plumbing goes from the engine, the ops, the API, the MCP instructions and the docs.
-4. **The log.** The new ops, the reader that upgrades old logs, the samples regenerated, and the format bumped.
-5. **The app.** Component cards, badges tied to them, edge inspectors, and belief and prior belief as ordinary cells.
-6. **The kernel retired,** with the tests above in its place, and graph-core.md rewritten.
+Every event has a `parent`, and the log has a **head**: where it is now, and what the files show. `checkout` moves the head to any event, so the next commit starts a branch from there if that isn't the end of one. Nothing is rewritten and nothing is lost. Events are numbered in the order they happened, whichever branch they're on, and the head moving is a record of its own, so who moved it and when is known and it survives a reopen.
 
-Stages 1 and 2 can go either way round. Stage 4's log changes would be easiest done with stage 2, since that's when the shape of what's stored changes.
+`blame`, `history` and `path` look only at what led to the head. `undo` refuses an event that isn't on the way here, because its inverse wouldn't mean anything from here. `state_at` follows an event's own ancestors.
 
-## Decided
+Going somewhere takes the shortest way: back to where the two branches split using inverses, and on from there using ops. So memos survive, and only what differs reruns.
 
-- **An option's weight lives on its `alternative` edge.**
-- **Every node has a name,** through Named. Notes are a component added from ＋.
-- **A kind can't withhold one of its components from an instance.** An instance has all of its kind's components. Something that's mostly like a kind but lacks one of its components is a different kind, perhaps with the shared part as a kind of its own above both.
+### Files
 
-## Still to decide
+The log and `save_dir` both write one file per node, `nodes/<id>.yaml`:
 
-- **What a brought component's card is called** when what brought it is an edge. For example, Option is brought by an `alternative` edge to "Who took it?".
+```yaml
+id: 01a1bff4-e98a-7511-803e-a718fc43b670
+components:
+- notes
+cells:
+  body: The neighbour. He collects watches, and offered to buy this one in May. She said no.
+  from_garden: true
+  name: Mr Pryce
+formulas:
+  arrives: trip.at_house_by
+links:
+- to: 01a1bff4-e98a-7511-803e-a71642dd9766      # Who took it?
+  components:
+  - alternative
+  cells:
+    weight: 3.0
+- to: 01a1bff4-e98a-7511-803e-a721a0af9766      # How did Mr Pryce get home?
+  components:
+  - label
+  cells:
+    called: trip
+```
+
+`components` are the ones it was given, `cells` its values and `formulas` its formulas, so a value can't be mistaken for a formula. Each edge lives with its source, with its own `components`, `cells` and `formulas`. Only what was written is saved: never memos, defaults, what a kind gives or what's brought. Files whose text is unchanged aren't rewritten, so a commit shows only real changes. Files for nodes that are gone are removed, and anything not named like a node file is left alone.
+
+Nothing in a file needs a system to be read. A component or cell nothing provides goes back out exactly as it came in, and a log reports it as standing. An edge to a node with no file is kept, reported, and the node exists with nothing on it. A formula that can't be read is kept as written and reported.
+
+Logs and files from before components had cells aren't read. A working copy of a sample from before samples last changed is moved aside to `~/.recollect/samples-superseded`.
+
+### On disk, and crashes
+
+```
+log.jsonl      what's true: append-only, one record per line
+log.applied    how far the files have caught up
+nodes/*.yaml   a projection of the log, and the place to edit by hand
+log.lock       so two processes can't write one log
+```
+
+A commit appends a line to `log.jsonl` and flushes it, **which is the moment it happens**. Then it replaces the affected files, each atomically, flushes, and moves `log.applied` on. Opening repairs whatever a crash left:
+
+| What it finds | What it does |
+|---|---|
+| A last line with no newline | That commit never returned. It's cut off and reported as `TornLog` |
+| A file equal to the state at `log.applied`, or to the latest state | It's at most behind, so it's rewritten silently |
+| Any other difference | Someone edited it. It's recorded as an event under the `author` given to `open`, and it stands, even if a crash happened too |
+| A complete but unreadable line | `OpenError::Corrupt`, naming the line, since a crash can't cause this |
+
+If the log can't be written, the commit is undone and returns `CommitError::Io`. If only the files can't, it did happen, so `CommitError::FilesBehind` says so and the next commit repairs them.
+
+A crash while going back leaves the log either there or where it was, with the files caught up and no false edit. An edit on disk that hasn't been noticed yet should be recorded before moving, so it stays on the branch it was made on, which the app does.
+
+`Graph::save_dir` is there for a graph with no log. Each file is replaced atomically, but a crash can leave some newer than others.
+
+## Planning
+
+`plan.rs` is a system like any other, written with the API a plugin uses, so the engine knows nothing about it. `plan::install` adds it, and the formulas system with it.
+
+### What's written
+
+| What | Meaning |
+|---|---|
+| `part_of` | Child to parent: all of a node's parts are needed |
+| `alternative` | Option to decision: only the option taken is needed. `weight` says how far it's believed before any evidence, and `ruled_out` says why it's out |
+| `depends_on` | The source waits for the target. `wait_for: decided` waits for the answer, not the work |
+| `chosen` | The option a decision took. Holding one value makes "exactly one chosen" unbreakable |
+| `task`, `goal`, `question`, `risk` | Work of its own, which `done` discharges |
+| `estimate` | A task's days, typed in or a formula, so it can differ between worlds |
+| `unknown` | A gap. It can't be done or chosen, so removing it is the claim that it's closed |
+
+An option is an ordinary node, and nothing is ever written onto a decision's children, so deciding and reopening can't leave stale state behind.
+
+### Worked out, per world
+
+Each of these is the exact set of worlds in which it holds, or a value per world. `Bool::show` gives one as a formula, such as `calib∈{cad,free}`.
+
+| Cell | Value |
+|---|---|
+| `choice` | How a decision could land. A chosen one is a constant, and only live options that aren't ruled out are worlds |
+| `need` | Never if dropped, always with no parents, otherwise any parent it's in play through |
+| `done` | Finished, owed, or undefined for nothing to finish. A default formula, so a node can type over it. See below |
+| `dropped` | Deliberately out of the picture. Defaults to `false` |
+| `blockers` | What it waits for, with the worlds in which it does: its own dependencies and those of the parents it's in play through |
+| `blocked` | Any blocker |
+| `actionable` | For a live task with no live parts: needed, owed and not blocked |
+| `scope`, `scope_depth` | The nearest node every path from the top passes through. Decisions and dropping don't move it |
+
+Blocking is only inherited through parents in play, so shared work doesn't wait on a phase this world isn't doing. Two routes to the same blocker hold in either.
+
+`plan::pressure` says whether an open decision is holding work up, and `plan::explain` gives one level of why a node reads as it does. `ViewGraph` in `view.rs` gives filtered, collapsed and scoped views, as pure transforms.
+
+Variables are ordered by creation. A decision's `choice` reads its own `need` first, so whatever it's inside gets its variable first and formulas read from the outside in. A decision added above an existing one comes after it until the process restarts. The value is the same either way, and only how it prints differs.
+
+### Done comes from what's beneath, unless a node says otherwise
+
+Being finishable is something a node opts into. A leaf is in the system if it's work, and everything above takes the combination of what's beneath it: all its live parts, and a decision's selected option. A decision that lands on nothing is owed. A node with nothing completable beneath it reads undefined, and waiting on it costs nothing.
+
+| Situation | `Done::open()` | `Done::finished()` |
+|---|---|---|
+| A plain note, or "red" with no work | `never` | `never` |
+| Which colour, red or blue, with a gap | `colour=colour.unknown` | `never` |
+| Option `a` finished, `b` not | `d=b` | `d=a` |
+| All options finished and the gap closed, undecided | `never` | `always`, and `chosen` is still empty, a separate fact |
+| Chosen, but the option has a gap | `always` | `never` |
+
+**What a node says for itself replaces this.** That's a value or a formula in the same cell, and taking it away brings the default back, so there's still one place to look. `stated_done_with_open_work` reports a statement that disagrees with what's beneath it.
+
+### Scheduling
+
+`schedule.rs` works out dates over the same facts, in every world, as default formulas with nothing about them that another cell's formula couldn't do. A node can type over any of them, and a date typed in moves whatever follows it. `whole.plan_end` is worked out once, however many nodes read it. A task's estimate is its duration, and it starts once what it depends on has finished and whatever it's in play through has started. `finish` is 0 where a node isn't needed, so waiting on it costs nothing, and undefined where a gap makes it unknowable. `slack` comes from following the same edges backward. `dates` says the same for drawing: when it happens, in the worlds that need it.
+
+### What a plugin can add
+
+A component that requires `work` is an obligation, and the plan treats it as one (`a_plugin_can_add_an_obligation`). Beyond that, a plugin's cells read these like any others. `Remaining` in `tests/plan.rs` is a remaining-effort total per world, and `a_cell_with_no_rust_type_can_read_and_combine_these` does the same with only JSON crossing the line.
+
+## Worlds, on top
+
+`graph.rs` knows nothing of worlds. They're values in `worlds.rs` that a cell can hold:
+
+- **`Space`:** the variables and the shared diagram. Values normally live in one global space, behind a lock.
+- **`Var`:** one open choice.
+- **`Bool`:** the exact set of worlds where something holds. Supports `&`, `|`, `!`, `iff`, `implies`, `prob`, `count`, `solutions` and `show`.
+- **`Cond<T>`:** any value per world. Supports `map`, `zip`, `when`, `holds`, and for numbers `expected`, `min` and `max`.
+- **`Worldly<T>`:** a `Cond<T>` that's written plainly when it's the same in every world, for a cell that may be typed in or worked out.
+
+A variable is identified by its name, options and weights, so handles stay valid across edits. Equal functions get equal handles, so early cut-off works on them like any other value. Variables and options are usually entity handles as strings, so `show_with` translates them for reading.
+
+Any choices can be pinned: `Space::picks` turns a world into `Picks`, and `Bool::given` and `Cond::given` narrow a value to the worlds consistent with them, with the picked choices gone from it. That's exact, and costs one walk of the diagram. It's how the app answers a what-if, and why it doesn't have to enumerate anything.
+
+World values are JSON too. A `Bool` is a table of its diagram, which stays linear in size where listing worlds wouldn't, and is rebuilt by logic on the way in, so it means the same in a space with a different variable order. A `Cond<T>` is a list of `{when, value}`. So code in another language can receive one and return one, with no shared memory.
+
+## The toys
+
+These were written to find out whether the engine is general enough, and they became systems and sample workspaces. `tests/toy_*.rs` in `recollect-systems` hold their tests, and `examples/` the workspaces.
+
+1. **Spreadsheet.** Invoice, Fibonacci and compound interest as formulas, and a trip budget with its choices held open as decisions: min, max, expected, and over £200 exactly when `Stay=Hotel`.
+2. **Schedule.** `tests/toy_gantt.rs` has classic critical-path scheduling with no worlds, written in the test and sharing nothing with the system: forward over `depends_on` for dates, backward for slack, summary tasks rolling up from leaves. Fix a decision, and this plain schedule must agree, including where an estimate is a formula over a decision. Slack is checked from its definition, by slipping a task by exactly that much and seeing the end doesn't move, and by one more and seeing it does.
+3. **Puzzles.** A choice is a node with `options`, a constraint is a formula, and the solutions are the worlds where every `requires` node is true. Map colouring, eight queens, 4×4 sudoku, knights and knaves, and the zebra puzzle, which find 18 colourings, 92 solutions, 288 grids, and the Japanese owning the zebra.
+
+## How it's checked
+
+| Check | Where |
+|---|---|
+| Memoisation is invisible: after random edits, a long-lived graph answers as a new one holding the same state | `recollect-graph/tests/memo.rs` |
+| Kinds and tables: the same, through random kinds, renames and edits | `tests/kinds.rs`, `tests/tables.rs` |
+| Saving keeps everything, and what's unknown goes back out as it came | `tests/saving.rs` |
+| The log: refusals, undo, the tree of history, reconciling and hand edits | `tests/log.rs` |
+| A crash leaves all of a commit or none of it: a real process killed at each step of a commit and of the repair | `tests/crash.rs` |
+| Concurrent readers agree with one thread, and a cell runs once | `tests/concurrency.rs` |
+| Planning scenarios through the real write path | `recollect-systems/tests/plan.rs` |
+| Worlds agree with plain scheduling, in every world of random plans | `tests/toy_gantt.rs` |
+| Formulas mean what they say | `tests/expr.rs`: see [expressions.md](expressions.md#how-its-checked) |
+| The samples mean what they should | `tests/samples.rs` |
+| The app, from outside, including held-out problems solved with data alone | `recollect-server/src/tests.rs` |
+
+What things cost is measured by `tests/plan_cost.rs` and `tests/schedule_cost.rs`, which don't run by default: `cargo test --release -p recollect-systems --test plan_cost -- --ignored --nocapture`.
+
+## Limits
+
+- **Loops spanning worlds:** which cells read which doesn't vary by world, so a loop no single world contains is still reported as a cycle.
+- **Variable order is creation order.** The puzzles work partly because clues come before all-different constraints and choices are made in a sensible order. Worst cases remain exponential.
+- **The diagram is never garbage collected,** and the global one is shared by every graph in the process.
+- **Reads take turns,** as described under Concurrency. World values also share one lock on the global `Space`.
+- **A commit's cost grows with the graph.** Each one confirms every check's memo on every entity with its component, even though little reruns.
+- **Importing many nodes is slow on disk,** because each file is flushed separately.
+- **A process dying is tested, but losing power isn't.** Flushes are in place for it, but nothing here can show the disk honoured them.
+- **The log only grows,** and opening replays all of it. There are no snapshots.
+- **Branches don't merge,** and nor do two machines' logs. Files merged by git and then opened are fine: they're recorded as an edit.
+
+## Not built
+
+- A TypeScript runtime for systems. World values have a JSON form one could receive and return, but there's no library for building or combining them.
+- Plugins. Systems are compiled in.
+- Merging logs across machines.

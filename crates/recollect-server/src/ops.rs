@@ -25,7 +25,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use recollect_graph::{CellType, Entity, Graph, Name, Op};
+use recollect_graph::{Backed, CellType, Entity, Graph, Name, Op};
 use recollect_systems::formulas::{Called, IS_A, LABEL};
 use recollect_systems::notes::{Body, NOTES};
 use recollect_systems::plan::ALTERNATIVE;
@@ -130,7 +130,7 @@ impl Resolver<'_> {
         }
         if let Some(labels) = what.remove("labels") {
             let id = on.get("id").cloned().ok_or("only a node's formula can have labels")?;
-            self.labels(&id, labels, out)?;
+            self.labels(&id, cell, labels, out)?;
         }
         for field in ["value", "formula"] {
             if let Some(v) = what.remove(field) {
@@ -141,16 +141,17 @@ impl Resolver<'_> {
         Ok(())
     }
 
-    /// What a formula on `id` calls which nodes. These replace what's there, so a name the formula no
-    /// longer uses doesn't stay.
-    fn labels(&self, id: &Value, labels: Value, out: &mut Vec<Value>) -> Result<(), String> {
+    /// What a formula in `cell` on `id` calls which nodes. These replace what's there, so a name the
+    /// formula no longer uses doesn't stay, unless another formula on the node still does.
+    fn labels(&self, id: &Value, cell: &str, labels: Value, out: &mut Vec<Value>) -> Result<(), String> {
         let Value::Object(labels) = labels else { return Err("labels are {name: node}".to_string()) };
         if let Ok(known) = Self::entity(id)
             && self.g.contains(known)
         {
+            let others: Vec<String> = self.g.written(known).into_iter().filter(|(c, _)| c != cell).filter_map(|(_, b)| if let Backed::Formula(t) = b { Some(t) } else { None }).collect();
             for (to, edge) in self.g.edges_from(known, LABEL) {
                 let name = self.g.get::<Called>(edge).ok().flatten().map(|c| c.0).unwrap_or_default();
-                if !labels.contains_key(&name) {
+                if !labels.contains_key(&name) && !others.iter().any(|t| uses_name(t, &name)) {
                     out.push(json!({ "op": "unlink", "from": id, "to": to, "component": LABEL }));
                 }
             }
@@ -238,6 +239,19 @@ impl Resolver<'_> {
                     }
                 }
             }
+            "remove" => {
+                self.nodes_in(&mut op)?;
+                let id = op.get("id").cloned().ok_or("remove needs an id")?;
+                let component = op.get("component").and_then(Value::as_str).ok_or("remove needs a component")?.to_string();
+                // What it said in that component's cells goes with it, so nothing is left without its component.
+                if let Ok(e) = Self::entity(&id) {
+                    let reg = self.g.registry();
+                    for cell in self.g.written(e).into_keys().filter(|c| reg.owner(c) == Some(component.as_str())) {
+                        out.push(json!({ "op": "set", "id": id, "cell": cell }));
+                    }
+                }
+                out.push(json!({ "op": "remove", "id": id, "component": component }));
+            }
             "add" => {
                 self.nodes_in(&mut op)?;
                 let id = op.get("id").cloned().ok_or("add needs an id")?;
@@ -257,6 +271,12 @@ fn on_node(id: &Value) -> Map<String, Value> {
     let mut on = Map::new();
     on.insert("id".to_string(), id.clone());
     on
+}
+
+/// Whether a formula might use this name. It can say so of a name that's only in some text, which keeps a
+/// label that could have gone, and never the other way round.
+fn uses_name(formula: &str, name: &str) -> bool {
+    formula.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|w| w == name)
 }
 
 /// A cell as it's given: a value, or `{"formula": .., "labels": {..}}`.
