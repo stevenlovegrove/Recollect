@@ -60,6 +60,18 @@ impl Entity {
     fn implicit(table: &str, n: i64) -> Self {
         hashed(&format!("{table}[{n}]"))
     }
+
+    /// A node nobody wrote that's only what these cells say: see `Graph::constant`.
+    fn constant(cells: &BTreeMap<String, Value>) -> Self {
+        hashed(&format!("constant {}", serde_json::to_string(cells).expect("values serialise")))
+    }
+}
+
+/// A node nobody wrote, which only exists to be read: see `Graph::row_at` and `Graph::constant`.
+#[derive(Clone)]
+enum Implicit {
+    Row(Row),
+    Constant(BTreeMap<String, Value>),
 }
 
 impl Default for Entity {
@@ -319,11 +331,13 @@ pub struct Graph {
     cells: HashMap<Entity, BTreeMap<String, Backing>>,
     /// What each cell is when nothing says otherwise.
     defaults: Arc<HashMap<String, Backing>>,
+    /// What a cell is instead, on an entity with a component that fills it: see `Registry::fill`.
+    fills: Arc<HashMap<String, Vec<(String, Backing)>>>,
     /// Names, and the tables they make: see `table`.
     names: Names,
-    /// Numbered rows nobody wrote that something has asked for: see `row_at`. They're only ever read, so
-    /// they live here and in the memos, and never in a file.
-    implicit: Mutex<HashMap<Entity, Row>>,
+    /// Nodes nobody wrote that something has asked for: numbered rows (see `row_at`), and constants (see
+    /// `constant`). They're only ever read, so they live here and in the memos, and never in a file.
+    implicit: Mutex<HashMap<Entity, Implicit>>,
     /// Which components each entity has, as worked out since the last change that could move them.
     components: Mutex<HashMap<Entity, Components>>,
     resources: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
@@ -345,23 +359,32 @@ impl Graph {
 
     /// A graph of what these systems say there is.
     pub fn with_registry(registry: Arc<Registry>) -> Self {
+        let backing = |name: &str, d: &CellDefault| match d {
+            CellDefault::Value(v) => Backing::Value(v.clone()),
+            CellDefault::Builtin(f) => Backing::Builtin(f.clone()),
+            CellDefault::Formula(text) => {
+                let compiled = match registry.cell_def(name).and_then(|c| c.compile.as_ref()) {
+                    Some(compile) => compile(text).map_err(Error::Failed),
+                    None => Err(Error::Failed(format!("{name} has a formula for a default, and nothing to compile it"))),
+                };
+                Backing::Formula(text.clone(), compiled)
+            }
+        };
         let mut defaults = HashMap::new();
         for c in registry.cells() {
-            let b = match &c.default {
-                None => continue,
-                Some(CellDefault::Value(v)) => Backing::Value(v.clone()),
-                Some(CellDefault::Builtin(f)) => Backing::Builtin(f.clone()),
-                Some(CellDefault::Formula(text)) => {
-                    let compiled = match &c.compile {
-                        Some(compile) => compile(text).map_err(Error::Failed),
-                        None => Err(Error::Failed(format!("{} has a formula for a default, and nothing to compile it", c.name))),
-                    };
-                    Backing::Formula(text.clone(), compiled)
-                }
-            };
-            defaults.insert(c.name.clone(), b);
+            if let Some(d) = &c.default {
+                defaults.insert(c.name.clone(), backing(&c.name, d));
+            }
         }
-        Graph { defaults: Arc::new(defaults), registry, revision: 1, ..Self::default() }
+        let mut fills: HashMap<String, Vec<(String, Backing)>> = HashMap::new();
+        for comp in registry.components() {
+            for (cell, d) in &comp.fills {
+                let owner = registry.owner(cell).unwrap_or_else(|| panic!("{} fills {cell}, which no component brings", comp.name));
+                assert!(registry.required_by(&comp.name).iter().any(|r| r == owner), "{} fills {cell}, a cell of {owner}, which it doesn't require", comp.name);
+                fills.entry(cell.clone()).or_default().push((comp.name.clone(), backing(cell, d)));
+            }
+        }
+        Graph { defaults: Arc::new(defaults), fills: Arc::new(fills), registry, revision: 1, ..Self::default() }
     }
 
     pub fn registry(&self) -> &Registry {
@@ -632,6 +655,7 @@ impl Graph {
             given: self.given.clone(),
             cells: self.cells.clone(),
             defaults: self.defaults.clone(),
+            fills: self.fills.clone(),
             names: self.names.clone(),
             implicit: Mutex::new(lock(&self.implicit).clone()),
             components: Mutex::new(lock(&self.components).clone()),
@@ -740,6 +764,11 @@ impl Graph {
             for c in self.given.get(&e).into_iter().flatten().filter(|c| fits(c, Place::Edge)) {
                 out.insert(c.clone(), Origin::Given);
             }
+        } else if let Some(Implicit::Constant(cells)) = self.implicit_of(e) {
+            // It has what its cells need, and nothing else.
+            for c in cells.keys().filter_map(|c| reg.owner(c)) {
+                out.insert(c.to_string(), Origin::Given);
+            }
         } else if self.nodes.contains(&e) || self.is_implicit(e) {
             if self.nodes.contains(&e) {
                 for c in reg.components().filter(|c| c.everywhere && c.place == Place::Node) {
@@ -795,6 +824,9 @@ impl Graph {
     /// components. Some of these may turn out to have nothing in them.
     fn cell_names(&self, e: Entity) -> BTreeSet<String> {
         let mut out: BTreeSet<String> = self.cells.get(&e).into_iter().flat_map(|c| c.keys().cloned()).collect();
+        if let Some(Implicit::Constant(cells)) = self.implicit_of(e) {
+            out.extend(cells.into_keys());
+        }
         for k in self.lookup(e) {
             out.extend(self.cells.get(&k).into_iter().flat_map(|c| c.keys().filter(|c| self.registry.cell_inheritable(c)).cloned()));
         }
@@ -827,10 +859,19 @@ impl Graph {
         if let Some(b) = self.cells.get(&e).and_then(|c| c.get(cell)) {
             return Some((b.clone(), e));
         }
+        if let Some(Implicit::Constant(cells)) = self.implicit_of(e) {
+            return cells.get(cell).map(|v| (Backing::Value(v.clone()), e));
+        }
         if self.registry.cell_inheritable(cell)
             && let Some(found) = self.taken_from_kind(e, cell)
         {
             return Some(found);
+        }
+        if let Some(fills) = self.fills.get(cell) {
+            let has = self.components_of(e);
+            if let Some((_, b)) = fills.iter().find(|(c, _)| has.contains_key(c)) {
+                return Some((b.clone(), Entity::whole()));
+            }
         }
         owner.and_then(|_| self.defaults.get(cell)).map(|b| (b.clone(), Entity::whole()))
     }
@@ -1023,7 +1064,7 @@ impl Graph {
         };
         if let Some(name) = self.names.of.get(&k) {
             out.extend(self.rows(name).into_iter().filter(|r| *r != k));
-            out.extend(lock(&self.implicit).iter().filter(|(_, r)| r.table == *name).map(|(e, _)| *e));
+            out.extend(lock(&self.implicit).iter().filter(|(_, i)| matches!(i, Implicit::Row(r) if r.table == *name)).map(|(e, _)| *e));
         }
         out.extend(self.parts(k));
         out
@@ -1052,16 +1093,44 @@ impl Graph {
 
     /// Which row of which table a node is, if its name says, or if it's a row nobody wrote: see `table`.
     pub fn row_of(&self, e: Entity) -> Option<Row> {
-        self.names.rows.get(&e).cloned().or_else(|| lock(&self.implicit).get(&e).cloned())
+        self.names.rows.get(&e).cloned().or_else(|| match self.implicit_of(e)? {
+            Implicit::Row(r) => Some(r),
+            Implicit::Constant(_) => None,
+        })
     }
 
     /// The rows nobody wrote that something has asked for, with what they'd be called.
     pub fn implicit_rows(&self) -> Vec<(Entity, String)> {
-        lock(&self.implicit).iter().map(|(e, r)| (*e, format!("{}[{}]", r.table, r.key))).collect()
+        let implicit = lock(&self.implicit);
+        implicit.iter().filter_map(|(e, i)| if let Implicit::Row(r) = i { Some((*e, format!("{}[{}]", r.table, r.key))) } else { None }).collect()
+    }
+
+    /// The constants something has asked for, with what each says.
+    pub fn constants(&self) -> Vec<(Entity, BTreeMap<String, Value>)> {
+        let implicit = lock(&self.implicit);
+        let mut out: Vec<_> = implicit.iter().filter_map(|(e, i)| if let Implicit::Constant(c) = i { Some((*e, c.clone())) } else { None }).collect();
+        out.sort_by_key(|c| c.0);
+        out
     }
 
     fn is_implicit(&self, e: Entity) -> bool {
         lock(&self.implicit).contains_key(&e)
+    }
+
+    fn implicit_of(&self, e: Entity) -> Option<Implicit> {
+        lock(&self.implicit).get(&e).cloned()
+    }
+
+    /// A node nobody wrote, which is only what these cells say, such as one of a puzzle's options: a name,
+    /// and a value. The same cells always make the same node, so two choices with an option in common
+    /// land on the same thing. It's never saved, and nothing can be written on it.
+    pub fn constant(&self, cells: BTreeMap<String, Value>) -> Entity {
+        let e = Entity::constant(&cells);
+        if let std::collections::hash_map::Entry::Vacant(slot) = lock(&self.implicit).entry(e) {
+            slot.insert(Implicit::Constant(cells));
+            lock(&self.components).remove(&e);
+        }
+        e
     }
 
     /// The row of a table with this key. That's the node with that name, if there is one. Otherwise, a
@@ -1082,7 +1151,7 @@ impl Graph {
         }
         let e = Entity::implicit(table, *n);
         if let std::collections::hash_map::Entry::Vacant(slot) = lock(&self.implicit).entry(e) {
-            slot.insert(Row { table: table.to_string(), key: key.clone() });
+            slot.insert(Implicit::Row(Row { table: table.to_string(), key: key.clone() }));
             lock(&self.components).remove(&e);
         }
         Some(e)
@@ -1179,7 +1248,8 @@ impl Session<'_> {
     /// Nothing backs this cell. On a node, that's just a cell it doesn't have. On a row nobody wrote, one
     /// of the workspace's own cells its table doesn't say is one nothing could ever fill.
     fn missing<T>(&self, key: Key) -> Cell<T> {
-        if self.g.is_implicit(key.0) && self.g.registry.owner(&key.1).is_none() { Err(Error::Missing(key)) } else { Ok(None) }
+        let row = matches!(self.g.implicit_of(key.0), Some(Implicit::Row(_)));
+        if row && self.g.registry.owner(&key.1).is_none() { Err(Error::Missing(key)) } else { Ok(None) }
     }
 
     /// Make sure the memo for a cell about to be read is current.
@@ -1318,8 +1388,13 @@ impl Cx<'_> {
 
     /// Whether this entity has a value written in this cell itself.
     pub fn own_is_stored(&self, cell: &str) -> bool {
-        self.s.note(Dep::Backing((self.id, cell.to_string())));
-        self.s.g.stored(self.id, cell).is_some()
+        self.is_stored(self.id, cell)
+    }
+
+    /// Whether that entity has a value written in this cell itself.
+    pub fn is_stored(&self, e: Entity, cell: &str) -> bool {
+        self.s.note(Dep::Backing((e, cell.to_string())));
+        self.s.g.stored(e, cell).is_some()
     }
 
     /// A cell on this entity, if it has it.
@@ -1410,6 +1485,12 @@ impl Cx<'_> {
     pub fn row_at(&self, table: &str, key: &table::Key) -> Option<Entity> {
         self.s.note(Dep::Names);
         self.s.g.row_at(table, key)
+    }
+
+    /// A node that's only what these cells say: see `Graph::constant`. Nothing about it can change, so
+    /// there's nothing to depend on.
+    pub fn constant(&self, cells: BTreeMap<String, Value>) -> Entity {
+        self.s.g.constant(cells)
     }
 
     /// Which row this entity is in its table.

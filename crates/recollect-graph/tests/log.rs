@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use recollect_graph::{Cell, CellType, Cx, Entity, Error, Graph, LoadProblem, Log, Name, On, Op, OpenError, Registry, SavedGraph, Severity, Stored, Target, cell};
 use recollect_systems::formulas::LABEL;
-use recollect_systems::plan::{self, ALTERNATIVE, Chosen, DECISION, DEPENDS_ON, Done, Dropped, Estimate, GOAL, PART_OF, RuledOut, TASK};
+use recollect_systems::formulas::Chosen;
+use recollect_systems::plan::{self, ALTERNATIVE, DECISION, DEPENDS_ON, Done, Dropped, Estimate, GOAL, PART_OF, RuledOut, TASK};
 use serde_json::json;
 
 fn plan_registry() -> Arc<Registry> {
@@ -78,12 +79,12 @@ fn the_log_answers_who_when_why() {
 
     // Replay reproduces the graph exactly, at any point.
     assert_eq!(log.state_at(seq).save(), log.graph().save());
-    assert_eq!(log.state_at(seq - 1).get::<Chosen>(c.calib), Ok(None));
+    assert_eq!(log.state_at(seq - 1).stored(c.calib, Chosen::NAME), None);
 
     // Undo appends: history isn't rewritten.
     let u = log.undo(seq, "steven", "changed my mind").unwrap();
-    assert_eq!(log.graph().get::<Chosen>(c.calib), Ok(None));
-    assert_eq!(log.state_at(u - 1).get::<Chosen>(c.calib), Ok(Some(Chosen(c.cad))));
+    assert_eq!(log.graph().stored(c.calib, Chosen::NAME), None);
+    assert_eq!(log.state_at(u - 1).get::<Chosen>(c.calib), Ok(Some(Chosen::on(c.cad))));
     assert_eq!(log.history(Target::Node(c.calib)).iter().filter(|e| e.seq >= seq).count(), 2);
     assert!(log.blame(node(c.free), "nothing").is_none());
 }
@@ -233,7 +234,7 @@ fn what_if_is_a_commit_that_writes_nothing() {
     let saved = log.graph().save();
 
     let g = log.what_if(&[choose(c.calib, c.cad)]).unwrap();
-    assert_eq!(g.get::<Chosen>(c.calib), Ok(Some(Chosen(c.cad))));
+    assert_eq!(g.get::<Chosen>(c.calib), Ok(Some(Chosen::on(c.cad))));
     assert_eq!(log.graph().save(), saved);
     assert_eq!(log.events().len(), events);
 
@@ -362,7 +363,7 @@ fn an_external_edit_that_breaks_a_check_is_recorded_reported_and_doesnt_block_ot
     let events = log.events().len();
     let mut disk = log.graph().save();
     let calib = disk.nodes.iter_mut().find(|n| n.id == c.calib).unwrap();
-    calib.cells.insert(Chosen::NAME.into(), json!(c.imu));
+    calib.cells.insert(Chosen::NAME.into(), json!({ "ref": c.imu }));
 
     let issues = log.reconcile(&disk, "hand edit").unwrap();
     assert_eq!(issues.iter().map(|v| v.rule.as_str()).collect::<Vec<_>>(), ["chosen_must_be_a_live_option"]);

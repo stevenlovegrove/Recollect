@@ -1,0 +1,19 @@
+id: 01a1c1e5-2b26-73d3-bfb5-7929f4ddef3e
+components:
+- notes
+- options
+- value
+cells:
+  body: No two share a column or a diagonal
+  name: Queen
+  options:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+  - '6'
+  - '7'
+  - '8'
+formulas:
+  value: 'distinct(q in rows: q.chosen) && distinct(q in rows: q.chosen.value + q.row) && distinct(q in rows: q.chosen.value - q.row)'

@@ -1,0 +1,14 @@
+id: 01a1c1e5-2c01-779a-b9ad-be9f13ab3cf8
+components:
+- requires
+- value
+cells:
+  name: The island
+formulas:
+  value: all(constraint)
+links:
+- to: 01a1c1e5-2c01-779a-b9ad-bea38231e877
+  components:
+  - label
+  cells:
+    called: constraint

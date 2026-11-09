@@ -38,6 +38,7 @@ A component declares:
 - where it goes: **on nodes, on edges, or on the whole graph**;
 - its **cells**, each with a type, a sentence and a default. Some are flagged as worth a line on a card, some as internal (plumbing for other cells), and some as quiet (for a view to read, not a person);
 - the components it **requires** on the same entity, and for an edge, the components it brings to its **source** and **target**;
+- what it **fills** in: how a cell of a component it requires is worked out on an entity with it, as `decision` says how `choice` lands;
 - whether it's **per entity**, so it can't come from a kind;
 - whether **every node** has it;
 - for an edge, whether it **arranges** a map (and which way up), or says what comes **first**;
@@ -55,11 +56,14 @@ For a cell on an entity that has its component:
 
 1. what the entity says itself: a value or a formula;
 2. what its kinds say, nearest first;
-3. its component's default.
+3. what a component it has fills in, if one does (`Registry::fill`);
+4. its component's default.
 
 If the entity doesn't have the component, the cell isn't there at all. There are no defaults that apply to every node, so a suspect in the Vane watch has its name, its notes and its own `arrives`, and nothing else.
 
-A cell holds a value or a formula, nothing else. A default can also be **built in**: Rust, given with `CellBuilder::builtin`. That's for what can't be a formula, such as what makes worlds (`choice`), and for what's simpler in Rust (`need`, `blockers`, `scope`). A built-in default has no written form, so it's never saved. A cell can be written over if it holds formulas, or isn't worked out by default.
+A cell holds a value or a formula, nothing else. A default can also be **built in**: Rust, given with `CellBuilder::builtin` or `Registry::fill`. That's for what can't be a formula, such as what makes worlds (`chosen`), and for what's simpler in Rust (`need`, `blockers`, `scope`). A built-in default has no written form, so it's never saved. A cell can be written over if it holds formulas, or isn't worked out by default.
+
+**Filling in keeps a cell in one place.** `chosen` is `choice`'s cell, whatever's choosing: a decision fills it in over its live options and their weights, and `options` over a plain list. So a formula reads `x.chosen` the same way for both, and a component that's required can stay ignorant of what requires it. A component can only fill a cell of one it requires, which is checked when the graph is made, and two that fill the same cell shouldn't go together.
 
 Taking away what an entity says brings back what it takes from its kind or default. Taking away a component keeps what the entity wrote in its cells, but a commit that leaves a written cell without its component is refused (`cell_without_component`).
 
@@ -68,6 +72,10 @@ Taking away what an entity says brings back what it takes from its kind or defau
 A formula on an edge reads its ends as `from.` and `to.`, as a node's reads `self.`. `alternative`'s `weight` defaults to `if(has(from.unknown), 0, 1)`: a gap has no weight unless someone gives it one.
 
 A fold over edges binds the node at the other end, and `o.via` is the edge it came along. So `o in in.alternative` gives the options, and `o.via.weight` is that option's weight.
+
+### Nodes nobody wrote
+
+Some nodes exist only to be read, so they're never saved and nothing can be written on them. A numbered table's rows past its last written one are such nodes: see [expressions.md](expressions.md#tables). So are **constants**, which are only what their cells say: `Graph::constant` gives the node for some cells, the same one for the same cells, and has the components those cells belong to. A plain list of options makes one for each option, with that `name` and `value`, so `a.chosen = b.chosen` is the worlds where two choices land on the same option.
 
 ### Kinds
 
@@ -112,8 +120,9 @@ A commit also checks what it touched against the definitions: a component nothin
 
 | Component | On | Cells | Requires |
 |---|---|---|---|
-| `value` | node | `value` (per entity): typed in, a formula, or by default a choice from its options; internal `value_type` | |
-| `options` | node | `options`: what `value` chooses between | `value` |
+| `value` | node | `value` (per entity): typed in, or a formula; internal `value_type` | |
+| `choice` | node | `chosen` (per entity): the node it lands on in each world, read through as `x.chosen.cell`. Writing one in settles it. Filled in by what requires it | |
+| `options` | node | `options`: a plain list, each a constant with that name and value. Fills in `chosen`, landing on each equally | `choice` |
 | `at` | node | `at`: where a choice goes on a board | `options` |
 | `requires` | node | none. A constraint: only the worlds where `value` is true count | `value` |
 | `macro` | node | `macro` (`params`, `body`); internal `macro_body` | |
@@ -128,7 +137,7 @@ A commit also checks what it touched against the definitions: a component nothin
 | `work` | node | `blocked`, shown as Waiting | `part` |
 | `task` | node | `estimate`, `actionable` | `work` |
 | `goal`, `question`, `risk`, `unknown` | node | none of their own | `work` |
-| `decision` | node, per entity | `chosen`, `choice` | `part` |
+| `decision` | node, per entity | none of its own. Fills in `chosen`, over its live options as likely as their weights say | `part`, `choice` |
 | `uncertain` | node | none: it isn't anyone's choice, so what's expected averages over it | `decision` |
 | `option` | node | none of its own | `part` |
 | `part_of` | edge | none. Brings `part` to both ends | |
@@ -301,7 +310,7 @@ A crash while going back leaves the log either there or where it was, with the f
 | `part_of` | Child to parent: all of a node's parts are needed |
 | `alternative` | Option to decision: only the option taken is needed. `weight` says how far it's believed before any evidence, and `ruled_out` says why it's out |
 | `depends_on` | The source waits for the target. `wait_for: decided` waits for the answer, not the work |
-| `chosen` | The option a decision took. Holding one value makes "exactly one chosen" unbreakable |
+| `chosen` | Written in, the option a decision took, as `{"ref": handle}`. Holding one node makes "exactly one chosen" unbreakable |
 | `task`, `goal`, `question`, `risk` | Work of its own, which `done` discharges |
 | `estimate` | A task's days, typed in or a formula, so it can differ between worlds |
 | `unknown` | A gap. It can't be done or chosen, so removing it is the claim that it's closed |
@@ -314,7 +323,7 @@ Each of these is the exact set of worlds in which it holds, or a value per world
 
 | Cell | Value |
 |---|---|
-| `choice` | How a decision could land. A chosen one is a constant, and only live options that aren't ruled out are worlds |
+| `chosen` | Unless it's written in, how a decision could land: only live options that aren't ruled out are worlds, and with none it lands on nothing |
 | `need` | Never if dropped, always with no parents, otherwise any parent it's in play through |
 | `done` | Finished, owed, or undefined for nothing to finish. A default formula, so a node can type over it. See below |
 | `dropped` | Deliberately out of the picture. Defaults to `false` |
@@ -327,7 +336,7 @@ Blocking is only inherited through parents in play, so shared work doesn't wait 
 
 `plan::pressure` says whether an open decision is holding work up, and `plan::explain` gives one level of why a node reads as it does. `ViewGraph` in `view.rs` gives filtered, collapsed and scoped views, as pure transforms.
 
-Variables are ordered by creation. A decision's `choice` reads its own `need` first, so whatever it's inside gets its variable first and formulas read from the outside in. A decision added above an existing one comes after it until the process restarts. The value is the same either way, and only how it prints differs.
+Variables are ordered by creation. A decision's `chosen` reads its own `need` first, so whatever it's inside gets its variable first and formulas read from the outside in. A decision added above an existing one comes after it until the process restarts. The value is the same either way, and only how it prints differs.
 
 ### Done comes from what's beneath, unless a node says otherwise
 
@@ -338,7 +347,7 @@ Being finishable is something a node opts into. A leaf is in the system if it's 
 | A plain note, or "red" with no work | `never` | `never` |
 | Which colour, red or blue, with a gap | `colour=colour.unknown` | `never` |
 | Option `a` finished, `b` not | `d=b` | `d=a` |
-| All options finished and the gap closed, undecided | `never` | `always`, and `chosen` is still empty, a separate fact |
+| All options finished and the gap closed, undecided | `never` | `always`, and nothing is written in `chosen`, a separate fact |
 | Chosen, but the option has a gap | `always` | `never` |
 
 **What a node says for itself replaces this.** That's a value or a formula in the same cell, and taking it away brings the default back, so there's still one place to look. `stated_done_with_open_work` reports a statement that disagrees with what's beneath it.

@@ -1,0 +1,7 @@
+id: 01a1c1e5-2c95-70ac-aa1f-c4a1bb40d230
+components:
+- value
+cells:
+  name: Kools are smoked next to the house with the horse
+formulas:
+  value: abs(Smoke[Kools].chosen.value - Pet[Horse].chosen.value) = 1

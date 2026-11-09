@@ -1,0 +1,9 @@
+id: 01a1c1e5-2ac1-77e9-abe4-3c18825cb4f4
+components:
+- options
+cells:
+  name: Tasmania
+  options:
+  - red
+  - green
+  - blue

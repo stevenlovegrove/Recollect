@@ -1,0 +1,12 @@
+id: 01a1c1e5-29ea-707b-87b9-8c78f6c1c40d
+components:
+- value
+cells:
+  name: Light use
+  value: 6000.0
+links:
+- to: 01a1c1e5-29ea-707b-87b9-8c7767d8f8e9
+  components:
+  - alternative
+  cells:
+    weight: 1.0

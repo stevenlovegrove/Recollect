@@ -105,12 +105,11 @@ fn a_choice_part_way_down_a_table_changes_only_what_comes_after() {
     let mut g = N::with(plan::install);
     years(&mut g);
     g.add("Top up?", DECISION);
-    g.formula("Top up?", "pick(in.alternative)");
     for (option, amount) in [("No", 0.0), ("Yes", 500.0)] {
         g.value(option, ValueCell::num(amount)).link(option, "Top up?", ALTERNATIVE);
     }
-    // Year 5 says its own formula, with the top-up in it, and the rest follow on from it.
-    column(&mut g, "Year[5]", "balance", "prev.balance * (1 + rate) + top_up");
+    // Year 5 says its own formula, with the top-up the decision lands on in it, and the rest follow on from it.
+    column(&mut g, "Year[5]", "balance", "prev.balance * (1 + rate) + top_up.chosen.value");
     g.input("Year[5]", "Rate", "rate").input("Year[5]", "Top up?", "top_up");
     assert_eq!(cell(&g, "Year[4]", "balance").cases().len(), 1, "before the choice, one value");
     let last = cell(&g, "Year[10]", "balance");

@@ -1,0 +1,10 @@
+id: 01a1c1e5-29ea-707b-87b9-8c87a895330a
+cells:
+  insurance: 550.0
+  name: Car[Hybrid]
+  price: 26000.0
+  range: 650.0
+links:
+- to: 01a1c1e5-29ea-707b-87b9-8c7f881fcf7d
+  components:
+  - alternative

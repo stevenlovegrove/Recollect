@@ -1,5 +1,6 @@
 //! Formulas, as a system. Any cell can hold a value typed in or a formula over what its node has
-//! labelled, and a node's `value` can also be a choice from its options. See `docs/expressions.md`.
+//! labelled. A choice lands on one node in each world, and what's read through it, as `car.chosen.price`,
+//! is that node's. See `docs/expressions.md`.
 //!
 //! A formula's meaning doesn't mention worlds: in any world, its value is what ordinary evaluation
 //! gives on its inputs' values in that world. World values are how that's worked out exactly, and
@@ -20,7 +21,7 @@ use recollect_graph::{Backed, Cell, CellType, Compile, Computed, Cx, Entity, Err
 use serde_json::{Value, json};
 
 use crate::expr::{self, BinOp, CORE, Expr, Type, Val};
-use crate::plan::{Choice, Done, Dropped, Need};
+use crate::plan::{Done, Dropped, Need};
 use crate::schedule::{Finish, LatestFinish, LatestStart, PlanEnd, Start};
 
 /// The most distinct values a formula can have across worlds. Beyond this, it says so.
@@ -31,6 +32,7 @@ const MOST_PAIRS: usize = 4_000_000;
 pub(crate) const MOST_STEPS: usize = 200_000;
 
 pub const VALUE: &str = "value";
+pub const CHOICE: &str = "choice";
 pub const OPTIONS: &str = "options";
 pub const AT: &str = "at";
 pub const REQUIRES: &str = "requires";
@@ -57,7 +59,33 @@ pub fn truth(v: &ValueCell) -> Bool {
     v.0.0.holds(|v| *v == Val::Bool(true))
 }
 
-/// The options a choice has.
+/// What a choice lands on, in each world: a node, or undefined where there's nothing to land on.
+/// Writing one in settles it.
+#[cell]
+pub struct Chosen(pub Worldly<Val>);
+
+impl Chosen {
+    /// Settled on this node.
+    pub fn on(e: Entity) -> Self {
+        Chosen(Worldly::plain(Val::Ref(e)))
+    }
+
+    /// The worlds where it lands on this node.
+    pub fn lands_on(&self, e: Entity) -> Bool {
+        self.0.0.holds(|v| *v == Val::Ref(e))
+    }
+
+    /// The one node it's settled on, if it's the same in every world.
+    pub fn settled(&self) -> Option<Entity> {
+        match self.0.0.cases().as_slice() {
+            [(_, Val::Ref(e))] => Some(*e),
+            _ => None,
+        }
+    }
+}
+
+/// A plain list of what a choice can land on, such as a puzzle's colours. Each is a node nobody wrote,
+/// whose name and value are the option, and which every choice with that option shares.
 #[cell("options")]
 pub struct Options(pub Vec<String>);
 
@@ -99,6 +127,7 @@ pub struct ValueType(pub Type);
 pub(crate) fn component_type(cell: &str) -> Type {
     match cell {
         "need" | "actionable" | "blocked" | "done" | "dropped" => Type::Bool,
+        "chosen" => Type::Ref,
         "estimate" | "start" | "finish" | "latest_start" | "latest_finish" | "slack" | "plan_end" | "weight" => Type::Number,
         "name" | "body" => Type::Text,
         _ => Type::Any,
@@ -541,18 +570,6 @@ impl<'c, 'a> Expander<'c, 'a> {
                 }
                 Ok(acc)
             }
-            "pick" => {
-                if scope.is_macro() {
-                    return failed("a macro can only use its parameters, so it can't pick for the node calling it");
-                }
-                let mut acc = from(Val::Undefined)?;
-                for n in nodes.iter().rev() {
-                    let chosen = self.add(Part::Chose(self.cx.id(), *n));
-                    let this = copy(*n)?;
-                    acc = self.add(Part::If(chosen, this, acc));
-                }
-                Ok(acc)
-            }
             _ => unreachable!("the parser only makes folds of these"),
         }
     }
@@ -681,13 +698,13 @@ fn boolish(t: &Type) -> bool {
 fn check(cx: &Cx, closed: &Closed) -> Result<Type, Error> {
     let mut types: Vec<Type> = Vec::with_capacity(closed.0.len());
     for part in &closed.0 {
-        let t = type_of(cx, part, &types, closed)?;
+        let t = type_of(cx, part, &types)?;
         types.push(t);
     }
     Ok(types.pop().expect("a formula has something in it"))
 }
 
-fn type_of(cx: &Cx, part: &Part, types: &[Type], closed: &Closed) -> Result<Type, Error> {
+fn type_of(cx: &Cx, part: &Part, types: &[Type]) -> Result<Type, Error> {
     match part {
         Part::Lit(v) => Ok(Type::of(v)),
         Part::Read { node, component, fields } => {
@@ -735,13 +752,6 @@ fn type_of(cx: &Cx, part: &Part, types: &[Type], closed: &Closed) -> Result<Type
                 BinOp::Eq | BinOp::Ne => {
                     if ta.join(tb).is_none() {
                         return failed(format!("{sym} can't compare {} with {}", ta.word(), tb.word()));
-                    }
-                    for (side, other) in [(*a, tb), (*b, ta)] {
-                        if let (Part::Lit(Val::Text(s)), Type::Enum(options)) = (&closed.0[side], other)
-                            && !options.contains(s)
-                        {
-                            return failed(format!("“{s}” isn't one of the options, which are {}", options.join(", ")));
-                        }
                     }
                     Ok(Type::Bool)
                 }
@@ -840,6 +850,10 @@ fn read_cell(cx: &Cx, node: Entity, component: &str, fields: &[String]) -> Resul
             Some(v) => Ev::Data(v.0.0),
             None => Ev::Data(pure(Val::Undefined)),
         },
+        Chosen::NAME => match cx.get::<Chosen>(node)? {
+            Some(c) => Ev::Data(c.0.0),
+            None => Ev::Data(pure(Val::Undefined)),
+        },
         // The cells formulas read most, without going through JSON.
         Need::NAME => match cx.get::<Need>(node)? {
             Some(n) => Ev::Truth { yes: n.0, undefined: Space::global().never() },
@@ -861,7 +875,7 @@ fn read_cell(cx: &Cx, node: Entity, component: &str, fields: &[String]) -> Resul
     if fields.is_empty() {
         return Ok(whole);
     }
-    Ok(Ev::Data(field_of(&whole.data(), fields)))
+    Ok(Ev::Data(field_of(cx, &whole.data(), fields)?))
 }
 
 fn flag_cell(c: Option<Worldly<Option<bool>>>) -> Ev {
@@ -883,7 +897,7 @@ fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
     Ok(match part {
         Part::Lit(v) => Ev::Data(pure(v.clone())),
         Part::Read { node, component, fields } => read_cell(cx, *node, component, fields)?,
-        Part::Field(of, fields) => Ev::Data(field_of(&values[*of].data(), fields)),
+        Part::Field(of, fields) => Ev::Data(field_of(cx, &values[*of].data(), fields)?),
         Part::Defined(a) => {
             let undefined = match &values[*a] {
                 Ev::Truth { undefined, .. } => undefined.clone(),
@@ -896,9 +910,9 @@ fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
             let has = if cx.registry().component_def(name).is_some() { cx.has(*node, name) } else { cx.get_value(*node, name)?.is_some() };
             Ev::Truth { yes: space.truth(has), undefined: space.never() }
         }
-        Part::Chose(decision, option) => {
-            let Some(Choice(choice)) = cx.get::<Choice>(*decision)? else { return failed("chose needs a decision") };
-            Ev::Truth { yes: choice.holds(|c| *c == Some(*option)), undefined: space.never() }
+        Part::Chose(choice, option) => {
+            let Some(chosen) = cx.get::<Chosen>(*choice)? else { return failed("chose needs a choice") };
+            Ev::Truth { yes: chosen.lands_on(*option), undefined: space.never() }
         }
         Part::Not(a) => {
             let (yes, undefined) = values[*a].truth()?;
@@ -1020,8 +1034,26 @@ fn binary(op: BinOp, a: &Ev, b: &Ev) -> Result<Ev, Error> {
     }
 }
 
-fn field_of(c: &Cond<Val>, fields: &[String]) -> Cond<Val> {
-    c.map(|v| fields.iter().fold(v.clone(), |v, f| v.field(f)))
+/// What's in these fields, one after another. A field of a record is that record's. A field of a node is
+/// its cell, so what's read through a choice is whatever it lands on says, world by world.
+fn field_of(cx: &Cx, c: &Cond<Val>, fields: &[String]) -> Result<Cond<Val>, Error> {
+    let mut c = c.clone();
+    for f in fields {
+        c = if c.cases().iter().any(|(_, v)| matches!(v, Val::Ref(_))) {
+            let mut out = pure(Val::Undefined);
+            for (when, v) in c.cases() {
+                let here = match v {
+                    Val::Ref(e) => read_cell(cx, *e, f, &[])?.data(),
+                    other => pure(other.field(f)),
+                };
+                out = Cond::when(&when, &here, &out);
+            }
+            out
+        } else {
+            c.map(|v| v.field(f))
+        };
+    }
+    Ok(c)
 }
 
 /// A cell of any shape, as built-in cells write them: a `Bool`, cases, or something plain.
@@ -1126,6 +1158,7 @@ fn render(closed: &Closed) -> String {
         let text = match part {
             Part::Lit(Val::Num(n)) => n.to_string(),
             Part::Lit(Val::Undefined) => "undefined".to_string(),
+            Part::Lit(Val::Ref(e)) => e.to_string(),
             Part::Lit(v) => serde_json::to_string(v).expect("values serialise"),
             Part::Read { node, component, fields } => read(node, component, fields),
             Part::Field(a, fields) => format!("{}.{}", out[*a], fields.join(".")),
@@ -1161,7 +1194,7 @@ pub fn shown_free(g: &Graph, e: Entity, cell: &str) -> Option<Cell<Shown>> {
         Err(err) => return Some(Err(err)),
     };
     let w: Worldly<Val> = serde_json::from_value(v).ok()?;
-    Some(Ok(Some(shown_of(&ValueCell(w)))))
+    Some(Ok(Some(shown_val(&w.0))))
 }
 
 // ---------- what's built in ----------
@@ -1170,17 +1203,40 @@ fn numeric(options: &[String]) -> bool {
     !options.is_empty() && options.iter().all(|o| o.parse::<f64>().is_ok_and(f64::is_finite))
 }
 
-/// A choice's value, for a node with options. If its options are all numbers, it reads as numbers. A
-/// table's options are what its rows choose from: it isn't a choice itself.
-fn choice_of(cx: &Cx) -> Cell<ValueCell> {
+/// The node nobody wrote for one of a list of options: its name is the option, and so is its value, which
+/// is a number if all the options are.
+pub fn option_node(g: &Graph, option: &str, numeric: bool) -> Entity {
+    g.constant(option_cells(option, numeric))
+}
+
+fn option_cells(option: &str, numeric: bool) -> BTreeMap<String, Value> {
+    let value = if numeric { json!(option.parse::<f64>().expect("checked by the caller")) } else { json!(option) };
+    BTreeMap::from([(recollect_graph::Name::NAME.to_string(), json!(option)), (ValueCell::NAME.to_string(), value)])
+}
+
+/// How a choice with a list of options lands: on any of them, equally. A table's options are what its
+/// rows choose from: it isn't a choice itself.
+fn options_chosen(cx: &Cx) -> Cell<Chosen> {
     let Some(Options(options)) = cx.own::<Options>()? else { return Ok(None) };
     if cx.row_key().is_none() && !cx.rows().is_empty() {
         return Ok(None);
     }
+    if options.is_empty() {
+        return Ok(Some(Chosen(Worldly::plain(Val::Undefined))));
+    }
+    let is_numeric = numeric(&options);
+    let nodes: HashMap<&str, Entity> = options.iter().map(|o| (o.as_str(), cx.constant(option_cells(o, is_numeric)))).collect();
     let names: Vec<&str> = options.iter().map(String::as_str).collect();
     let var = Space::global().uniform(&cx.id().to_string(), &names);
-    let is_numeric = numeric(&options);
-    Ok(Some(ValueCell(Worldly(var.value().map(|o| if is_numeric { Val::Num(o.parse().expect("checked above")) } else { Val::Text(o.clone()) })))))
+    Ok(Some(Chosen(Worldly(var.value().map(|o| Val::Ref(nodes[o.as_str()]))))))
+}
+
+/// Settling a choice is naming one node.
+fn one_node(v: &Value) -> Result<(), String> {
+    match serde_json::from_value::<Val>(v.clone()) {
+        Ok(Val::Ref(_)) => Ok(()),
+        _ => Err(format!("a choice is settled by naming a node, as {{\"ref\": handle}}, not {v}")),
+    }
 }
 
 /// The options a node chooses between, if it's a choice: it has options, said or taken from its kind or
@@ -1203,7 +1259,7 @@ fn type_of_value(cx: &Cx) -> Cell<ValueType> {
             }
             Some(ValueType(t))
         }
-        Some(Backed::Builtin) => cx.own::<Options>()?.map(|Options(options)| ValueType(if numeric(&options) { Type::Number } else { Type::Enum(options) })),
+        Some(Backed::Builtin) => Some(ValueType(Type::Any)),
         Some(Backed::Formula(text)) => {
             let e = expr::parse(&text).map_err(Error::Failed)?;
             let closed = Expander::new(cx)?.expand_all(&e).map_err(|err| in_text(err, &text))?;
@@ -1232,26 +1288,36 @@ fn valid_name(v: &Value) -> Result<(), String> {
     }
 }
 
-/// How a value reads. If it's only ever true or false, it reads as the worlds where it's true.
-fn shown_of(v: &ValueCell) -> Shown {
-    let c = &v.0.0;
-    if c.cases().iter().all(|(_, v)| matches!(v, Val::Bool(_))) { Shown::Bool(truth(v)) } else { Shown::cond(c) }
+/// How a value reads. If it's only ever true or false, it reads as the worlds where it's true, and if it's
+/// a node wherever it's anything, as the nodes it could be.
+fn shown_val(c: &Cond<Val>) -> Shown {
+    let cases = c.cases();
+    if cases.iter().all(|(_, v)| matches!(v, Val::Bool(_))) {
+        return Shown::Bool(c.holds(|v| *v == Val::Bool(true)));
+    }
+    if cases.iter().any(|(_, v)| matches!(v, Val::Ref(_))) && cases.iter().all(|(_, v)| matches!(v, Val::Ref(_) | Val::Undefined)) {
+        return Shown::Named(cases.into_iter().filter_map(|(when, v)| if let Val::Ref(e) = v { Some((*e, when)) } else { None }).collect());
+    }
+    Shown::cond(c)
 }
 
 pub fn install(reg: &mut Registry) {
     reg.free_formulas(free_compiler());
-    reg.component(VALUE, "An answer: typed in, a choice from its options, or a formula over what it has labelled.").icon("=");
-    reg.cell::<ValueCell>(VALUE, "This node's answer: typed in, a choice from its options, or a formula over what it has labelled.")
+    reg.component(VALUE, "An answer: typed in, or a formula over what it has labelled.").icon("=");
+    reg.cell::<ValueCell>(VALUE, "This node's answer: typed in, or a formula over what it has labelled.")
         .compiles(compiler::<ValueCell>(Type::Any, |c| Ok(ValueCell(Worldly(c)))))
-        .builtin(choice_of)
-        .shown(shown_of)
+        .shown(|v| shown_val(&v.0.0))
         .summary()
         .per_entity()
         .initial(json!(0.0));
     reg.cell::<ValueType>(VALUE, "").builtin(type_of_value).internal();
 
-    reg.component(OPTIONS, "A choice between options, one of which its value is.").icon("◇").requires(VALUE);
-    reg.cell::<Options>(OPTIONS, "The options it chooses between.").initial(json!([]));
+    reg.component(CHOICE, "Lands on one node in each world. What's read through it, as chosen.price, is what that node says.").icon("◇");
+    reg.cell::<Chosen>(CHOICE, "What it lands on, in each world. Name one to settle it.").validate(one_node).shown(|c| shown_val(&c.0.0)).summary().per_entity();
+
+    reg.component(OPTIONS, "A choice from a plain list, such as colours: each is a node with that name and value.").requires(CHOICE);
+    reg.cell::<Options>(OPTIONS, "What it can land on.").initial(json!([]));
+    reg.fill::<Chosen>(OPTIONS, options_chosen);
     reg.component(AT, "Where a choice goes on a board.").requires(OPTIONS);
     reg.cell::<At>(AT, "Where a choice goes on a board.").initial(json!({ "row": 0, "col": 0 }));
 

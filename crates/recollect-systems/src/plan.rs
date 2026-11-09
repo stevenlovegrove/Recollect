@@ -8,7 +8,8 @@
 //! - Part is what's in a plan's structure: anything that's part of something, or has parts, or is an
 //!   option. It knows whether it's needed, whether it's done, and what anything beneath waits for.
 //! - Work is what's owed until it's done: a task, a goal, a question, a risk, or a gap.
-//! - A decision has options, linked to it by `alternative` edges, and only the one taken is needed.
+//! - A decision is a choice whose options are linked to it by `alternative` edges, and only the one it
+//!   lands on is needed. It's settled by writing that option in its `chosen` cell.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -18,8 +19,8 @@ use serde_json::json;
 use recollect_graph::worlds::{Bool, Cond, Picks, Space, Worldly};
 use recollect_graph::{Cell, CellType, Cx, Entity, Error, Graph, Op, Registry, Severity, Shown, cell};
 
-use crate::expr::Type;
-use crate::formulas::{self, compiler};
+use crate::expr::{Type, Val};
+use crate::formulas::{self, CHOICE, Chosen, compiler};
 use crate::{label_of, labels};
 
 pub const PART: &str = "part";
@@ -78,10 +79,6 @@ impl Dropped {
         Dropped(Worldly::plain(Some(true)))
     }
 }
-
-/// Which option a decision has taken. A decision without one is open.
-#[cell]
-pub struct Chosen(pub Entity);
 
 /// On an `alternative` edge: how far its option is believed, before any evidence, against the others.
 #[cell]
@@ -156,25 +153,14 @@ fn live_option(cx: &Cx, option: Entity, edge: Entity) -> Result<bool, Error> {
 
 // ---------- what's being attempted, per world ----------
 
-/// How an open decision could land. A chosen one is a constant, and one with no live options lands on
-/// nothing.
-#[cell]
-pub struct Choice(pub Cond<Option<Entity>>);
-
 /// The worlds in which this is part of what's being attempted.
 #[cell]
 pub struct Need(pub Bool);
 
-fn choice(cx: &Cx) -> Cell<Choice> {
+/// How an open decision lands: on any of its live options, as likely as their weights say, or on nothing
+/// if it has none. Once it's settled, what's written in `chosen` is what it lands on instead.
+fn decision_chosen(cx: &Cx) -> Cell<Chosen> {
     let space = Space::global();
-    if let Some(Chosen(chosen)) = cx.own::<Chosen>()? {
-        // Only a hand edit can choose what isn't a live option, and that lands on nothing.
-        let live = match cx.incoming(ALTERNATIVE).into_iter().find(|(o, _)| *o == chosen) {
-            Some((o, edge)) => live_option(cx, o, edge)?,
-            None => false,
-        };
-        return Ok(Some(Choice(space.pure(live.then_some(chosen)))));
-    }
     // Variables are ordered by creation. Whatever this is inside gets its variable first, so formulas
     // read from the outside in.
     cx.own_value::<Need>()?;
@@ -194,18 +180,26 @@ fn choice(cx: &Cx) -> Cell<Choice> {
         }
     }
     if options.is_empty() {
-        return Ok(Some(Choice(space.pure(None))));
+        return Ok(Some(Chosen(Worldly::plain(Val::Undefined))));
     }
     let var = space.var(&cx.id().to_string(), &options);
-    Ok(Some(Choice(var.value().map(|o| Some(o.parse().expect("options are handles"))))))
+    Ok(Some(Chosen(Worldly(var.value().map(|o| Val::Ref(o.parse().expect("options are handles")))))))
 }
 
 /// The worlds in which `decision` lands on `option`.
 fn selects(cx: &Cx, decision: Entity, option: Entity) -> Result<Bool, Error> {
-    Ok(match cx.get::<Choice>(decision)? {
-        Some(choice) => choice.0.holds(|c| *c == Some(option)),
+    Ok(match cx.get::<Chosen>(decision)? {
+        Some(chosen) => chosen.lands_on(option),
         None => Space::global().never(),
     })
+}
+
+/// What a decision has been settled on, if anything: written in, not worked out.
+fn settled_on(cx: &Cx, decision: Entity) -> Result<Option<Entity>, Error> {
+    if !cx.is_stored(decision, Chosen::NAME) {
+        return Ok(None);
+    }
+    Ok(cx.get::<Chosen>(decision)?.and_then(|c| c.settled()))
 }
 
 /// Parents, each with the worlds in which this node is in play through it. Inheriting from a parent only
@@ -249,7 +243,7 @@ pub(crate) fn live_parts(cx: &Cx) -> Result<Vec<Entity>, Error> {
 /// Work is owed until it's done. Above a leaf, a decision that lands on nothing can't complete. Whatever
 /// a node says for itself replaces all of this, and if that disagrees with what's beneath, that's a
 /// notice.
-const DONE: &str = "if(self.dropped, undefined, if(is_leaf(), if(has(self.work), false, undefined), done_beneath(if(has(self.decision), pick(o in in.alternative: o.done, false), undefined))))";
+const DONE: &str = "if(self.dropped, undefined, if(is_leaf(), if(has(self.work), false, undefined), done_beneath(if(has(self.decision), if(defined(self.chosen), self.chosen.done, false), undefined))))";
 
 /// A gap has no likelihood of its own unless someone gives it one.
 const WEIGHT: &str = "if(has(from.unknown), 0, 1)";
@@ -281,7 +275,7 @@ fn blockers(cx: &Cx) -> Cell<Blockers> {
             continue;
         }
         let waits = match cx.get::<WaitFor>(edge)?.unwrap_or_default() {
-            WaitFor::Decided => space.truth(cx.has(target, DECISION) && cx.get::<Chosen>(target)?.is_none()),
+            WaitFor::Decided => space.truth(cx.has(target, DECISION) && !cx.is_stored(target, Chosen::NAME)),
             WaitFor::Done => &cx.value::<Need>(target)?.0 & &cx.get::<Done>(target)?.map_or_else(|| space.never(), |d| d.open()),
         };
         add(target, waits);
@@ -381,9 +375,8 @@ pub fn install(reg: &mut Registry) {
     reg.component(RISK, "Something that could go wrong. Link it to what it threatens.").icon("!").requires(WORK);
     reg.component(UNKNOWN, "A gap: something here isn't specified yet. Removing it says the gap is closed.").icon("…").requires(WORK);
 
-    reg.component(DECISION, "An open question with options, and which one was taken, if any.").icon("⑂").requires(PART).per_entity();
-    reg.cell::<Chosen>(DECISION, "The option taken. Until there is one, it's open.");
-    reg.cell::<Choice>(DECISION, "What this decision could land on.").builtin(choice).shown(|v| Shown::cond(&v.0));
+    reg.component(DECISION, "An open question whose options are linked to it. Until one is chosen, it lands on each of them in some world.").icon("⑂").requires(PART).requires(CHOICE).per_entity();
+    reg.fill::<Chosen>(DECISION, decision_chosen);
     reg.component(UNCERTAIN, "Not anyone's choice: it lands one way or another, as likely as its options' weights say. Expected values average over it.").requires(DECISION);
     reg.component(OPTION, "One of a decision's options: only the option taken is needed.").requires(PART);
 
@@ -424,12 +417,12 @@ fn checks(reg: &mut Registry) {
     });
 
     reg.check(DECISION, "unknown_cannot_be_chosen", Invariant, |cx| {
-        let Some(Chosen(c)) = cx.own::<Chosen>()? else { return Ok(vec![]) };
+        let Some(c) = settled_on(cx, cx.id())? else { return Ok(vec![]) };
         Ok(if cx.has(c, UNKNOWN) { vec![format!("chose {c}, which is a gap: name the option instead")] } else { vec![] })
     });
 
     reg.check(DECISION, "chosen_must_be_a_live_option", Invariant, |cx| {
-        let Some(Chosen(c)) = cx.own::<Chosen>()? else { return Ok(vec![]) };
+        let Some(c) = settled_on(cx, cx.id())? else { return Ok(vec![]) };
         let ok = match cx.incoming(ALTERNATIVE).into_iter().find(|(o, _)| *o == c) {
             Some((o, edge)) => live_option(cx, o, edge)?,
             None => false,
@@ -438,7 +431,7 @@ fn checks(reg: &mut Registry) {
     });
 
     reg.check(DECISION, "decision_without_options", Notice, |cx| {
-        if cx.own::<Chosen>()?.is_some() || !is_live(cx, cx.id())? {
+        if cx.own_is_stored(Chosen::NAME) || !is_live(cx, cx.id())? {
             return Ok(vec![]);
         }
         for (o, edge) in cx.incoming(ALTERNATIVE) {
@@ -450,7 +443,7 @@ fn checks(reg: &mut Registry) {
     });
 
     reg.check(DECISION, "one_option_left", Notice, |cx| {
-        if cx.own::<Chosen>()?.is_some() || !is_live(cx, cx.id())? {
+        if cx.own_is_stored(Chosen::NAME) || !is_live(cx, cx.id())? {
             return Ok(vec![]);
         }
         let (mut live, mut gaps) = (0, 0);
@@ -476,9 +469,11 @@ fn checks(reg: &mut Registry) {
         for p in cx.sources(PART_OF) {
             beneath = &beneath | &cx.get::<Done>(p)?.map_or_else(|| space.never(), |d| d.open());
         }
-        if let Some(choice) = cx.own::<Choice>()? {
+        if cx.own_has(DECISION)
+            && let Some(chosen) = cx.own::<Chosen>()?
+        {
             // A decision that lands on nothing can't complete.
-            beneath = &beneath | &choice.0.holds(Option::is_none);
+            beneath = &beneath | &chosen.0.0.holds(|v| *v == Val::Undefined);
             for o in cx.sources(ALTERNATIVE) {
                 let open = cx.get::<Done>(o)?.map_or_else(|| space.never(), |d| d.open());
                 beneath = &beneath | &(&selects(cx, cx.id(), o)? & &open);
@@ -542,7 +537,7 @@ pub fn close_gap(gap: Entity, under: Entity, edge: &str) -> Vec<Op> {
 
 /// Take an option.
 pub fn choose(decision: Entity, option: Entity) -> Op {
-    Op::set(decision, Chosen(option))
+    Op::set(decision, Chosen::on(option))
 }
 
 /// Take a decision back. Nothing beneath it was ever touched, so it all comes back on its own.
@@ -579,7 +574,7 @@ pub enum Pressure {
 
 /// Whether a decision is open: it's a decision, and nothing's been chosen.
 fn is_open(g: &Graph, d: Entity) -> Result<bool, Error> {
-    Ok(g.has(d, DECISION) && g.get::<Chosen>(d)?.is_none())
+    Ok(g.has(d, DECISION) && g.stored(d, Chosen::NAME).is_none())
 }
 
 pub fn pressure(g: &Graph, decision: Entity) -> Result<Pressure, Error> {
@@ -739,7 +734,7 @@ pub fn matrices(g: &Graph, world: &BTreeMap<String, String>) -> Result<Vec<Matri
     let picks = space.picks(world);
     let mut out = Vec::new();
     for d in g.having(DECISION) {
-        let chosen = g.get::<Chosen>(d)?.map(|c| c.0);
+        let chosen = if g.stored(d, Chosen::NAME).is_some() { g.get::<Chosen>(d)?.and_then(|c| c.settled()) } else { None };
         let mut options = Vec::new();
         let mut live = Vec::new();
         for (o, edge) in g.edges_into(d, ALTERNATIVE) {

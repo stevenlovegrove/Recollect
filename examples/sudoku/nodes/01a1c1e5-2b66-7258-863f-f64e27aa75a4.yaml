@@ -1,0 +1,7 @@
+id: 01a1c1e5-2b66-7258-863f-f64e27aa75a4
+components:
+- value
+cells:
+  name: Column 3 has each number once
+formulas:
+  value: distinct(Cell[A3].chosen, Cell[B3].chosen, Cell[C3].chosen, Cell[D3].chosen)

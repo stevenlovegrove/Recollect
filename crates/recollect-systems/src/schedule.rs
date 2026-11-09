@@ -61,7 +61,7 @@ const START: &str = "max(p in out.part_of: if(p.need, p.start, 0), max(d in out.
 
 /// When its own time is up, or its last part is. Where it isn't needed that's 0, so waiting on it
 /// costs nothing.
-const FINISH: &str = "if(!self.need, 0, max(max(p in in.part_of: p.finish, if(has(self.unknown), undefined, if(is_leaf(), self.start + days(), self.start))), pick(o in in.alternative: o.finish, 0)))";
+const FINISH: &str = "if(!self.need, 0, max(max(p in in.part_of: p.finish, if(has(self.unknown), undefined, if(is_leaf(), self.start + days(), self.start))), if(defined(self.chosen), self.chosen.finish, 0)))";
 
 const PLAN_END: &str = "max(t in with.task: t.finish, 0)";
 

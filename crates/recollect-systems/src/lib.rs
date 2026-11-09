@@ -63,7 +63,8 @@ pub fn build(names: &[String]) -> Result<Built, String> {
 /// Handles to names, for reading a formula. A node with no name reads as the end of its handle.
 pub fn labels(g: &Graph) -> HashMap<String, String> {
     let rows = g.implicit_rows().into_iter().map(|(e, name)| (e.to_string(), name));
-    rows.chain(g.entities().map(|e| (e.to_string(), label_of(g, e)))).collect()
+    let constants = g.constants().into_iter().map(|(e, _)| (e.to_string(), label_of(g, e)));
+    rows.chain(constants).chain(g.entities().map(|e| (e.to_string(), label_of(g, e)))).collect()
 }
 
 pub fn label_of(g: &Graph, e: Entity) -> String {

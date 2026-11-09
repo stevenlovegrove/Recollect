@@ -2,7 +2,8 @@
 //!
 //! A component is a facet of an entity, such as Decision or Task, and is what a badge shows. It brings
 //! cells, each with a default for when nothing says otherwise: a value, a formula, or something built
-//! in. It can require other components on the same entity, and a component on an edge can bring
+//! in. It can require other components on the same entity, and fill in what one of their cells is when
+//! nothing says otherwise, as Decision says how a choice lands. A component on an edge can bring
 //! components to the edge's ends. So nothing here applies to every node: a cell is only there on an
 //! entity that has its component.
 //!
@@ -110,6 +111,10 @@ pub struct ComponentDef {
     pub checks: Vec<CheckDef>,
     #[serde(skip)]
     pub constraint: Option<ConstraintFn>,
+    /// What cells of the components it requires are, when nothing says otherwise, in place of their own
+    /// defaults.
+    #[serde(skip)]
+    pub fills: BTreeMap<String, Default>,
 }
 
 impl ComponentDef {
@@ -343,6 +348,7 @@ impl Registry {
             cells: Vec::new(),
             checks: Vec::new(),
             constraint: None,
+            fills: BTreeMap::new(),
         })
     }
 
@@ -387,6 +393,30 @@ impl Registry {
             shown: None,
         });
         CellBuilder { def, _c: PhantomData }
+    }
+
+    /// On an entity with `component`, a cell of a component it requires is worked out by this when nothing
+    /// says otherwise, rather than by that cell's own default. Two components that fill the same cell
+    /// shouldn't go together: the first by name wins.
+    pub fn fill<C: CellType>(&mut self, component: &str, f: impl Fn(&Cx) -> Cell<C> + Send + Sync + 'static) -> &mut Self {
+        let comp = self.components.get_mut(component).unwrap_or_else(|| panic!("{component} has to be registered before what it fills"));
+        comp.fills.insert(C::NAME.to_string(), Default::Builtin(Computed::typed(&format!("{} for {component}", C::NAME), f)));
+        self
+    }
+
+    /// The components an entity with this one has too, however indirectly, and this one.
+    pub fn required_by(&self, component: &str) -> Vec<String> {
+        let mut out = vec![component.to_string()];
+        let mut i = 0;
+        while i < out.len() {
+            for r in self.components.get(&out[i]).map(|c| c.requires.clone()).unwrap_or_default() {
+                if !out.contains(&r) {
+                    out.push(r);
+                }
+            }
+            i += 1;
+        }
+        out
     }
 
     /// Something that must hold, or is worth a look, on every entity with this component. It's worked

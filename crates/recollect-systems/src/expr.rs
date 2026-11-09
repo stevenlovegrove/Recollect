@@ -1,10 +1,12 @@
 //! The formula language: its values, its types and its grammar. See `docs/expressions.md`. Nothing
-//! here knows about graphs. `formulas.rs` is what gives a formula's names something to refer to.
+//! here knows about graphs, except that a value can refer to a node. `formulas.rs` is what gives a
+//! formula's names something to refer to.
 
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
-use serde::{Deserialize, Serialize};
+use recollect_graph::Entity;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A value in one world. Undefined is `null`, the same as `None` in a `Cond<Option<T>>`, so what a
 /// formula gives and what a built-in cell gives read the same.
@@ -16,7 +18,26 @@ pub enum Val {
     Num(f64),
     Text(String),
     List(Vec<Val>),
+    /// A node, such as the option a choice lands on. Its cells are read through it, as `car.chosen.price`.
+    /// It's written `{"ref": handle}`.
+    #[serde(serialize_with = "ref_out", deserialize_with = "ref_in")]
+    Ref(Entity),
     Record(BTreeMap<String, Val>),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RefJson {
+    #[serde(rename = "ref")]
+    to: Entity,
+}
+
+fn ref_out<S: Serializer>(e: &Entity, s: S) -> Result<S::Ok, S::Error> {
+    RefJson { to: *e }.serialize(s)
+}
+
+fn ref_in<'de, D: Deserializer<'de>>(d: D) -> Result<Entity, D::Error> {
+    Ok(RefJson::deserialize(d)?.to)
 }
 
 impl Val {
@@ -43,9 +64,9 @@ pub enum Type {
     Bool,
     Number,
     Text,
-    /// One of a `Domain`'s options that aren't numbers.
-    Enum(Vec<String>),
     List,
+    /// A node. What's read through it is checked as it runs.
+    Ref,
     Record(BTreeMap<String, Type>),
 }
 
@@ -57,6 +78,7 @@ impl Type {
             Val::Num(_) => Type::Number,
             Val::Text(_) => Type::Text,
             Val::List(_) => Type::List,
+            Val::Ref(_) => Type::Ref,
             Val::Record(fields) => Type::Record(fields.iter().map(|(k, v)| (k.clone(), Type::of(v))).collect()),
         }
     }
@@ -67,12 +89,6 @@ impl Type {
         Some(match (self, other) {
             (Undefined, t) | (t, Undefined) => t.clone(),
             (Any, _) | (_, Any) => Any,
-            (Enum(a), Enum(b)) => {
-                let mut all = a.clone();
-                all.extend(b.iter().filter(|o| !a.contains(o)).cloned());
-                Enum(all)
-            }
-            (Enum(_), Text) | (Text, Enum(_)) => Text,
             (a, b) if a == b => a.clone(),
             (Record(_), Record(_)) => Any,
             _ => return None,
@@ -85,8 +101,9 @@ impl Type {
             Type::Undefined => "undefined",
             Type::Bool => "true or false",
             Type::Number => "a number",
-            Type::Text | Type::Enum(_) => "text",
+            Type::Text => "text",
             Type::List => "a list",
+            Type::Ref => "a node",
             Type::Record(_) => "a record",
         }
     }
@@ -142,7 +159,7 @@ pub enum Expr {
     Row { table: String, key: Box<Expr>, path: Vec<String> },
     Call(String, Vec<Expr>),
     /// `sum(x in group: body)`. A group is `in.kind`, `out.kind`, `with.component`, or a name.
-    /// `start` is what `max` and `min` begin from, and what `pick` gives if nothing's chosen.
+    /// `start` is what `max` and `min` begin from.
     Fold { func: String, var: String, group: Vec<String>, body: Box<Expr>, start: Option<Box<Expr>> },
     Not(Box<Expr>),
     Neg(Box<Expr>),
@@ -153,7 +170,7 @@ pub enum Expr {
 pub const CORE: &[&str] = &["if", "defined", "has", "chose", "round", "floor", "ceil", "max", "min", "distinct"];
 
 /// Functions that expand into one copy of their body for each node in a group.
-pub const FOLDS: &[&str] = &["sum", "product", "all", "any", "count", "pick", "max", "min", "distinct"];
+pub const FOLDS: &[&str] = &["sum", "product", "all", "any", "count", "max", "min", "distinct"];
 
 /// Folds with no answer of their own for an empty group, so they have to be told where to begin.
 const NEEDS_START: &[&str] = &["max", "min"];
@@ -167,9 +184,9 @@ const LIBRARY: &[(&str, &[&str], &str)] = &[
     ("effort", &[], "if(any(u in with.unknown: u.need), undefined, sum(t in with.task: if(t.need, t.estimate, 0)))"),
     // Whether this node's own time is its own, because nothing beneath it stands in for it.
     ("is_leaf", &[], "count(p in in.part_of: !p.dropped) = 0 && !has(self.decision)"),
-    // Whether what's beneath is finished. What has nothing to finish has no say, and if nothing does,
-    // neither does this.
-    ("done_beneath", &["chosen"], "if(any(p in in.part_of: defined(p.done)) || defined(chosen), all(p in in.part_of: or(p.done, true)) && or(chosen, true), undefined)"),
+    // Whether what's beneath is finished: its parts, and the option taken. What has nothing to finish
+    // has no say, and if nothing does, neither does this.
+    ("done_beneath", &["taken"], "if(any(p in in.part_of: defined(p.done)) || defined(taken), all(p in in.part_of: or(p.done, true)) && or(taken, true), undefined)"),
     // How long this node takes. With no estimate that's nothing, and an estimate a formula can't
     // work out makes the dates unknowable.
     ("days", &[], "if(has(self.estimate), self.estimate, 0)"),
@@ -469,7 +486,7 @@ impl Parser {
 }
 
 fn check_start(func: &str, given: bool) -> Result<(), String> {
-    if given && !(NEEDS_START.contains(&func) || func == "pick") {
+    if given && !NEEDS_START.contains(&func) {
         return Err(format!("{func} takes one group, such as {func}(line) or {func}(x in line: x)"));
     }
     if !given && NEEDS_START.contains(&func) {
@@ -553,8 +570,6 @@ mod tests {
         assert!(matches!(parse("min(x in line: x, 1)").unwrap(), Expr::Fold { start: Some(_), .. }));
         assert!(parse("max(x in line: x)").unwrap_err().contains("somewhere to begin"));
         assert!(parse("max(out.dep.finish)").unwrap_err().contains("somewhere to begin"));
-        assert!(matches!(parse("pick(x in line: x, 0)").unwrap(), Expr::Fold { start: Some(_), .. }), "what it gives if nothing's chosen");
-        assert!(matches!(parse("pick(x in line: x)").unwrap(), Expr::Fold { start: None, .. }));
         assert!(parse("sum(x in line: x, 0)").is_err(), "a sum already has somewhere to begin");
         assert!(parse("sum(line, 0)").is_err());
     }

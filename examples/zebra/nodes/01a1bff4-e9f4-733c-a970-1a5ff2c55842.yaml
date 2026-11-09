@@ -1,7 +1,0 @@
-id: 01a1bff4-e9f4-733c-a970-1a5ff2c55842
-components:
-- value
-cells:
-  name: The Norwegian lives in the first house
-formulas:
-  value: Nationality[Norwegian] = 1

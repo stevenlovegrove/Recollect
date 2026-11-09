@@ -1,8 +1,0 @@
-id: 01a1bff4-e98a-7511-803e-a71eaf59be0f
-components:
-- decision
-- uncertain
-cells:
-  name: How did Tom get to the house?
-formulas:
-  minutes: 'pick(o in in.alternative: o.minutes)'

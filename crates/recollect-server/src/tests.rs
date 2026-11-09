@@ -170,7 +170,7 @@ async fn deciding_commits_and_reopening_brings_it_all_back() {
     c.open("calibration").await;
     let open = c.view(json!({})).await;
     let cad = id(&open, "From the CAD model");
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Which approach?", "cell": "chosen", "value": cad }], "why": "it's accurate enough" })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Which approach?", "cell": "chosen", "value": { "ref": cad } }], "why": "it's accurate enough" })).await;
     let v = c.view(json!({})).await;
     assert!(cell(&v, "Export extrinsics from CAD", "need")["shown"]["always"].as_bool().unwrap());
     assert!(v["worlds"]["vars"].as_array().unwrap().is_empty(), "no open choices now");
@@ -189,7 +189,7 @@ async fn a_change_that_breaks_a_rule_is_refused_and_says_why() {
     c.open("calibration").await;
     let v = c.view(json!({})).await;
     let imu = id(&v, "Fit the IMU time offset");
-    let (status, body) = c.call("POST", "/api/ops", Some(json!({ "ops": [{ "op": "set", "id": "Which approach?", "cell": "chosen", "value": imu }] }))).await;
+    let (status, body) = c.call("POST", "/api/ops", Some(json!({ "ops": [{ "op": "set", "id": "Which approach?", "cell": "chosen", "value": { "ref": imu } }] }))).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body["error"].as_str().unwrap().contains("chosen_must_be_a_live_option"), "{body}");
     assert_eq!(c.view(json!({})).await["last_seq"], v["last_seq"], "and nothing changed");
@@ -344,7 +344,7 @@ async fn proposals_wait_for_review_and_can_be_taken_in_part() {
 
     // One that wouldn't apply is refused before it gets to anyone.
     let v = c.view(json!({})).await;
-    let refused = c.app.propose("Bad".to_string(), String::new(), vec![json!({ "op": "set", "id": "Which approach?", "cell": "chosen", "value": id(&v, "One") })], "claude");
+    let refused = c.app.propose("Bad".to_string(), String::new(), vec![json!({ "op": "set", "id": "Which approach?", "cell": "chosen", "value": { "ref": id(&v, "One") } })], "claude");
     assert!(refused.is_err());
 }
 
@@ -669,8 +669,8 @@ async fn held_out_a_clause_that_isnt_a_pair() {
     let person = |id: &str, name: &str| json!({ "op": "add_node", "id": id, "name": name, "cells": { "options": ["truth", "lie"] } });
     c.post("/api/ops", json!({ "ops": [
         person("new:a", "Alice"), person("new:b", "Bob"), person("new:c", "Carol"),
-        { "op": "add_node", "id": "new:most", "name": "At most one lies", "components": ["requires"], "cells": { "value": { "formula": "count(x in people: x = \"lie\") <= 1", "labels": { "people": ["new:a", "new:b", "new:c"] } } } },
-        { "op": "add_node", "id": "new:clue", "name": "Alice and Bob differ", "components": ["requires"], "cells": { "value": { "formula": "a != b", "labels": { "a": "new:a", "b": "new:b" } } } },
+        { "op": "add_node", "id": "new:most", "name": "At most one lies", "components": ["requires"], "cells": { "value": { "formula": "count(x in people: x.chosen.value = \"lie\") <= 1", "labels": { "people": ["new:a", "new:b", "new:c"] } } } },
+        { "op": "add_node", "id": "new:clue", "name": "Alice and Bob differ", "components": ["requires"], "cells": { "value": { "formula": "a.chosen != b.chosen", "labels": { "a": "new:a", "b": "new:b" } } } },
     ] })).await;
     let v = c.view(json!({})).await;
     assert_eq!(v["worlds"]["count"], "2", "either Alice or Bob lies, and Carol tells the truth");
@@ -718,11 +718,10 @@ async fn held_out_choosing_a_car() {
         json!({ "op": "add_node", "id": id, "name": name, "cells": { cell: v, "price": price, "insurance": insurance, "range": range },
             "links": [{ "to": "new:which", "component": "alternative" }, { "to": kind, "component": "is_a" }] })
     };
-    let pick = |cell: &str| json!({ "op": "set", "id": "new:which", "cell": cell, "formula": format!("pick(o in in.alternative: o.{cell})") });
     let petrol = "fuel * 4.546 / self.mpg";
     let done = c.post("/api/ops", json!({ "ops": [
         { "op": "add_node", "id": "new:years", "name": "Years kept", "cells": { "value": 5 } },
-        { "op": "add_node", "id": "new:miles", "name": "Miles a year", "components": ["decision", "uncertain"], "cells": { "value": { "formula": "pick(in.alternative)" } } },
+        { "op": "add_node", "id": "new:miles", "name": "Miles a year", "components": ["decision", "uncertain"] },
         option("new:light", "Light use", "new:miles", 6000.0, 1.0), option("new:typical", "Typical", "new:miles", 10000.0, 2.0), option("new:heavy", "Heavy", "new:miles", 16000.0, 1.0),
         { "op": "add_node", "id": "new:fuel", "name": "Fuel price", "cells": { "value": 1.45 } },
         { "op": "add_node", "id": "new:power", "name": "Electricity price", "cells": { "value": 0.28 } },
@@ -731,16 +730,15 @@ async fn held_out_choosing_a_car() {
         { "op": "add_node", "id": "new:electric", "name": "Electric car", "links": [{ "to": "new:power", "component": "label", "cells": { "called": "power" } }] },
         { "op": "set", "id": "new:electric", "cell": "cost_per_mile", "formula": "power * self.kwh_per_mile" },
         { "op": "add_node", "id": "new:which", "name": "Which car?", "components": ["decision"] },
-        pick("price"), pick("cost_per_mile"), pick("insurance"), pick("range"),
         car("new:hatch", "Hatchback", "new:petrol", "mpg", 52.0, 18000.0, 500.0, 550.0),
         car("new:estate", "Estate", "new:petrol", "mpg", 44.0, 24000.0, 550.0, 600.0),
         car("new:ev", "Electric", "new:electric", "kwh_per_mile", 0.28, 32000.0, 600.0, 250.0),
         // Its maker gives its cost a mile, so it says that for itself rather than an mpg.
         car("new:hybrid", "Hybrid", "new:petrol", "cost_per_mile", 0.09, 26000.0, 550.0, 650.0),
-        { "op": "add_node", "id": "new:cost", "name": "Yearly cost", "cells": { "value": { "formula": "car.price * (1 - 0.85 ^ years) / years + miles * car.cost_per_mile + car.insurance",
+        { "op": "add_node", "id": "new:cost", "name": "Yearly cost", "cells": { "value": { "formula": "car.chosen.price * (1 - 0.85 ^ years) / years + miles.chosen.value * car.chosen.cost_per_mile + car.chosen.insurance",
             "labels": { "car": "new:which", "years": "new:years", "miles": "new:miles" } } } },
         { "op": "add_node", "id": "new:trip", "name": "To Edinburgh", "cells": { "value": 400 } },
-        { "op": "add_node", "id": "new:reaches", "name": "Gets to Edinburgh without stopping", "cells": { "value": { "formula": "car.range >= trip", "labels": { "car": "new:which", "trip": "new:trip" } } } },
+        { "op": "add_node", "id": "new:reaches", "name": "Gets to Edinburgh without stopping", "cells": { "value": { "formula": "car.chosen.range >= trip", "labels": { "car": "new:which", "trip": "new:trip" } } } },
     ] })).await;
     let ids = |k: &str| done["created"][k].as_str().unwrap().to_string();
     let v = c.view(json!({})).await;
@@ -778,7 +776,7 @@ async fn held_out_choosing_a_car() {
         assert!((got - want).abs() < 1e-6, "{car}: {got} and {want}");
     }
 
-    // The decision's range is whichever car it lands on, so anything can read it.
+    // What's read through the decision is whichever car it lands on says.
     assert_eq!(when(&v, "Gets to Edinburgh without stopping", "value"), "Which car?∈{Hatchback,Estate,Hybrid}");
 
     // How far you drive isn't yours to choose, and which car is. A view says which each cell differs
@@ -800,7 +798,8 @@ async fn held_out_choosing_a_car() {
     for (i, fuel) in [1.45, 3.0].into_iter().enumerate() {
         assert!((at(i, 0) - by_mpg(fuel, 52.0)).abs() < 1e-9 && (at(i, 1) - 0.28 * 0.28).abs() < 1e-9, "{swept}");
     }
-    let pinned = c.post("/api/sweep", json!({ "set": { "node": ids("new:miles"), "cell": "value" }, "values": [20000], "read": [{ "node": ids("new:cost"), "cell": "value" }], "world": { &which: ids("new:ev") } })).await;
+    // Heavy use, swept up to 20,000 with both decisions pinned.
+    let pinned = c.post("/api/sweep", json!({ "set": { "node": ids("new:heavy"), "cell": "value" }, "values": [20000], "read": [{ "node": ids("new:cost"), "cell": "value" }], "world": { &which: ids("new:ev"), ids("new:miles"): ids("new:heavy") } })).await;
     assert!((pinned[0]["cells"][0]["value"].as_f64().unwrap() - by_hand(32000.0, 0.28 * 0.28, 600.0, 20_000.0)).abs() < 1e-6, "{pinned}");
     assert!((per_mile(&c.view(json!({})).await, "Hatchback") - by_mpg(1.45, 52.0)).abs() < 1e-9, "and nothing was changed");
 
@@ -828,7 +827,7 @@ async fn held_out_tables_of_cars_and_years() {
     c.post("/api/ops", json!({ "ops": [
         { "op": "add_node", "id": "new:fuel", "name": "Fuel price", "cells": { "value": 1.45 } },
         { "op": "add_node", "id": "new:which", "name": "Which car?", "components": ["decision"] },
-        { "op": "set", "id": "new:which", "cell": "cost_per_mile", "formula": "pick(o in in.alternative: o.cost_per_mile)" },
+        { "op": "add_node", "id": "new:per_mile", "name": "Per mile", "cells": { "value": { "formula": "car.chosen.cost_per_mile", "labels": { "car": "new:which" } } } },
         { "op": "table", "name": "Car", "alternative_of": "new:which", "rows": [
             { "key": "Hatchback", "price": 18000 }, { "key": "Electric", "price": 32000 }, { "key": "Hybrid", "price": 26000 },
         ] },
@@ -849,8 +848,10 @@ async fn held_out_tables_of_cars_and_years() {
     assert_eq!(node(&v, "Car[Hatchback]")["row"], json!({ "table": "Car", "key": "Hatchback" }));
     assert_eq!(node(&v, "Car[Hatchback]")["parts"], json!([id(&v, "Petrol car[Hatchback]")]));
     assert!(cell(&v, "Car[Electric]", "mpg").is_null(), "an electric car has no mpg at all");
-    let which = cell(&v, "Which car?", "cost_per_mile")["shown"]["cases"].as_array().unwrap().len();
+    let which = cell(&v, "Which car?", "chosen")["shown"]["items"].as_array().unwrap().len();
     assert_eq!(which, 3, "the decision's options are Car's rows");
+    let per_mile_cases: Vec<f64> = cell(&v, "Per mile", "value")["shown"]["cases"].as_array().unwrap().iter().map(|c| c["value"].as_f64().unwrap()).collect();
+    assert_eq!(per_mile_cases.len(), 3, "and what's read through it is each row's: {per_mile_cases:?}");
 
     // Writing it again changes nothing that's there: rows with those names are used, not made twice.
     c.post("/api/ops", json!({ "ops": [{ "op": "table", "name": "Car", "rows": [{ "key": "Hatchback", "price": 17000 }, "Estate"] }] })).await;
@@ -862,12 +863,12 @@ async fn held_out_tables_of_cars_and_years() {
     // Years, with a top-up chosen at year 5 that only the years after it see.
     let done = c.post("/api/ops", json!({ "ops": [
         { "op": "add_node", "id": "new:rate", "name": "Rate", "cells": { "value": 0.05 } },
-        { "op": "add_node", "id": "new:top", "name": "Top up?", "components": ["decision"], "cells": { "value": { "formula": "pick(in.alternative)" } } },
+        { "op": "add_node", "id": "new:top", "name": "Top up?", "components": ["decision"] },
         { "op": "add_node", "name": "No", "id": "new:no", "cells": { "value": 0 }, "links": [{ "to": "new:top", "component": "alternative" }] },
         { "op": "add_node", "name": "Yes", "id": "new:yes", "cells": { "value": 500 }, "links": [{ "to": "new:top", "component": "alternative" }] },
         { "op": "table", "name": "Year", "columns": { "balance": { "formula": "prev.balance * (1 + rate)", "labels": { "rate": "new:rate" } } }, "range": [0, 10], "rows": [
             { "key": 0, "balance": 1000 },
-            { "key": 5, "balance": { "formula": "prev.balance * (1 + rate) + top_up", "labels": { "rate": "new:rate", "top_up": "new:top" } } },
+            { "key": 5, "balance": { "formula": "prev.balance * (1 + rate) + top_up.chosen.value", "labels": { "rate": "new:rate", "top_up": "new:top" } } },
         ] },
     ] })).await;
     let v = c.view(json!({})).await;
@@ -932,10 +933,10 @@ async fn part_of_a_formula_can_be_tried_with_nothing_changed() {
     let c = Client::new();
     c.open("trip-budget").await;
     let v = c.view(json!({})).await;
-    let tried = c.post("/api/try", json!({ "node": id(&v, "Trip"), "text": "travel + 1" })).await;
+    let tried = c.post("/api/try", json!({ "node": id(&v, "Trip"), "text": "travel.chosen.value + 1" })).await;
     assert_eq!(tried["shown"]["cases"].as_array().unwrap().len(), 2);
-    assert_eq!(tried["expansion"], "(Travel + 1)");
-    let pinned = c.post("/api/try", json!({ "node": id(&v, "Trip"), "text": "travel + 1", "world": { id(&v, "Travel"): id(&v, "Plane") } })).await;
+    assert_eq!(tried["expansion"], "(Travel.chosen.value + 1)");
+    let pinned = c.post("/api/try", json!({ "node": id(&v, "Trip"), "text": "travel.chosen.value + 1", "world": { id(&v, "Travel"): id(&v, "Plane") } })).await;
     assert_eq!(pinned["shown"]["cases"][0]["value"], 121.0);
     let bad = c.post("/api/try", json!({ "node": id(&v, "Trip"), "text": "nope" })).await;
     assert!(bad["error"].as_str().unwrap().contains("no input called nope"), "{bad}");
@@ -1015,6 +1016,6 @@ async fn a_weight_that_differs_between_worlds_is_an_error() {
     let c = Client::new();
     c.open("case-file").await;
     c.post("/api/ops", json!({ "ops": [{ "op": "set", "from": "Tom", "to": "Who took it?", "cell": "weight", "formula": "if(from.arrives > 40, 3, 1)" }] })).await;
-    let why = cell(&c.view(json!({})).await, "Who took it?", "choice")["error"].as_str().unwrap_or_default().to_string();
+    let why = cell(&c.view(json!({})).await, "Who took it?", "chosen")["error"].as_str().unwrap_or_default().to_string();
     assert!(why.contains("differs between worlds"), "{why}");
 }

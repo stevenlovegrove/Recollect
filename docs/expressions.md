@@ -82,12 +82,14 @@ A label points from the formula to what it reads, so the formula and its inputs 
 | `bool` | `a != b`. Stays a diagram, and is shown as a formula like `Stay=Hotel` |
 | `number` | `prev * (1 + rate)` |
 | `text` | A name |
-| `enum` | A choice's `options`, so `Milk = "3"` is an error if its options are numbers, and `Colour = "rde"` is caught as a typo |
+| `node` | What a choice lands on, `car.chosen`. Its cells are read through it, as `car.chosen.price`, and two compare equal when they're the same node |
 | `record`, `list` | Reading `rate.task.review.pages`, or a stored `value` with fields |
 
-**Types are checked before any world is evaluated.** A type doesn't depend on a world. A node's `value` has its type in an internal cell of its own, `value_type`, worked out from the formula and its inputs' types, or from a stored value, or from a choice's options. So it's memoised, a value change doesn't rerun it because the type stays the same, and a loop is reported as a loop. A type error is an error in the cell, and says where in the formula.
+**Types are checked before any world is evaluated.** A type doesn't depend on a world. A node's `value` has its type in an internal cell of its own, `value_type`, worked out from the formula and its inputs' types, or from a stored value. So it's memoised, a value change doesn't rerun it because the type stays the same, and a loop is reported as a loop. A type error is an error in the cell, and says where in the formula.
 
 **The cells compiled systems fill have their types listed in `formulas.rs`,** so `t.need` is `bool` and `t.finish` is `number`. Anything not listed is checked as it runs.
+
+**What's read through a node is checked as it runs,** since which node it is differs between worlds, so `a.chosen.value = "rde"` isn't caught as a typo. A node's type could carry the nodes it might be, so that it could be.
 
 **Whether a value is defined stays per world,** and isn't part of its type. See decision 6. A type like `number?` would force a check on every division for very little gain.
 
@@ -121,7 +123,7 @@ A typed-in estimate stays `estimate: 3`. `Worldly<T>` reads either a plain `T` o
 
 An estimate that varies is read three ways. The schedule adds it per world, and an undefined one makes the dates unknowable, as a gap does. The `oversized_task` notice fires if it's over 5 days in any world, and says in which. The Work tab shows a range.
 
-**Not every fact can be a formula.** What makes the worlds can't depend on them: a choice's `options`, a decision's `chosen`, and which edges are `alternative`. A formula that's undefined in some world is an error for a cell that can't represent that, naming the worlds.
+**Not every fact can be a formula.** What makes the worlds can't depend on them: a choice's `options`, a settled `chosen`, and which edges are `alternative`. A formula that's undefined in some world is an error for a cell that can't represent that, naming the worlds.
 
 An estimate that reads a date which depends on that task is a loop, and is reported as one.
 
@@ -159,8 +161,6 @@ all(x in G: e)         = e[x₁] && e[x₂] && … && true
 max(x in G: e, start)  = max(max(start, e[x₁]), e[x₂]) …
 distinct(x in G: e)    = e[x₁] != e[x₂] && e[x₁] != e[x₃] && … && true, every pair
 distinct(a, b, c)      = the same, over the values given
-pick(o in G: e)        = if(chose(self, o₁), e[o₁], if(chose(self, o₂), e[o₂], … undefined))
-pick(o in G: e, other) = the same, with other in place of undefined
 ```
 
 `product`, `any` and `count` are folds too. `count(line)` counts the nodes in a group, and `count(x in line: x > 0)` counts those where it's true.
@@ -193,7 +193,9 @@ Evaluation is guaranteed to finish: no recursion, finite groups, and a cap on si
 
 An expanded formula is a flat list, where each part's parts come first, so neither checking nor evaluating recurses, and how much memory it takes doesn't depend on how deep it goes. Nesting in the text is limited to 100 levels, so reading it can't run out of stack either.
 
-### 8. Options are nodes, wherever an option has anything to say
+### 8. A choice lands on a node, and what's read through it is that node's
+
+A choice is a node with the `choice` component, whose `chosen` cell is the node it lands on in each world. A dot reads through it: `car.chosen.price` is the price of whichever car it lands on, world by world, and `car.chosen = tom` is the worlds where it's Tom. Writing one in settles it, `{"ref": handle}`, and taking that away opens it again. A choice doesn't say how it lands itself: what requires it does. A decision lands on its live options as likely as their weights say, and `options` on each of a plain list equally.
 
 Options in a plan can have parts, dependencies, evidence and risks, and a budget's should be able to as well, so a budget's choices are ordinary decisions:
 
@@ -211,13 +213,12 @@ links:
 ```
 
 ```
-Travel:  pick(in.alternative)      # 80 or 120
-Trip:    travel + stay
+Trip:    travel.chosen.value + stay.chosen.value      # 140, 180, 230 or 270
 ```
 
-`Train`'s price is its `value`, and anything else can sit beside it, so a Plane option could be part of booking work, with the estimate and the cost varying together.
+`Train`'s price is its `value`, and anything else can sit beside it, so a Plane option could be part of booking work, with the estimate and the cost varying together. Nothing is copied onto the decision: whatever an option says is read through it.
 
-**`options` is the shorthand** for options with nothing to say. Both make the same kind of world variable, and differ only in whether an option is a node. Eight queens would otherwise need 64 option nodes and the zebra puzzle 125, none of them with anything of their own. If an option later needs evidence, it becomes a decision.
+**`options` is the shorthand** for options with nothing to say, such as a puzzle's colours. Each option is still a node, but one nobody wrote: it's only its `name` and `value`, which are the option, and it's never saved. The same option makes the same node wherever it's listed, so `a.chosen = b.chosen` is the worlds where two regions are the same colour, and the zebra puzzle's houses are the same five nodes for every table. If an option later needs evidence, it becomes a decision.
 
 ## The language
 
@@ -341,7 +342,7 @@ If a new one needs Rust, that's the finding, and it goes in this document.
 ## Open questions
 
 1. **Should `requires` narrow the plan's views?** Say a budget node rules out free-form. It could dim that option on the Decisions tab and hide its work, or only show it on the Worlds tab with a notice saying why. It does only the Worlds tab today.
-2. **Is keeping `options` consistent enough?** It's the one place an option isn't a node. The alternative is making every option a node and having the map collapse them, which costs 125 nodes on the zebra puzzle.
+2. **Should a choice be able to read as its own answer?** `a.chosen.value` is explicit, but a puzzle says it a lot. A choice could say which of its cells read through to what it lands on, so `a` alone would mean `a.chosen.value`.
 
 ## Kinds
 
@@ -363,7 +364,7 @@ It's in the engine, rather than written as a default, because which components a
 
 On a map, `is_a` is dashed and doesn't decide what goes above what. A kind is where a formula is written, not a step its numbers go through, so what the kind's formulas read goes beneath each node they run for: Fuel price sits under the petrol cars.
 
-A decision can give any cell of whichever option it lands on: `range` on "Which car?" is `pick(o in in.alternative: o.range)`, and a constraint reads `car.range >= trip`. That's how a car's figures reach what's worked out from the one chosen: "Yearly cost" reads `car.price`, `car.cost_per_mile` and `car.insurance` the same way.
+Whatever the option a decision lands on says is read through it: a constraint reads `car.chosen.range >= trip`, and "Yearly cost" reads `car.chosen.price`, `car.chosen.cost_per_mile` and `car.chosen.insurance`. A car's cost a mile comes from its kind, and that's what's read.
 
 ## Tables
 
@@ -393,11 +394,11 @@ The op `{"op": "table", "name": "Car", "is_a": .., "components": [..], "columns"
 
 ```
 Queen:     options 1 … 8
-           value = distinct(rows) && distinct(q in rows: q + q.row) && distinct(q in rows: q - q.row)
+           value = distinct(q in rows: q.chosen) && distinct(q in rows: q.chosen.value + q.row) && distinct(q in rows: q.chosen.value - q.row)
 Queen[1] … Queen[8]
 ```
 
-Each row is a choice of column, and `q.row` is a row's key, so the table's formula says no two queens share a column or a diagonal. The puzzles are written this way. The zebra puzzle has a table for each kind of thing, such as `Pet[Zebra]` and `Drink[Water]`, whose rows choose a house, and each clue is a formula naming the rows it's about, with nothing to label: `Nationality[English] = Colour[Red]`, or `abs(Smoke[Kools] - Pet[Horse]) = 1` for "next to". The sudoku's cells are a table too, and each row, column and box is a clue such as `distinct(Cell[A1], Cell[A2], Cell[A3], Cell[A4])`.
+Each row is a choice of column, and `q.row` is a row's key, so the table's formula says no two queens share a column or a diagonal. The puzzles are written this way. The zebra puzzle has a table for each kind of thing, such as `Pet[Zebra]` and `Drink[Water]`, whose rows choose a house, and each clue is a formula naming the rows it's about, with nothing to label: `Nationality[English].chosen = Colour[Red].chosen`, or `abs(Smoke[Kools].chosen.value - Pet[Horse].chosen.value) = 1` for "next to". The sudoku's cells are a table too, and each row, column and box is a clue such as `distinct(Cell[A1].chosen, Cell[A2].chosen, Cell[A3].chosen, Cell[A4].chosen)`.
 
 A formula anywhere can go over a table's rows by its name, as `count(v in Arrived.rows: v < 9.5)`, and find a row by the key of one it's going over, as `Left[v.row]`.
 
@@ -405,7 +406,7 @@ The engine keeps an index of names, so finding a table's rows or a row's neighbo
 
 ## Reasoning under doubt
 
-The Vane watch sample is a case file rather than a puzzle. "Who took it?" is a decision nobody makes, marked `uncertain`, whose options are the suspects, each weighted by how likely they seemed before the evidence. What's in doubt is the same: "When did Tom leave the Red Lion?" has two options, each an account with who gave it ("At 9:40, as the barman says", weight 3, and "At about 9:10, as Mrs Dale says", weight 1). A question's answer is which account is true, so what follows from it is a cell named for what it is, which each account says and the question gives for whichever is true: `minutes` on "How did Tom get to the house?" is `pick(o in in.alternative: o.minutes)`. When each suspect could have reached the house is a formula over those, as Tom's `pub.left_at + journey.minutes`. The evidence is two nodes that are required: `who.arrives <= 60` and `who.from_garden`.
+The Vane watch sample is a case file rather than a puzzle. "Who took it?" is a decision nobody makes, marked `uncertain`, whose options are the suspects, each weighted by how likely they seemed before the evidence. What's in doubt is the same: "When did Tom leave the Red Lion?" has two options, each an account with who gave it ("At 9:40, as the barman says", weight 3, and "At about 9:10, as Mrs Dale says", weight 1). A question's answer is which account is true, so what follows from it is a cell named for what it is, which each account says and which is read through the question: Tom's arrival is `pub.chosen.left_at + journey.chosen.minutes`. The evidence is two nodes that are required: `who.chosen.arrives <= 60` and `who.chosen.from_garden`.
 
 So the worlds are every way the evening could have gone, weighted by the accounts, and the evidence rules some out. Wherever the app gives a percentage for something uncertain, on a map card, on the Decisions tab, in the bar at the top and on the Worlds tab, it's the belief in it: how strongly it's believed among the worlds left, its weight given the evidence and whatever's pinned or found out. So it changes as things are found out. Its prior belief is how strongly it was believed before any evidence: its weight, out of all its options' weights, which are cells on the `alternative` edges. Neither is a cell: a belief depends on what's pinned, and a prior belief is a share of its decision's weights, so the server works both out for each view. Where the evidence has moved a belief, the prior belief is shown beside it, so when two suspects both fit the evidence, it's plain their beliefs differ only because their prior beliefs did. A choice that's someone's to make isn't believed, so it shows neither. How likely a condition is, as in "true in 33%", is the same: among the worlds left. On the Decisions tab, something uncertain is "found out" rather than chosen. Pinning is finding something out. For each uncertain thing still open, it also says what's most worth finding out: each other open question, by how sure of the answer you'd be on average once you knew it. That's the chance of the likeliest answer given what the other turns out to be, weighted by how likely that is. At the start Tom is likeliest at 38%, and how Mr Pryce got home is most worth finding out (38% → 48%), while when Tom left the pub wouldn't change who's likeliest at all.
 

@@ -337,7 +337,8 @@ function Why({ ws, has, self, onSelect }: { ws: Workspace; has: Has; self: strin
         </span>
       );
     case "requires":
-      return <span className="comp-origin">because it's {article(has.from!)}</span>;
+      // A component is a noun for what the node is, "a decision", unless it's a plural for what it has, "options".
+      return <span className="comp-origin">{/[^s]s$/.test(has.from!) ? `because it has ${label(has.from!).toLowerCase()}` : `because it's ${article(has.from!)}`}</span>;
     case "edge": {
       const e = ws.edgeById.get(has.from!);
       if (!e) return null;
@@ -381,7 +382,10 @@ function ComponentCard({ ws, node, has, run, onSelect, onShowDecisions }: { ws: 
   const silent = (x: string) => !!ws.cellInfo(x)?.truth && node.cells[x].source !== "own" && casesOf(node.cells[x]).every((v) => v === null);
   const cells = (info?.cells ?? []).filter((x) => node.cells[x] && !ws.cellInfo(x)?.internal && (!ws.cellInfo(x)?.quiet || node.cells[x].source === "own") && !silent(x));
   const beliefs = beliefLines(ws, node).filter((l) => l.component === c);
-  const chosen = c === "decision" ? node.cells.chosen?.value : undefined;
+  // A choice is settled when what it lands on is written on it, rather than worked out.
+  const chosen = node.cells.chosen;
+  const settled = c === "choice" && chosen?.source === "own" && chosen.shown?.kind === "named" ? chosen.shown.items[0]?.node : undefined;
+  const isDecision = node.components.some((x) => x.name === "decision");
   return (
     <div className={`comp ${collapsed ? "collapsed" : ""}`} id={`card-${c}`} style={{ ["--c" as string]: compColor(c) }}>
       <div className="comp-head">
@@ -400,26 +404,25 @@ function ComponentCard({ ws, node, has, run, onSelect, onShowDecisions }: { ws: 
       </div>
       {!collapsed && (
         <div className="comp-body">
-          {info?.about && !cells.length && !beliefs.length && c !== "decision" && <span className="muted small">{info.about}</span>}
-          {c === "decision" && (
+          {info?.about && !cells.length && !beliefs.length && <span className="muted small">{info.about}</span>}
+          {c === "choice" && (settled || isDecision) && (
             <div className="small">
-              {typeof chosen === "string" ? (
+              {settled ? (
                 <>
-                  Chose <NodeChip ws={ws} id={chosen} onSelect={onSelect} />.{" "}
+                  Settled on <NodeChip ws={ws} id={settled} onSelect={onSelect} />.{" "}
                   <button className="link" onClick={() => run([{ op: "set", id, cell: "chosen" }], "reopened")}>
                     reopen
                   </button>
                 </>
               ) : (
-                <span className="muted">Still open. </span>
-              )}{" "}
-              <span className="muted">
-                Its options are what's linked to it as an alternative, which you can compare on the{" "}
-                <button className="link" onClick={() => onShowDecisions(id)}>
-                  Decisions tab
-                </button>
-                .
-              </span>
+                <span className="muted">
+                  Still open: its options are what's linked to it as an alternative, which you can compare on the{" "}
+                  <button className="link" onClick={() => onShowDecisions(id)}>
+                    Decisions tab
+                  </button>
+                  .
+                </span>
+              )}
             </div>
           )}
           {beliefs.map((l) => (
@@ -432,7 +435,7 @@ function ComponentCard({ ws, node, has, run, onSelect, onShowDecisions }: { ws: 
             </div>
           ))}
           {c === "notes" && <NotesBody value={typeof node.cells.body?.value === "string" ? (node.cells.body.value as string) : ""} commit={(v) => run([{ op: "set", id, cell: "body", value: v.trimEnd() }])} />}
-          {cells.filter((x) => x !== "chosen" && !(c === "notes" && x === "body")).map((x) => (
+          {cells.filter((x) => !(x === "chosen" && settled) && !(c === "notes" && x === "body")).map((x) => (
             <CellRow key={x} ws={ws} target={{ id }} c={x} cell={node.cells[x]} onSelect={onSelect} />
           ))}
         </div>

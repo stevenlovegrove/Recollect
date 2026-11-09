@@ -207,12 +207,12 @@ fn trip() -> N {
     let mut g = N::with(plan::install);
     for (decision, options) in [("travel", [("train", 80.0), ("plane", 120.0)]), ("stay", [("hostel", 60.0), ("hotel", 150.0)])] {
         g.add(decision, DECISION);
-        g.formula(decision, "pick(in.alternative)");
         for (option, price) in options {
             g.value(option, num(price)).link(option, decision, ALTERNATIVE);
         }
     }
-    g.formula("trip", "travel + stay").input("trip", "travel", "travel").input("trip", "stay", "stay");
+    // What each decision lands on is read through it: whichever option it is, its price.
+    g.formula("trip", "travel.chosen.value + stay.chosen.value").input("trip", "travel", "travel").input("trip", "stay", "stay");
     g
 }
 
@@ -231,11 +231,12 @@ fn a_budget_with_open_decisions_is_the_same_sheet() {
     assert_eq!(g.show(&over_200), "stay=hotel", "exactly what puts you over budget");
     g.assert_round_trips();
 
-    // Editing one price reruns only that decision and the total.
+    // Editing one price reruns only the total, which reads it through the decision. The decision has no
+    // value of its own to rerun.
     g.take_ran();
     g.value("train", num(90.0));
     let trip = costs(&g);
-    assert_eq!(g.ran_values(), vec!["travel", "trip"]);
+    assert_eq!(g.ran_values(), vec!["trip"]);
     assert_eq!(trip.min(), 150.0);
 }
 

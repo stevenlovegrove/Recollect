@@ -1,0 +1,7 @@
+id: 01a1c1e5-2c95-70ac-aa1f-c497452d80e9
+components:
+- value
+cells:
+  name: The Englishman lives in the red house
+formulas:
+  value: Nationality[English].chosen = Colour[Red].chosen

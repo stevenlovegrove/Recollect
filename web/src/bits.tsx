@@ -57,8 +57,13 @@ function casesText(values: unknown[], names?: (s: string) => string): string {
   return shown.length > 3 ? `${shown.slice(0, 3).join(" / ")} / …` : shown.join(" / ");
 }
 
+/** A node as a value, such as what a choice lands on: `{"ref": handle}`. */
+export const refOf = (v: unknown): string | undefined => (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && typeof (v as { ref?: unknown }).ref === "string" ? (v as { ref: string }).ref : undefined);
+
 function displayValue(v: unknown, names?: (s: string) => string): string {
   if (v === null) return "undefined";
+  const ref = refOf(v);
+  if (ref) return names ? names(ref) : ref;
   if (typeof v === "string" && names) return names(v);
   return valueText(v);
 }

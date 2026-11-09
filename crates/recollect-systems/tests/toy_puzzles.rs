@@ -1,8 +1,9 @@
 //! Toy 3: combinatorial logic puzzles, as a graph of choices and constraints. Each answer here
 //! is known independently: published counts, or checked by plain enumeration in the test.
 //!
-//! A choice is a node with `options`. A constraint is a node whose value is a formula over the
-//! choices it has labelled, and the puzzle's value is `all(constraint)`. The worlds it's true in are
+//! A choice is a node with `options`, and lands on one of them in each world: `a.chosen` is the option,
+//! a node, and `a.chosen.value` is what it says. A constraint is a node whose value is a formula over
+//! the choices it has labelled, and the puzzle's value is `all(constraint)`. The worlds it's true in are
 //! the solutions.
 
 use std::collections::BTreeMap;
@@ -12,7 +13,7 @@ mod support;
 
 use recollect_graph::worlds::{Bool, Space, Var};
 use recollect_graph::{CellType, Entity, Registry};
-use recollect_systems::formulas::{Called, LABEL, OPTIONS, Options, REQUIRES, VALUE, ValueCell, install, truth};
+use recollect_systems::formulas::{Called, Chosen, LABEL, OPTIONS, Options, REQUIRES, VALUE, ValueCell, install, truth};
 use support::N;
 
 fn puzzle_systems(reg: &mut Registry) {
@@ -47,7 +48,7 @@ impl Puzzle {
     /// A clue: this choice has this value.
     fn is(&mut self, choice: &str, value: &str) {
         let value = if value.parse::<f64>().is_ok() { value.to_string() } else { format!("{value:?}") };
-        self.constraint(&[("choice", choice)], &format!("choice = {value}"));
+        self.constraint(&[("choice", choice)], &format!("choice.chosen.value = {value}"));
     }
 
     fn constraint(&mut self, about: &[(&str, &str)], text: &str) -> Entity {
@@ -97,7 +98,7 @@ fn label(g: &mut N, from: Entity, to: Entity, name: &str) {
 }
 
 fn different(p: &mut Puzzle, a: &str, b: &str) {
-    p.pair(a, b, "a != b");
+    p.pair(a, b, "a.chosen != b.chosen");
 }
 
 // ---------- map colouring ----------
@@ -169,7 +170,7 @@ fn queens(n: usize) -> Puzzle {
     }
     for r1 in 0..n {
         for r2 in r1 + 1..n {
-            p.pair(&format!("row{r1}"), &format!("row{r2}"), &format!("a != b && abs(a - b) != {}", r2 - r1));
+            p.pair(&format!("row{r1}"), &format!("row{r2}"), &format!("a.chosen != b.chosen && abs(a.chosen.value - b.chosen.value) != {}", r2 - r1));
         }
     }
     p
@@ -193,7 +194,8 @@ fn queens_table(n: usize) -> Puzzle {
     let mut p = Puzzle::new();
     let cols: Vec<String> = (0..n).map(|c| c.to_string()).collect();
     let head = options_on(&mut p.g, "Queen", cols.clone());
-    p.g.g.set_formula(head, ValueCell::NAME, "distinct(rows) && distinct(q in rows: q + q.row) && distinct(q in rows: q - q.row)");
+    // Options don't bring a value with them, so the table is given one to hold its rule.
+    p.g.g.add(head, VALUE).set_formula(head, ValueCell::NAME, "distinct(q in rows: q.chosen) && distinct(q in rows: q.chosen.value + q.row) && distinct(q in rows: q.chosen.value - q.row)");
     let puzzle = p.puzzle;
     label(&mut p.g, puzzle, head, "constraint");
     let cols: Vec<&str> = cols.iter().map(String::as_str).collect();
@@ -218,7 +220,7 @@ fn a_tables_options_are_its_rows_choices_not_its_own() {
     let mut p = Puzzle::new();
     options_on(&mut p.g, "Pet", vec!["1".into(), "2".into()]);
     let (dog, cat) = (p.g.e("Pet[Dog]"), p.g.e("Pet[Cat]"));
-    let value = |p: &Puzzle, e: Entity| p.g.g.get::<ValueCell>(e).unwrap().map(|v| v.0.0.cases().len());
+    let value = |p: &Puzzle, e: Entity| p.g.g.get::<Chosen>(e).unwrap().map(|v| v.0.0.cases().len());
     assert_eq!(value(&p, dog), Some(2), "a row chooses from its table's options");
     assert_eq!(value(&p, p.e("Pet")), None, "the table isn't a choice itself");
 
@@ -244,18 +246,18 @@ fn distinct_is_every_pair_differing() {
     for x in ["x", "y", "z"] {
         p.choice(x, &["1", "2", "3"]);
     }
-    p.constraint(&[("v", "x"), ("v", "y"), ("v", "z")], "distinct(v)");
+    p.constraint(&[("v", "x"), ("v", "y"), ("v", "z")], "distinct(n in v: n.chosen)");
     assert_eq!(p.count(), 6);
     let mut q = Puzzle::new();
     for x in ["x", "y", "z"] {
         q.choice(x, &["1", "2", "3"]);
     }
-    let all = q.constraint(&[("x", "x"), ("y", "y"), ("z", "z")], "distinct(x, y, z)");
+    let all = q.constraint(&[("x", "x"), ("y", "y"), ("z", "z")], "distinct(x.chosen, y.chosen, z.chosen)");
     assert_eq!(q.count(), 6, "or the values listed out");
-    q.rewrite(all, "distinct(x, y)");
+    q.rewrite(all, "distinct(x.chosen, y.chosen)");
     assert_eq!(q.count(), 18);
     q.rewrite(all, "true");
-    q.constraint(&[("v", "x"), ("v", "y"), ("v", "z")], "distinct(n in v: n * n - 4 * n)");
+    q.constraint(&[("v", "x"), ("v", "y"), ("v", "z")], "distinct(n in v: n.chosen.value * n.chosen.value - 4 * n.chosen.value)");
     // n² - 4n is -3, -4 and -3, so there are only two different values for three choices.
     assert_eq!(q.count(), 0);
 }
@@ -272,9 +274,9 @@ fn a_clue_can_go_over_any_tables_rows_and_find_a_row_by_another_rows_key() {
         }
     }
     // For each key, A's row is below B's: three ways for x and three for y.
-    let clue = p.constraint(&[], "all(a in A.rows: a < B[a.row])");
+    let clue = p.constraint(&[], "all(a in A.rows: a.chosen.value < B[a.row].chosen.value)");
     assert_eq!(p.count(), 9);
-    p.rewrite(clue, "count(A.rows) = 2 && sum(B.rows) = 6");
+    p.rewrite(clue, "count(A.rows) = 2 && sum(B.rows.chosen.value) = 6");
     assert_eq!(p.count(), 9, "short forms too: B's two rows add to 6 only as 3 and 3, and A's are free");
 
     // A new row is part of the group.
@@ -285,7 +287,7 @@ fn a_clue_can_go_over_any_tables_rows_and_find_a_row_by_another_rows_key() {
     p.rewrite(clue, "A.rows + 1");
     let err = format!("{:?}", p.g.g.get::<ValueCell>(clue).unwrap_err());
     assert!(err.contains("A.rows is a group of rows"), "{err}");
-    p.rewrite(clue, "all(a in A.rows: B[a.row] > 0)");
+    p.rewrite(clue, "all(a in A.rows: B[a.row].chosen.value > 0)");
     let err = format!("{:?}", p.g.g.get::<ValueCell>(clue).unwrap_err());
     assert!(err.contains("no row B[z]"), "{err}");
 }
@@ -386,8 +388,8 @@ fn knights_and_knaves() {
     for who in ["a", "b"] {
         p.choice(who, &["knight", "knave"]);
     }
-    p.g.formula("said", r#"a = "knave" && b = "knave""#).input("said", "a", "a").input("said", "b", "b");
-    p.constraint(&[("speaker", "a"), ("said", "said")], r#"(speaker = "knight") = said"#);
+    p.g.formula("said", r#"a.chosen.value = "knave" && b.chosen.value = "knave""#).input("said", "a", "a").input("said", "b", "b");
+    p.constraint(&[("speaker", "a"), ("said", "said")], r#"(speaker.chosen.value = "knight") = said"#);
 
     let solved = p.solutions(10);
     assert_eq!(solved.len(), 1, "{solved:?}");
@@ -414,20 +416,20 @@ fn zebra() -> Puzzle {
         }
     }
     // The clues go first, so the search is narrow before the all-different constraints apply.
-    p.pair("english", "red", "a = b");
-    p.pair("spanish", "dog", "a = b");
-    p.pair("coffee", "green", "a = b");
-    p.pair("ukrainian", "tea", "a = b");
-    p.pair("green", "ivory", "a = b + 1");
-    p.pair("oldgold", "snails", "a = b");
-    p.pair("kools", "yellow", "a = b");
+    p.pair("english", "red", "a.chosen = b.chosen");
+    p.pair("spanish", "dog", "a.chosen = b.chosen");
+    p.pair("coffee", "green", "a.chosen = b.chosen");
+    p.pair("ukrainian", "tea", "a.chosen = b.chosen");
+    p.pair("green", "ivory", "a.chosen.value = b.chosen.value + 1");
+    p.pair("oldgold", "snails", "a.chosen = b.chosen");
+    p.pair("kools", "yellow", "a.chosen = b.chosen");
     p.is("milk", "3");
     p.is("norwegian", "1");
-    p.pair("chesterfield", "fox", "abs(a - b) = 1");
-    p.pair("kools", "horse", "abs(a - b) = 1");
-    p.pair("luckystrike", "juice", "a = b");
-    p.pair("japanese", "parliament", "a = b");
-    p.pair("norwegian", "blue", "abs(a - b) = 1");
+    p.pair("chesterfield", "fox", "abs(a.chosen.value - b.chosen.value) = 1");
+    p.pair("kools", "horse", "abs(a.chosen.value - b.chosen.value) = 1");
+    p.pair("luckystrike", "juice", "a.chosen = b.chosen");
+    p.pair("japanese", "parliament", "a.chosen = b.chosen");
+    p.pair("norwegian", "blue", "abs(a.chosen.value - b.chosen.value) = 1");
 
     for cat in categories {
         for i in 0..5 {

@@ -172,7 +172,7 @@ function CommitPanel({ m, ws, commit, onSelect, onCancel, run }: { m: Matrix; ws
   const notNeeded = choosing ? m.rows.filter((r) => !r.need.never && !r.finished && (r.per_option[o.id] ?? 0) <= 0) : m.rows.filter((r) => !r.need.never && !r.finished && m.options.every((x) => x.id === o.id || x.ruled_out || x.dropped || (r.per_option[x.id] ?? 0) <= 0));
   const confirm = async () => {
     const reason = why.trim();
-    const ops: Parameters<Workspace["apply"]>[0] = choosing ? [{ op: "set", id: m.id, cell: "chosen", value: o.id }] : [{ op: "set", from: o.id, to: m.id, cell: "ruled_out", value: reason || true }];
+    const ops: Parameters<Workspace["apply"]>[0] = choosing ? [{ op: "set", id: m.id, cell: "chosen", value: { ref: o.id } }] : [{ op: "set", from: o.id, to: m.id, cell: "ruled_out", value: reason || true }];
     if (await run(ops, reason)) {
       if (ws.world[m.id]) ws.pin(m.id, null);
       onCancel();

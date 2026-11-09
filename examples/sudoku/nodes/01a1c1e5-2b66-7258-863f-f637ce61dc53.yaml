@@ -1,0 +1,10 @@
+id: 01a1c1e5-2b66-7258-863f-f637ce61dc53
+components:
+- options
+cells:
+  name: Cell
+  options:
+  - '1'
+  - '2'
+  - '3'
+  - '4'

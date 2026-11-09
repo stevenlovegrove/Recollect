@@ -15,9 +15,9 @@ use crate::views::{self, World};
 const INSTRUCTIONS: &str = "\
 Recollect holds a graph the user develops with your help. A node and an edge (from one node to another) are both entities. Each has \
 components, such as `task` or `decision` on a node and `part_of` or `label` on an edge, and each component brings cells: `task` brings \
-`estimate`, `decision` brings `chosen`, an `alternative` edge brings `weight`. A cell is only there on an entity that has its component. \
+`estimate`, `choice` brings `chosen`, an `alternative` edge brings `weight`. A cell is only there on an entity that has its component. \
 What's in a cell is written there (a value or a formula), taken from the node's kind, or the component's default, which may be worked \
-out. Components require others (a task is work, which is part of a plan), and an edge's components bring components to its ends (an \
+out, or filled in by a component that requires it (`decision` and `options` each say how a choice lands). Components require others (a task is work, which is part of a plan), and an edge's components bring components to its ends (an \
 `alternative` edge makes its source an `option` and its target a `decision`). get_overview lists every component and cell this \
 workspace's systems provide, and what each means. Start there.\n\
 \n\
@@ -34,8 +34,9 @@ A workspace can have cells of its own, such as `price` or `range`, which no comp
 are the same kind of thing, make a node for the kind and link each to it with an `is_a` edge: they have its components, and take any \
 cell they don't write themselves from it (except a node's own `name` and `value`), and a formula on the kind runs for each of them, \
 with `self` meaning that node and its other names labelled once on the kind. A car's mpg goes on the car, and how mpg and the fuel price \
-make a cost a mile goes on Petrol car. A decision can give any cell of whichever option it lands on, as `range` = \
-`pick(o in in.alternative: o.range)`, so what's worked out from the chosen option reads it there, as `car.range >= trip`. Give a \
+make a cost a mile goes on Petrol car. A choice's `chosen` cell is the node it lands on in each world, and a dot reads through it to \
+that node's cells: with `car` labelling a decision, `car.chosen.range >= trip` reads the range of whichever car it lands on, and \
+`miles.chosen.value` the value of whichever option. `car.chosen = tom` compares nodes. Give a \
 decision `uncertain` when it isn't anyone's to choose, such as how far someone will drive: its options' weights then say how far each \
 is believed, and what's expected averages over it.\n\
 \n\
@@ -46,10 +47,13 @@ one formula on the table and a starting value on the first row. A numbered table
 `Year[100].balance` works without writing 100 rows: those rows take everything from the table and aren't saved. If Petrol car `is_a` Car, then `Petrol car[Hatchback]` and \
 `Car[Hatchback]` are parts of one car: put what every car has on the Car row and what only petrol cars have on the Petrol car row. \
 A table's columns are cells of the workspace's own, such as `balance`, since `value` is each node's own answer. \
-A table can be a table of choices: give the table node `options` and each row is a choice from them, while the table isn't a choice \
-itself. For a puzzle, make a table for each kind of thing, such as `Pet[Zebra]` choosing a house, and write each clue as a formula \
-naming the rows it's about, with nothing to label: `Nationality[English] = Colour[Red]`. Say all different with `distinct`: \
-`distinct(rows)` as the table's own value, `distinct(q in rows: q + q.row)` where `q.row` is a row's key, or `distinct(Cell[A1], Cell[A2])`. \
+A node with `options` (a plain list, such as [\"red\", \"green\"]) is a choice between them: each option is a node nobody wrote, whose \
+`name` and `value` are the option, so `a.chosen.value = \"red\"`, and two choices landing on the same option land on the same node, so \
+`a.chosen != b.chosen` says they differ. A table can be a table of choices: give the table node `options` and each row is a choice from \
+them, while the table isn't a choice itself. For a puzzle, make a table for each kind of thing, such as `Pet[Zebra]` choosing a house, \
+and write each clue as a formula naming the rows it's about, with nothing to label: `Nationality[English].chosen = Colour[Red].chosen`, \
+or `Drink[Milk].chosen.value = 3`. Say all different with `distinct`: `distinct(r in rows: r.chosen)` as the table's own value, \
+`distinct(q in rows: q.chosen.value + q.row)` where `q.row` is a row's key, or `distinct(Cell[A1].chosen, Cell[A2].chosen)`. \
 Anywhere, `Arrived.rows` is a table's rows by its name and `Left[v.row]` finds the row with the same key as one being gone over: \
 `count(v in Arrived.rows: v < 9.5 && Left[v.row] > 9.5) = 1`. A statement someone made is a row whose formula is what they said, so \
 \"Dee is lying\" is `!Says[Dee]`. \
@@ -74,7 +78,7 @@ the same with `from` and `to` in place of `id` for a cell of the edge between tw
 {op: link, from, to, component, cells?} and {op: unlink, from, to, component}; {op: delete_node, id}. Writing in a cell of a component \
 a node doesn't have gives it that component. Nodes can be named by handle or by name, and \"new:anything\" stands for a node that \
 doesn't exist yet, the same one wherever it appears in a change-set. So decide on a decision with {op: set, id: \"Which approach?\", \
-cell: chosen, value: <option's handle>}, and rule an option out with {op: set, from: <option>, to: <decision>, cell: ruled_out, value: \"why\"}.\n\
+cell: chosen, value: {ref: <option's handle>}}, and rule an option out with {op: set, from: <option>, to: <decision>, cell: ruled_out, value: \"why\"}.\n\
 \n\
 A node's `value` can be typed in, or a formula, and so can a task's `estimate` and any of the workspace's own cells. That's how to state \
 a claim the app can hold you to, rather than only describing it. Write {op: set, id, cell: value, formula: \"prev * (1 + rate)\", labels: \
@@ -82,8 +86,8 @@ a claim the app can hold you to, rather than only describing it. Write {op: set,
 several nodes under one name make a group. A formula means the same thing in every world: \
 what you'd get with ordinary values there, so it needs no thought about worlds, and `a + b` works whether or not either varies. \
 Operators: + - * / = != < <= > >= && || !. A number, \\\"text\\\", true, false or undefined. `rate` is that node's value, `rate.finish` another of its cells, and `self.need` one of this node's. \
-Functions: if(c, a, b), defined(x), or(x, fallback), abs, min(a, b), max(a, b), round(x, places?), floor, ceil, has(x.c) (whether x has component c, or else something in cell c), and chose(decision, option), which is true where that decision lands on that option. \
-Over a group, which is a label, in.component or out.component (the nodes at the other end of those edges) or with.component (the nodes with it): sum, product, all, any, count, distinct, and pick for a decision's value from its chosen option: sum(line), sum(t in with.task: if(t.need, t.estimate, 0)), pick(in.alternative). \
+Functions: if(c, a, b), defined(x), or(x, fallback), abs, min(a, b), max(a, b), round(x, places?), floor, ceil, has(x.c) (whether x has component c, or else something in cell c), and chose(choice, option), which is true where that choice lands on that option. \
+Over a group, which is a label, in.component or out.component (the nodes at the other end of those edges) or with.component (the nodes with it): sum, product, all, any, count and distinct: sum(line), sum(t in with.task: if(t.need, t.estimate, 0)). \
 In a fold over edges, `o.via.weight` reads a cell of the edge `o` was reached along, and a formula on an edge reads its ends as `from` and `to`. \
 effort() is a plan's total days in each world, undefined where a gap is in play. Division by zero and missing inputs are undefined, only in the worlds where that's so, which says what isn't known. \
 A node with `requires` and a true-or-false value means only the worlds where it's true count, which is how to say a constraint must be met. \

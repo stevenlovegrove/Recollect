@@ -1,0 +1,7 @@
+id: 01a1c1e5-2c95-70ac-aa1f-c499177cd1e5
+components:
+- value
+cells:
+  name: Coffee is drunk in the green house
+formulas:
+  value: Drink[Coffee].chosen = Colour[Green].chosen

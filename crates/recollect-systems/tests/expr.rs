@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use recollect_graph::worlds::Space;
 use recollect_graph::{CellType, Error, Registry};
 use recollect_systems::expr::{BinOp, Expr, Val, parse};
-use recollect_systems::formulas::{Called, LABEL, MACRO, Macro, OPTIONS, Options, REQUIRES, VALUE, ValueCell, install, truth, try_formula};
+use recollect_systems::formulas::{Called, Chosen, LABEL, MACRO, Macro, OPTIONS, Options, REQUIRES, VALUE, ValueCell, install, option_node, truth, try_formula};
 use recollect_systems::plan::{self, ALTERNATIVE, DECISION, Estimate, PART_OF, TASK, UNKNOWN};
 use recollect_systems::schedule::{self, Finish};
 use serde_json::json;
@@ -43,6 +43,13 @@ fn just(text: &str) -> Val {
 /// Give a node options, and so make it a choice.
 fn options(g: &mut N, name: &str, options: &[&str]) {
     g.add(name, OPTIONS).set(name, Options(options.iter().map(|s| s.to_string()).collect()));
+}
+
+/// A choice that also reads as its own value: whatever the option it lands on says, so a bare `name`
+/// in a formula is that option's value.
+fn valued_options(g: &mut N, name: &str, opts: &[&str]) {
+    options(g, name, opts);
+    g.formula(name, "self.chosen.value");
 }
 
 fn just_error(text: &str) -> String {
@@ -104,8 +111,8 @@ fn undefined_spreads_and_logic_is_three_valued() {
 fn an_undefined_world_is_only_undefined_in_that_world() {
     let mut g = N::with(sheet);
     options(&mut g, "x", &["0", "2"]);
-    g.formula("half", "1 / x").input("half", "x", "x");
-    g.formula("safe", "if(x != 0, 1 / x, 0)").input("safe", "x", "x");
+    g.formula("half", "1 / x.chosen.value").input("half", "x", "x");
+    g.formula("safe", "if(x.chosen.value != 0, 1 / x.chosen.value, 0)").input("safe", "x", "x");
     let at = |o: &str| BTreeMap::from([(g.id("x").to_string(), o.to_string())]);
     let half = value(&g, "half").0.0;
     assert_eq!((half.at(&at("0")), half.at(&at("2"))), (&Val::Undefined, &Val::Num(0.5)));
@@ -267,9 +274,9 @@ fn worlds() -> Vec<(String, String, String)> {
 fn with_choices() -> N {
     let mut g = N::with(sheet);
     for name in NUMBER_CHOICES {
-        options(&mut g, name, &NUMBER_OPTIONS);
+        valued_options(&mut g, name, &NUMBER_OPTIONS);
     }
-    options(&mut g, "colour", &TEXT_OPTIONS);
+    valued_options(&mut g, "colour", &TEXT_OPTIONS);
     g
 }
 
@@ -334,13 +341,13 @@ fn decided_plan(text: &str) -> (recollect_graph::Log, BTreeMap<&'static str, rec
     let mut ops: Vec<Op> = ids.values().map(|e| Op::Spawn { id: *e }).collect();
     // `pp` and `qq` read as numbers from their options, and `cc` is true or false in the same way.
     for (d, options) in [("pp", [("a", 0.0), ("b", 3.0)]), ("qq", [("c", 1.0), ("d", 5.0)])] {
-        ops.extend([Op::add(ids[d], DECISION), Op::add(ids[d], VALUE), Op::set_formula(ids[d], ValueCell::NAME, "pick(in.alternative)")]);
+        ops.extend([Op::add(ids[d], DECISION), Op::add(ids[d], VALUE), Op::set_formula(ids[d], ValueCell::NAME, "self.chosen.value")]);
         for (o, price) in options {
             ops.extend([Op::add(ids[o], VALUE), Op::set(ids[o], ValueCell::num(price))]);
             ops.push(Op::link(ids[o], ids[d], ALTERNATIVE));
         }
     }
-    ops.extend([Op::add(ids["cc"], DECISION), Op::add(ids["cc"], VALUE), Op::set_formula(ids["cc"], ValueCell::NAME, "pick(in.alternative)")]);
+    ops.extend([Op::add(ids["cc"], DECISION), Op::add(ids["cc"], VALUE), Op::set_formula(ids["cc"], ValueCell::NAME, "self.chosen.value")]);
     for (o, v) in [("e", "red"), ("f2", "blue")] {
         ops.extend([Op::add(ids[o], VALUE), Op::set(ids[o], ValueCell::plain(Val::Text(v.to_string())))]);
         ops.push(Op::link(ids[o], ids["cc"], ALTERNATIVE));
@@ -458,25 +465,55 @@ fn types_are_checked_without_looking_at_a_world() {
     // It's a type error even in worlds the bad branch never runs in.
     let mut g = N::with(sheet);
     options(&mut g, "x", &["a", "b"]);
-    g.formula("f", r#"if(x = "a", 1, "text")"#).input("f", "x", "x");
+    g.formula("f", r#"if(x.chosen.value = "a", 1, "text")"#).input("f", "x", "x");
     assert!(error(&g, "f").contains("the two sides of if"), "{}", error(&g, "f"));
 }
 
 #[test]
-fn a_choice_has_a_type_from_its_options() {
+fn a_choice_lands_on_a_shared_node_for_each_option_whose_value_is_a_number_if_they_all_are() {
     let mut g = N::with(sheet);
     options(&mut g, "colour", &["red", "blue"]);
+    options(&mut g, "door", &["blue", "green"]);
     options(&mut g, "house", &["1", "2"]);
-    g.formula("typo", r#"c = "rde""#).input("typo", "colour", "c");
-    assert!(error(&g, "typo").contains("isn't one of the options, which are red, blue"), "{}", error(&g, "typo"));
-    g.formula("fine", r#"c = "red""#).input("fine", "colour", "c");
-    assert!(g.get::<ValueCell>("fine").is_ok());
-    g.formula("as_text", r#"h = "1""#).input("as_text", "house", "h");
-    assert!(error(&g, "as_text").contains("can't compare"), "options that are all numbers read as numbers: {}", error(&g, "as_text"));
-    g.formula("as_number", "h = 1").input("as_number", "house", "h");
-    assert!(g.get::<ValueCell>("as_number").is_ok());
-    g.formula("sums", "h + 1").input("sums", "house", "h");
-    assert!(g.get::<ValueCell>("sums").is_ok());
+    let (colour_red, colour_blue) = (g.world(&[("colour", "red")]), g.world(&[("colour", "blue")]));
+    let (house_1, house_2) = (g.world(&[("house", "1")]), g.world(&[("house", "2")]));
+    let plain = |v: ValueCell, world: &BTreeMap<String, String>| v.0.0.at(world).clone();
+
+    // What it lands on is a node nobody wrote, one for each option, named for it.
+    let (red, blue) = (option_node(&g.g, "red", false), option_node(&g.g, "blue", false));
+    let chosen = g.get::<Chosen>("colour").unwrap().unwrap().0.0;
+    assert_eq!((chosen.at(&colour_red), chosen.at(&colour_blue)), (&Val::Ref(red), &Val::Ref(blue)));
+    g.formula("named", "c.chosen.name").input("named", "colour", "c");
+    assert_eq!(plain(value(&g, "named"), &colour_red), Val::Text("red".into()));
+
+    // Two choices with the same option land on the same node, so they can be compared as nodes.
+    g.formula("same", "c.chosen = d.chosen").input("same", "colour", "c").input("same", "door", "d");
+    let both_blue = BTreeMap::from([(g.id("colour").to_string(), "blue".to_string()), (g.id("door").to_string(), "blue".to_string())]);
+    let not_both = BTreeMap::from([(g.id("colour").to_string(), "red".to_string()), (g.id("door").to_string(), "blue".to_string())]);
+    let same = value(&g, "same");
+    assert_eq!((plain(same.clone(), &both_blue), plain(same, &not_both)), (Val::Bool(true), Val::Bool(false)));
+
+    g.formula("fine", r#"c.chosen.value = "red""#).input("fine", "colour", "c");
+    let fine = value(&g, "fine");
+    assert_eq!((plain(fine.clone(), &colour_red), plain(fine, &colour_blue)), (Val::Bool(true), Val::Bool(false)));
+    // There's no list of options in a type any more, so a misspelt option isn't an error: it's just
+    // never what the choice lands on.
+    g.formula("typo", r#"c.chosen.value = "rde""#).input("typo", "colour", "c");
+    assert!(truth(&value(&g, "typo")).is_never());
+
+    // Options that are all numbers read as numbers.
+    g.formula("as_text", r#"h.chosen.value = "1""#).input("as_text", "house", "h");
+    assert!(truth(&value(&g, "as_text")).is_never(), "options that are all numbers read as numbers");
+    g.formula("as_number", "h.chosen.value = 1").input("as_number", "house", "h");
+    let as_number = value(&g, "as_number");
+    assert_eq!((plain(as_number.clone(), &house_1), plain(as_number, &house_2)), (Val::Bool(true), Val::Bool(false)));
+    g.formula("sums", "h.chosen.value + 1").input("sums", "house", "h");
+    let sums = value(&g, "sums");
+    assert_eq!((plain(sums.clone(), &house_1), plain(sums, &house_2)), (Val::Num(2.0), Val::Num(3.0)));
+
+    // And a choice has no value of its own: it's what it lands on that has one.
+    g.formula("bare", "h + 1").input("bare", "house", "h");
+    assert_eq!(value(&g, "bare"), ValueCell::plain(Val::Undefined));
 }
 
 #[test]
@@ -537,7 +574,7 @@ fn too_many_different_values_is_a_clear_error_and_not_a_hang() {
         let name = format!("c{i}");
         options(&mut g, &name, &["0", &(1u64 << i).to_string()]);
         g.input("total", &name, &name);
-        text.push(name);
+        text.push(format!("{name}.chosen.value"));
     }
     g.formula("total", &text.join(" + "));
     let why = error(&g, "total");
@@ -551,7 +588,7 @@ fn too_many_different_values_is_a_clear_error_and_not_a_hang() {
         let name = format!("c{i}");
         options(&mut g, &name, &["0", "1"]);
         g.input("all_on", &name, &name);
-        text.push(format!("{name} = 1"));
+        text.push(format!("{name}.chosen.value = 1"));
     }
     g.formula("all_on", &text.join(" && "));
     assert_eq!(value(&g, "all_on").0.0.len(), 2);
@@ -699,14 +736,14 @@ fn a_formula_can_ask_which_way_a_decision_went_and_set_an_estimate() {
 }
 
 #[test]
-fn chose_needs_a_decision_and_pick_lands_on_nothing_for_a_gap() {
+fn chose_needs_a_choice_and_what_is_read_through_a_gap_is_undefined() {
     let mut g = N::with(plan::install);
     g.value("not_a_decision", ValueCell::num(1.0)).value("o", ValueCell::num(2.0));
     g.formula("f", "chose(d, o)").input("f", "not_a_decision", "d").input("f", "o", "o");
-    assert!(error(&g, "f").contains("chose needs a decision"));
+    assert!(error(&g, "f").contains("chose needs a choice"), "{}", error(&g, "f"));
 
     g.add("d", DECISION);
-    g.formula("d", "pick(in.alternative)");
+    g.formula("d", "self.chosen.value");
     g.value("known", ValueCell::num(5.0)).link("known", "d", ALTERNATIVE);
     g.add("gap", UNKNOWN).link("gap", "d", ALTERNATIVE);
     let v = value(&g, "d").0.0;

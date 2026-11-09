@@ -1,0 +1,17 @@
+id: 01a1c1e5-29ea-707b-87b9-8c7d39cec841
+components:
+- notes
+cells:
+  body: 'A mile costs the fuel it burns: a gallon is 4.546 litres. Each says its own mpg.'
+  name: Petrol car
+formulas:
+  cost_per_mile: fuel * 4.546 / self.mpg
+links:
+- to: 01a1c1e5-29ea-707b-87b9-8c7bc08ae484
+  components:
+  - label
+  cells:
+    called: fuel
+- to: 01a1c1e5-29ea-707b-87b9-8c809ab7d45c
+  components:
+  - is_a

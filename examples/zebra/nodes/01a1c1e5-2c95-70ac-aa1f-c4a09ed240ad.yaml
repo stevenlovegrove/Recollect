@@ -1,0 +1,7 @@
+id: 01a1c1e5-2c95-70ac-aa1f-c4a09ed240ad
+components:
+- value
+cells:
+  name: The Chesterfield smoker lives next to the man with the fox
+formulas:
+  value: abs(Smoke[Chesterfield].chosen.value - Pet[Fox].chosen.value) = 1

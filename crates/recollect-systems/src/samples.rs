@@ -30,14 +30,14 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "fibonacci", title: "Fibonacci", about: "A table where each row adds the two before it: prev.f + prev.prev.f. Only the first two rows are written, and asking for F[80] works out the rest, each once: 79 formula runs.", group: "sheet", systems: &[], build: fibonacci },
     Sample { name: "australia", title: "Colouring Australia", about: "Each region is a choice and each border a constraint. There are 18 colourings. Pin a region and see what that forces.", group: "puzzle", systems: &[], build: australia },
     Sample { name: "eight-queens", title: "Eight queens", about: "A table with a row for each row of the board, choosing the column its queen is in. One formula on the table says no two share a column or a diagonal. There are 92 boards.", group: "puzzle", systems: &[], build: eight_queens },
-    Sample { name: "sudoku", title: "4×4 sudoku", about: "A table of sixteen cells, each choosing a number, and a clue for each row, column and box: distinct(Cell[A1], Cell[A2], …). There are 288 grids.", group: "puzzle", systems: &[], build: sudoku },
+    Sample { name: "sudoku", title: "4×4 sudoku", about: "A table of sixteen cells, each choosing a number, and a clue for each row, column and box: distinct(Cell[A1].chosen, Cell[A2].chosen, …). There are 288 grids.", group: "puzzle", systems: &[], build: sudoku },
     Sample { name: "knights-and-knaves", title: "Knights and knaves", about: "A says “we are both knaves”. Knights always tell the truth, and knaves always lie.", group: "puzzle", systems: &[], build: knights_and_knaves },
     Sample { name: "case-file", title: "The Vane watch", about: "A case file. A watch went from Rosalind Vane's study one evening, and there are three people it could have been, or someone nobody has thought of. Each account is a node saying who gave it, with how far it's believed, and when each suspect could have reached the house is worked out from those. The Worlds tab gives how likely each suspect is, and what's most worth finding out next. Pin what you learn.", group: "reasoning", systems: &["plan"], build: case_file },
-    Sample { name: "zebra", title: "The zebra puzzle", about: "Who owns the zebra, and who drinks water? A table for each kind of thing, whose rows choose a house, and the clues written as they read: Nationality[English] = Colour[Red]. About 3 × 10¹⁷ combinations, and the clues leave exactly one.", group: "puzzle", systems: &[], build: zebra },
+    Sample { name: "zebra", title: "The zebra puzzle", about: "Who owns the zebra, and who drinks water? A table for each kind of thing, whose rows choose a house, and the clues written as they read: Nationality[English].chosen = Colour[Red].chosen. About 3 × 10¹⁷ combinations, and the clues leave exactly one.", group: "puzzle", systems: &[], build: zebra },
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "11";
+pub const FORMAT: &str = "12";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -185,19 +185,19 @@ fn invoice(b: &mut Build) {
 fn trip_budget(b: &mut Build) {
     // Options are ordinary nodes, the same as in a plan, so one could have parts and dependencies too.
     for (decision, options) in [("Travel", [("Train", 80.0), ("Plane", 120.0)]), ("Stay", [("Hostel", 60.0), ("Hotel", 150.0)])] {
-        b.add(decision, DECISION).formula(decision, "pick(in.alternative)");
+        b.add(decision, DECISION);
         for (option, price) in options {
             b.value(option, price).option(option, decision, None);
         }
     }
-    b.formula("Trip", "travel + stay").label("Trip", "Travel", "travel").label("Trip", "Stay", "stay");
+    b.formula("Trip", "travel.chosen.value + stay.chosen.value").label("Trip", "Travel", "travel").label("Trip", "Stay", "stay");
     b.formula("Over £200", "trip > 200").label("Over £200", "Trip", "trip");
 }
 
 fn choosing_a_car(b: &mut Build) {
     b.value("Years kept", 5.0);
     // Not something to decide: it'll be whatever it is, and these are guesses at how likely each is.
-    b.add("Miles a year", DECISION).add("Miles a year", UNCERTAIN).formula("Miles a year", "pick(in.alternative)");
+    b.add("Miles a year", DECISION).add("Miles a year", UNCERTAIN);
     for (option, miles, weight) in [("Light use", 6000.0, 1.0), ("Typical", 10000.0, 2.0), ("Heavy", 16000.0, 1.0)] {
         b.value(option, miles).option(option, "Miles a year", Some(weight));
     }
@@ -208,11 +208,8 @@ fn choosing_a_car(b: &mut Build) {
     b.formula_on("Petrol car", "cost_per_mile", "fuel * 4.546 / self.mpg").label("Petrol car", "Fuel price", "fuel");
     b.note("Electric car", "A mile costs the electricity it takes. Each says its own kWh a mile.");
     b.formula_on("Electric car", "cost_per_mile", "power * self.kwh_per_mile").label("Electric car", "Electricity price", "power");
-    // The decision gives whatever the car it lands on says, so anything can read it.
+    // Whatever the car it lands on says is read through it, as car.chosen.price.
     b.add("Which car?", DECISION);
-    for cell in ["price", "cost_per_mile", "insurance", "range"] {
-        b.formula_on("Which car?", cell, &format!("pick(o in in.alternative: o.{cell})"));
-    }
     // Three tables. Every car has a price, insurance and a range, so those are Car's. Only petrol cars
     // have an mpg, and only electric ones a kWh a mile. Petrol car[Hatchback] and Car[Hatchback] are two
     // parts of one car, and each reads what the other says.
@@ -231,11 +228,11 @@ fn choosing_a_car(b: &mut Build) {
         b.put(&format!("{kind}[{car}]"), cell, json!(v));
     }
     // Losing 15% of its value each year it's kept, running it, and insuring it.
-    b.formula("Yearly cost", "car.price * (1 - 0.85 ^ years) / years + miles * car.cost_per_mile + car.insurance");
+    b.formula("Yearly cost", "car.chosen.price * (1 - 0.85 ^ years) / years + miles.chosen.value * car.chosen.cost_per_mile + car.chosen.insurance");
     b.label("Yearly cost", "Which car?", "car").label("Yearly cost", "Years kept", "years").label("Yearly cost", "Miles a year", "miles");
     b.value("Miles to Edinburgh", 400.0);
     let trip = "Gets to Edinburgh without stopping";
-    b.formula(trip, "car.range >= miles").label(trip, "Which car?", "car").label(trip, "Miles to Edinburgh", "miles");
+    b.formula(trip, "car.chosen.range >= miles").label(trip, "Which car?", "car").label(trip, "Miles to Edinburgh", "miles");
 }
 
 fn compound_interest(b: &mut Build) {
@@ -245,11 +242,11 @@ fn compound_interest(b: &mut Build) {
     // Only rows with something of their own are written. The rest are there to be read, as far as asked.
     b.put("Year[0]", "balance", json!(1000.0));
     // A choice five years in: the years before it have one balance, and the years after have one for each answer.
-    b.add("Top up in year 5?", DECISION).formula("Top up in year 5?", "pick(in.alternative)");
+    b.add("Top up in year 5?", DECISION);
     for (option, amount) in [("No top-up", 0.0), ("Add 500", 500.0)] {
         b.value(option, amount).option(option, "Top up in year 5?", None);
     }
-    b.formula_on("Year[5]", "balance", "prev.balance * (1 + rate) + top_up");
+    b.formula_on("Year[5]", "balance", "prev.balance * (1 + rate) + top_up.chosen.value");
     b.label("Year[5]", "Rate", "rate").label("Year[5]", "Top up in year 5?", "top_up");
     b.formula("After 30 years", "Year[30].balance");
 }
@@ -292,7 +289,7 @@ impl<'a> Puzzle<'a> {
     }
 
     fn different(&mut self, a: &str, b: &str) {
-        self.constraint(&[("a", a), ("b", b)], format!("{a} ≠ {b}"), "a != b");
+        self.constraint(&[("a", a), ("b", b)], format!("{a} ≠ {b}"), "a.chosen != b.chosen");
     }
 
     /// A table of choices: each row takes the table's options.
@@ -337,7 +334,7 @@ fn eight_queens(b: &mut Build) {
     let keys: Vec<String> = (1..=8).map(|r| r.to_string()).collect();
     let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
     p.table("Queen", &cols, &keys);
-    p.rule("Queen", "No two share a column or a diagonal", "distinct(rows) && distinct(q in rows: q + q.row) && distinct(q in rows: q - q.row)");
+    p.rule("Queen", "No two share a column or a diagonal", "distinct(q in rows: q.chosen) && distinct(q in rows: q.chosen.value + q.row) && distinct(q in rows: q.chosen.value - q.row)");
 }
 
 fn sudoku(b: &mut Build) {
@@ -351,7 +348,7 @@ fn sudoku(b: &mut Build) {
         p.b.set(&format!("Cell[{k}]"), AT, At { row: (i / 4) as u32, col: (i % 4) as u32 });
     }
     let cells = |pick: &dyn Fn(usize, usize) -> bool| {
-        let named: Vec<String> = (0..16).filter(|i| pick(i / 4, i % 4)).map(|i| format!("Cell[{}]", keys[i])).collect();
+        let named: Vec<String> = (0..16).filter(|i| pick(i / 4, i % 4)).map(|i| format!("Cell[{}].chosen", keys[i])).collect();
         format!("distinct({})", named.join(", "))
     };
     for (r, name) in rows.iter().enumerate() {
@@ -370,8 +367,8 @@ fn knights_and_knaves(b: &mut Build) {
     p.choice("A", &["knight", "knave"]);
     p.choice("B", &["knight", "knave"]);
     let said = "“We are both knaves”";
-    p.b.formula(said, r#"a = "knave" && b = "knave""#).label(said, "A", "a").label(said, "B", "b");
-    p.constraint(&[("speaker", "A"), ("said", said)], "A is a knight exactly when that's true".to_string(), r#"(speaker = "knight") = said"#);
+    p.b.formula(said, r#"a.chosen.value = "knave" && b.chosen.value = "knave""#).label(said, "A", "a").label(said, "B", "b");
+    p.constraint(&[("speaker", "A"), ("said", said)], "A is a knight exactly when that's true".to_string(), r#"(speaker.chosen.value = "knight") = said"#);
 }
 
 fn zebra(b: &mut Build) {
@@ -389,22 +386,22 @@ fn zebra(b: &mut Build) {
         p.table(table, &houses, rows);
     }
     // The clues go first, so the search is narrow before the rest apply.
-    p.clue("The Englishman lives in the red house", "Nationality[English] = Colour[Red]");
-    p.clue("The Spaniard owns the dog", "Nationality[Spanish] = Pet[Dog]");
-    p.clue("Coffee is drunk in the green house", "Drink[Coffee] = Colour[Green]");
-    p.clue("The Ukrainian drinks tea", "Nationality[Ukrainian] = Drink[Tea]");
-    p.clue("The green house is just right of the ivory house", "Colour[Green] = Colour[Ivory] + 1");
-    p.clue("The Old Gold smoker owns snails", r#"Smoke["Old Gold"] = Pet[Snails]"#);
-    p.clue("Kools are smoked in the yellow house", "Smoke[Kools] = Colour[Yellow]");
-    p.clue("Milk is drunk in the middle house", "Drink[Milk] = 3");
-    p.clue("The Norwegian lives in the first house", "Nationality[Norwegian] = 1");
-    p.clue("The Chesterfield smoker lives next to the man with the fox", "abs(Smoke[Chesterfield] - Pet[Fox]) = 1");
-    p.clue("Kools are smoked next to the house with the horse", "abs(Smoke[Kools] - Pet[Horse]) = 1");
-    p.clue("The Lucky Strike smoker drinks juice", r#"Smoke["Lucky Strike"] = Drink[Juice]"#);
-    p.clue("The Japanese smokes Parliament", "Nationality[Japanese] = Smoke[Parliament]");
-    p.clue("The Norwegian lives next to the blue house", "abs(Nationality[Norwegian] - Colour[Blue]) = 1");
+    p.clue("The Englishman lives in the red house", "Nationality[English].chosen = Colour[Red].chosen");
+    p.clue("The Spaniard owns the dog", "Nationality[Spanish].chosen = Pet[Dog].chosen");
+    p.clue("Coffee is drunk in the green house", "Drink[Coffee].chosen = Colour[Green].chosen");
+    p.clue("The Ukrainian drinks tea", "Nationality[Ukrainian].chosen = Drink[Tea].chosen");
+    p.clue("The green house is just right of the ivory house", "Colour[Green].chosen.value = Colour[Ivory].chosen.value + 1");
+    p.clue("The Old Gold smoker owns snails", r#"Smoke["Old Gold"].chosen = Pet[Snails].chosen"#);
+    p.clue("Kools are smoked in the yellow house", "Smoke[Kools].chosen = Colour[Yellow].chosen");
+    p.clue("Milk is drunk in the middle house", "Drink[Milk].chosen.value = 3");
+    p.clue("The Norwegian lives in the first house", "Nationality[Norwegian].chosen.value = 1");
+    p.clue("The Chesterfield smoker lives next to the man with the fox", "abs(Smoke[Chesterfield].chosen.value - Pet[Fox].chosen.value) = 1");
+    p.clue("Kools are smoked next to the house with the horse", "abs(Smoke[Kools].chosen.value - Pet[Horse].chosen.value) = 1");
+    p.clue("The Lucky Strike smoker drinks juice", r#"Smoke["Lucky Strike"].chosen = Drink[Juice].chosen"#);
+    p.clue("The Japanese smokes Parliament", "Nationality[Japanese].chosen = Smoke[Parliament].chosen");
+    p.clue("The Norwegian lives next to the blue house", "abs(Nationality[Norwegian].chosen.value - Colour[Blue].chosen.value) = 1");
     for (table, _) in tables {
-        p.rule(table, "Each in a different house", "distinct(rows)");
+        p.rule(table, "Each in a different house", "distinct(r in rows: r.chosen)");
     }
 }
 
@@ -417,9 +414,6 @@ fn case_file(b: &mut Build) {
     // Something nobody chose: it happened one way, and these are how far each was believed before the evidence.
     let who = "Who took it?";
     b.add(who, DECISION).add(who, UNCERTAIN);
-    for cell in ["arrives", "from_garden"] {
-        b.formula_on(who, cell, &format!("pick(o in in.alternative: o.{cell})"));
-    }
     let suspects: [(&str, f64, &str); 4] = [
         ("Tom", 3.0, "Rosalind's nephew. He owes money, and he knew where the key to the case was kept."),
         ("Mr Pryce", 3.0, "The neighbour. He collects watches, and offered to buy this one in May. She said no."),
@@ -433,9 +427,9 @@ fn case_file(b: &mut Build) {
 
     // What's in doubt, each a decision nobody made, whose options are the accounts.
     // The question's answer is which account is true. What follows from it is a cell named for what it is,
-    // which each account says and the question gives for whichever is true.
+    // which each account says, and which is read through the question for whichever is true.
     let account = |b: &mut Build, question: &str, cell: &str, options: &[(&str, Value, f64, &str)]| {
-        b.add(question, DECISION).add(question, UNCERTAIN).formula_on(question, cell, &format!("pick(o in in.alternative: o.{cell})"));
+        b.add(question, DECISION).add(question, UNCERTAIN);
         for (option, value, weight, said) in options {
             b.put(option, cell, value.clone()).note(option, said).option(option, question, Some(*weight));
         }
@@ -478,9 +472,9 @@ fn case_file(b: &mut Build) {
     );
 
     // When each could have been at the house, worked out from the accounts.
-    b.formula_on("Tom", "arrives", "pub.left_at + journey.minutes").label("Tom", "When did Tom leave the Red Lion?", "pub").label("Tom", "How did Tom get to the house?", "journey");
-    b.formula_on("Mr Pryce", "arrives", "trip.at_house_by").label("Mr Pryce", "How did Mr Pryce get home?", "trip");
-    b.put("Clara", "arrives", json!(0)).formula_on("Clara", "from_garden", "garden.went_out").label("Clara", "Did Clara go out into the garden?", "garden");
+    b.formula_on("Tom", "arrives", "pub.chosen.left_at + journey.chosen.minutes").label("Tom", "When did Tom leave the Red Lion?", "pub").label("Tom", "How did Tom get to the house?", "journey");
+    b.formula_on("Mr Pryce", "arrives", "trip.chosen.at_house_by").label("Mr Pryce", "How did Mr Pryce get home?", "trip");
+    b.put("Clara", "arrives", json!(0)).formula_on("Clara", "from_garden", "garden.chosen.went_out").label("Clara", "Did Clara go out into the garden?", "garden");
     b.put("Someone else", "arrives", json!(0));
     for name in ["Tom", "Mr Pryce", "Someone else"] {
         b.put(name, "from_garden", json!(true));
@@ -490,8 +484,8 @@ fn case_file(b: &mut Build) {
     let evidence = |b: &mut Build, name: &str, formula: &str, about: &str| {
         b.formula(name, formula).add(name, REQUIRES).note(name, about).label(name, who, "who");
     };
-    evidence(b, "Whoever took it was in the house by 10:00", "who.arrives <= 60", "The case was locked at 9:00 and empty at 10:15, and it would take a while to find the key, open it, and get away.");
-    evidence(b, "They came in from the garden", "who.from_garden", "Fresh mud on the study carpet, from the garden door to the case.");
+    evidence(b, "Whoever took it was in the house by 10:00", "who.chosen.arrives <= 60", "The case was locked at 9:00 and empty at 10:15, and it would take a while to find the key, open it, and get away.");
+    evidence(b, "They came in from the garden", "who.chosen.from_garden", "Fresh mud on the study carpet, from the garden door to the case.");
 }
 
 /// The `recollect.toml` for a sample.

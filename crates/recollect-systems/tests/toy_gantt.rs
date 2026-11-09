@@ -9,7 +9,8 @@ mod support;
 
 use recollect_graph::worlds::{Cond, Worldly};
 use recollect_graph::{Cell, CellType, Cx, Entity, Error, Registry, cell};
-use recollect_systems::plan::{self, ALTERNATIVE, Chosen, DECISION, Estimate, Need, TASK, UNKNOWN};
+use recollect_systems::formulas::Chosen;
+use recollect_systems::plan::{self, ALTERNATIVE, DECISION, Estimate, Need, TASK, UNKNOWN};
 use recollect_systems::schedule::{self, Finish as WorldFinish, Slack as WorldSlack, Start as WorldStart};
 use support::N;
 
@@ -213,7 +214,7 @@ fn slack_differs_between_worlds_too() {
 fn deciding_narrows_the_dates_to_one_value() {
     let mut g = calibration();
     let cad = g.id("cad");
-    g.set("calib", Chosen(cad));
+    g.set("calib", Chosen::on(cad));
     let end = g.get::<WorldFinish>("calib").unwrap().unwrap().0.0;
     assert_eq!(end.cases().len(), 1);
     assert_eq!(dated(&end, &g, "free"), Some(5.0), "whichever world you ask about");
@@ -264,7 +265,7 @@ fn memoisation_holds_across_worlds_too() {
 fn any_date_can_be_typed_over_and_comes_back_when_that_goes() {
     let mut g = calibration();
     let cad = g.id("cad");
-    g.set("calib", Chosen(cad));
+    g.set("calib", Chosen::on(cad));
     let end = |g: &N| *g.get::<WorldFinish>("calib").unwrap().unwrap().0.0.at(&BTreeMap::new());
     assert_eq!(end(&g), Some(5.0));
 

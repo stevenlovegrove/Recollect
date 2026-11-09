@@ -1,0 +1,7 @@
+id: 01a1c1e5-2b66-7258-863f-f6513afef7c9
+components:
+- value
+cells:
+  name: The top right box has each number once
+formulas:
+  value: distinct(Cell[A3].chosen, Cell[A4].chosen, Cell[B3].chosen, Cell[B4].chosen)

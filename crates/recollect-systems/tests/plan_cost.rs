@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use recollect_graph::{Entity, Graph, Log, Name, Op, Registry};
+use recollect_systems::formulas::Chosen;
 use recollect_systems::plan::{self, *};
 
 fn registry() -> Arc<Registry> {
@@ -65,7 +66,7 @@ fn one_task_shared_under_nested_decisions() {
         log.commit("t", "worst case", ops).unwrap();
         // Outer decisions first, as the kernel orders them, for a fair comparison.
         for (a, _, _, _) in &levels {
-            log.graph().get::<Choice>(*a).unwrap();
+            log.graph().get::<Chosen>(*a).unwrap();
         }
         let start = Instant::now();
         let need = log.graph().get::<Need>(shared).unwrap().unwrap().0;

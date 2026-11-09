@@ -1,8 +1,0 @@
-id: 01a1bff4-e98a-7511-803e-a724fd5ed367
-components:
-- decision
-- uncertain
-cells:
-  name: Did Clara go out into the garden?
-formulas:
-  went_out: 'pick(o in in.alternative: o.went_out)'

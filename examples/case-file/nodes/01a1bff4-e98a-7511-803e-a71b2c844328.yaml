@@ -1,8 +1,0 @@
-id: 01a1bff4-e98a-7511-803e-a71b2c844328
-components:
-- decision
-- uncertain
-cells:
-  name: When did Tom leave the Red Lion?
-formulas:
-  left_at: 'pick(o in in.alternative: o.left_at)'

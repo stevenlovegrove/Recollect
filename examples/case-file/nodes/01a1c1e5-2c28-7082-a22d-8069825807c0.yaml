@@ -1,0 +1,13 @@
+id: 01a1c1e5-2c28-7082-a22d-8069825807c0
+components:
+- notes
+cells:
+  body: The barman remembers calling time on Tom's tab at twenty to ten.
+  left_at: 40
+  name: At 9:40, as the barman says
+links:
+- to: 01a1c1e5-2c28-7082-a22d-80687f9b5e45
+  components:
+  - alternative
+  cells:
+    weight: 3.0

@@ -1,0 +1,7 @@
+id: 01a1c1e5-2c95-70ac-aa1f-c49e93238435
+components:
+- value
+cells:
+  name: Milk is drunk in the middle house
+formulas:
+  value: Drink[Milk].chosen.value = 3

@@ -1,0 +1,20 @@
+id: 01a1c1e5-2c28-7082-a22d-8065cebc36c7
+components:
+- notes
+cells:
+  body: The neighbour. He collects watches, and offered to buy this one in May. She said no.
+  from_garden: true
+  name: Mr Pryce
+formulas:
+  arrives: trip.chosen.at_house_by
+links:
+- to: 01a1c1e5-2c28-7082-a22d-80638f52a4d0
+  components:
+  - alternative
+  cells:
+    weight: 3.0
+- to: 01a1c1e5-2c28-7082-a22d-806e4c4483e6
+  components:
+  - label
+  cells:
+    called: trip

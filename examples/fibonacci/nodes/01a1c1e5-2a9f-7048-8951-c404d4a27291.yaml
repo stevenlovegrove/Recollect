@@ -1,0 +1,7 @@
+id: 01a1c1e5-2a9f-7048-8951-c404d4a27291
+components:
+- value
+cells:
+  name: The 80th
+formulas:
+  value: F[80].f

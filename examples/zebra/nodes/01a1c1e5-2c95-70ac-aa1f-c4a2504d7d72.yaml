@@ -1,0 +1,7 @@
+id: 01a1c1e5-2c95-70ac-aa1f-c4a2504d7d72
+components:
+- value
+cells:
+  name: The Lucky Strike smoker drinks juice
+formulas:
+  value: Smoke["Lucky Strike"].chosen = Drink[Juice].chosen

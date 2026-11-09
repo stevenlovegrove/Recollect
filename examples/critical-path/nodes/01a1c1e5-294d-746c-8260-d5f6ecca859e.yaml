@@ -1,0 +1,10 @@
+id: 01a1c1e5-294d-746c-8260-d5f6ecca859e
+components:
+- task
+cells:
+  estimate: 4.0
+  name: Frame the walls
+links:
+- to: 01a1c1e5-294d-746c-8260-d5f4298889b1
+  components:
+  - depends_on

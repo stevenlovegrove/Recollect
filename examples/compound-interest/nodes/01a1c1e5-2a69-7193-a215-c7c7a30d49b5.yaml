@@ -1,0 +1,11 @@
+id: 01a1c1e5-2a69-7193-a215-c7c7a30d49b5
+cells:
+  name: Year
+formulas:
+  balance: prev.balance * (1 + rate)
+links:
+- to: 01a1c1e5-2a69-7193-a215-c7c675694c07
+  components:
+  - label
+  cells:
+    called: rate

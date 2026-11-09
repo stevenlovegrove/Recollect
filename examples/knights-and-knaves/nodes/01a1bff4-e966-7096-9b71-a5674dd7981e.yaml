@@ -1,8 +1,0 @@
-id: 01a1bff4-e966-7096-9b71-a5674dd7981e
-components:
-- options
-cells:
-  name: A
-  options:
-  - knight
-  - knave

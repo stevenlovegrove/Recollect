@@ -1,0 +1,7 @@
+id: 01a1c1e5-2c95-70ac-aa1f-c49cca32d934
+components:
+- value
+cells:
+  name: The Old Gold smoker owns snails
+formulas:
+  value: Smoke["Old Gold"].chosen = Pet[Snails].chosen

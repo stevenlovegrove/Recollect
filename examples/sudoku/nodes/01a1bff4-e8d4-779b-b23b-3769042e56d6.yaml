@@ -1,7 +1,0 @@
-id: 01a1bff4-e8d4-779b-b23b-3769042e56d6
-components:
-- value
-cells:
-  name: Row A has each number once
-formulas:
-  value: distinct(Cell[A1], Cell[A2], Cell[A3], Cell[A4])

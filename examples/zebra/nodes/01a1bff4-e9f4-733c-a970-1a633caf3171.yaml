@@ -1,7 +1,0 @@
-id: 01a1bff4-e9f4-733c-a970-1a633caf3171
-components:
-- value
-cells:
-  name: The Japanese smokes Parliament
-formulas:
-  value: Nationality[Japanese] = Smoke[Parliament]

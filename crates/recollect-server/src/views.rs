@@ -251,6 +251,9 @@ pub struct View {
     pub nodes: Vec<NodeView>,
     /// Rows nobody wrote that a node here reads, so a map can show them: see `NodeView::unwritten`.
     pub unwritten: Vec<NodeView>,
+    /// Nodes nobody wrote that are only what they say, such as the options of a puzzle's choices, so
+    /// what lands on one can name it.
+    pub constants: Vec<NodeView>,
     pub edges: Vec<EdgeView>,
     pub components: Vec<ComponentDef>,
     pub cells: Vec<CellInfo>,
@@ -547,6 +550,8 @@ pub fn view(o: &Open, world: &World) -> View {
             n
         })
         .collect();
+    // These are made as choices are worked out, so only now are they all there.
+    let constants = g.constants().into_iter().map(|(e, _)| node(e, recollect_systems::label_of(g, e))).collect();
     let edges = g.edges().map(|(e, from, to)| EdgeView { id: e, from, to, components: g.given(e).into_iter().collect(), cells: cells(g, e, &picks, &playing, &labels, &mut vars) }).collect();
     let worlds = worlds(g, world, &picks, &labels, vars);
     let ran = g.take_ran().into_iter().filter(|(_, c)| !internal(g, c)).map(|(node, cell)| RanView { node, cell }).collect();
@@ -556,6 +561,7 @@ pub fn view(o: &Open, world: &World) -> View {
         latest: o.log.last_seq().and_then(|h| o.log.newest_after(h)),
         nodes,
         unwritten,
+        constants,
         edges,
         components: g.registry().components().cloned().collect(),
         cells: g.registry().cells().filter(|c| !c.internal).map(cell_info).collect(),

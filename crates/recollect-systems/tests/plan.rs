@@ -7,7 +7,7 @@ use std::sync::Arc;
 use recollect_graph::worlds::{Bool, Cond, Space, Worldly};
 use recollect_graph::{Cell, CellType, Cx, Dep, Entity, Error, Graph, Log, Name, On, Op, Registry, Stored, Target, Violation, cell};
 use recollect_systems::expr::Val;
-use recollect_systems::formulas::{Called, LABEL};
+use recollect_systems::formulas::{Called, Chosen, LABEL};
 use recollect_systems::notes;
 use recollect_systems::plan::{self, *};
 use recollect_systems::view::ViewGraph;
@@ -363,7 +363,7 @@ fn completion_knows_about_choices() {
     g.done("detector").done("search");
     assert_eq!(g.finished("board"), "always");
     assert_eq!(g.finished("calib"), "always", "complete whichever way it goes");
-    assert_eq!(g.g().get::<Chosen>(g.id("calib")).unwrap(), None);
+    assert_eq!(g.g().stored(g.id("calib"), Chosen::NAME), None, "it's open");
 }
 
 #[test]
@@ -680,7 +680,7 @@ fn shared_work_survives_any_path_that_still_wants_it() {
     assert_eq!(g.need("static"), "never");
     // Only board left: it's forced in every remaining world, though nobody has chosen it.
     assert!(g.need_of("detector").is_always());
-    assert_eq!(g.g().get::<Chosen>(g.id("calib")).unwrap(), None);
+    assert_eq!(g.g().stored(g.id("calib"), Chosen::NAME), None, "it's open");
     // And it all reverses.
     let (cad, calib) = (g.id("cad"), g.id("calib"));
     g.commit(vec![Op::Set { on: On::Edge { from: cad, to: calib }, cell: RuledOut::NAME.to_string(), to: None }]);
@@ -906,24 +906,33 @@ fn a_loop_from_a_hand_edit_is_reported_and_the_rest_still_works() {
     assert_eq!(v.nodes.len(), 3, "a view can still be drawn");
 }
 
-/// A commit can't do this, because `chosen_must_be_a_live_option` refuses it.
+/// A commit can't do this, because `chosen_must_be_a_live_option` refuses it. A hand edit can, and then
+/// the decision stays on what was written, and the check says it's wrong.
 #[test]
-fn a_hand_edit_choosing_a_ruled_out_option_lands_on_nothing() {
+fn a_hand_edit_choosing_a_ruled_out_option_stays_on_it_and_is_flagged() {
     let mut g = G::new();
     g.decision("d").node("a").option("a", "d").node("b").option("b", "d");
     g.task("work").part_of("work", "a").done("work").choose("d", "a");
     assert_eq!(g.finished("d"), "always");
 
     let (a, d) = (g.id("a"), g.id("d"));
+    let rule_out = Op::Set { on: On::Edge { from: a, to: d }, cell: RuledOut::NAME.to_string(), to: Some(Stored::Value(json!({}))) };
+    let Err(refused) = g.log.what_if(&[rule_out]) else { panic!("ruling out the option taken should be refused") };
+    assert_eq!(refused[0].rule, "chosen_must_be_a_live_option");
+
     let mut files = g.g().save();
     let link = files.nodes.iter_mut().find(|n| n.id == a).unwrap().links.iter_mut().find(|l| l.to == d).unwrap();
     link.cells.insert(RuledOut::NAME.to_string(), json!({}));
     let broken = g.log.reconcile(&files, "hand").unwrap();
     assert_eq!(broken[0].rule, "chosen_must_be_a_live_option");
 
+    // What's written is what's read: it still lands on a, rather than quietly on nothing.
+    assert_eq!(g.g().get::<Chosen>(d).unwrap().and_then(|c| c.settled()), Some(a));
     assert_eq!(g.need("a"), "never", "ruled out still means out");
     assert_eq!(g.need("work"), "never");
-    assert_eq!(g.open("d"), "always", "and its finished work doesn't complete the decision");
+    // So it completes through a's finished work. It used to land on nothing and stay open; now the
+    // check is what says it's wrong.
+    assert_eq!(g.finished("d"), "always");
 }
 
 /// What `done` says is written by hand here, so it's the value that's malformed now, where it was

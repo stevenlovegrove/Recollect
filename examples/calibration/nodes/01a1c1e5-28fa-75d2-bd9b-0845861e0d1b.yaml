@@ -1,0 +1,7 @@
+id: 01a1c1e5-28fa-75d2-bd9b-0845861e0d1b
+cells:
+  name: Free-form search
+links:
+- to: 01a1c1e5-28fa-75d2-bd9b-084383809f6b
+  components:
+  - alternative
