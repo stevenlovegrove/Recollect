@@ -1024,7 +1024,7 @@ fn field_of(c: &Cond<Val>, fields: &[String]) -> Cond<Val> {
     c.map(|v| fields.iter().fold(v.clone(), |v, f| v.field(f)))
 }
 
-/// A cell of any shape, as compiled rules write them: a `Bool`, cases, or something plain.
+/// A cell of any shape, as built-in cells write them: a `Bool`, cases, or something plain.
 fn from_json(v: Value) -> Result<Ev, String> {
     let is_bool = v.as_object().is_some_and(|o| o.contains_key("vars") && o.contains_key("nodes") && o.contains_key("root"));
     if is_bool {

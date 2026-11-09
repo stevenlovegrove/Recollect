@@ -115,7 +115,7 @@ export function TableCell({ ws, node, c, cell, written, readOnly }: { ws: ViewPr
   if (!cell) return null;
   const nameOf = (s: string) => ws.byId.get(s)?.name ?? s;
   const r = reading(cell);
-  // What can hold a formula is typed into, as in a spreadsheet, unless it comes from a rule of the column's.
+  // What can hold a formula is typed into, as in a spreadsheet, unless it's worked out and can't be.
   if (!readOnly && holdsFormula(ws, c) && (cell.source === "own" || cell.formula !== undefined)) {
     const words = r && truthWords(c, r);
     const shown = written && cell.formula !== undefined ? `=${cell.formula}` : cell.error ? "#ERROR" : !words ? cellText(cell, nameOf) : "fixed" in words ? words.fixed : `${words.lead} ${r!.when}`;

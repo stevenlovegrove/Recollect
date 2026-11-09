@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use serde::{Deserialize, Serialize};
 
 /// A value in one world. Undefined is `null`, the same as `None` in a `Cond<Option<T>>`, so what a
-/// formula gives and what a compiled rule gives read the same.
+/// formula gives and what a built-in cell gives read the same.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Val {

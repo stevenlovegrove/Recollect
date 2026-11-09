@@ -6,11 +6,15 @@ import { NodeChip } from "../bits";
 const HELP: Record<string, string> = {
   no_deadlock: "Work that can never finish, because it waits on itself.",
   chosen_must_be_a_live_option: "A decision that landed on something that's no longer an option.",
-  one_decomposition_per_link: "A link that's both part of something and an option of it.",
+  one_decomposition_per_link: "An edge that's both part of something and an option of it.",
   unknown_has_no_parts: "A gap that has parts: give them a real node instead.",
   unknown_cannot_be_done: "A gap marked done: remove it to close it.",
   unknown_cannot_be_chosen: "A decision that chose a gap: name the option instead.",
-  link_target_lacks_component: "An option of something that isn't a decision.",
+  unknown_component: "Something given a component no system here provides.",
+  component_on_wrong_target: "A node given what goes on an edge, or an edge given what goes on a node.",
+  cell_without_component: "A cell written on something without the component it belongs to.",
+  malformed_cell: "A cell holding something of the wrong shape.",
+  formula_cannot_be_read: "A formula that can't be read.",
   blocking_decision: "Safe work has run out: decide, or find work the options share.",
   decision_without_options: "An open decision with nothing left to choose from.",
   one_option_left: "A decision that isn't really one any more.",
@@ -21,7 +25,7 @@ const HELP: Record<string, string> = {
   oversized_task: "Big tasks with no breakdown.",
 };
 
-/** What the rules have to say. Anything broken got there by a hand edit, because a commit would refuse it. */
+/** What the checks have to say. Anything broken got there by a hand edit, because a commit would refuse it. */
 export function ChecksView({ ws, onSelect }: ViewProps) {
   const groups = useMemo(() => {
     const m = new Map<string, Check[]>();
@@ -33,7 +37,7 @@ export function ChecksView({ ws, onSelect }: ViewProps) {
     <div className="scroll pad">
       <div className="map-toolbar flat">
         <span className="muted">
-          Rules worked out from the graph. Ask Claude to run <code>find_checks</code> and look beyond them.
+          Checks worked out from the graph. Ask Claude to run <code>find_checks</code> and look beyond them.
         </span>
       </div>
       {groups.length === 0 && <p className="muted">Nothing to report.</p>}

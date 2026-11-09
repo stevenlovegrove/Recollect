@@ -53,7 +53,7 @@ pub fn router(app: Arc<App>) -> Router {
         .with_state(app)
 }
 
-/// Rules can take a while on a big graph, so they don't run on the threads serving requests.
+/// Working cells out can take a while on a big graph, so they don't run on the threads serving requests.
 async fn blocking<T: Send + 'static>(app: Arc<App>, f: impl FnOnce(&App) -> Result<T, AppError> + Send + 'static) -> Result<T, AppError> {
     tokio::task::spawn_blocking(move || f(&app)).await.map_err(|e| AppError::Other(e.into()))?
 }

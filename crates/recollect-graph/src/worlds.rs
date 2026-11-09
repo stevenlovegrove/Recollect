@@ -1,5 +1,5 @@
 //! Worlds, as ordinary value types. The core doesn't know about any of this: `Bool` and
-//! `Cond<T>` are just values a rule can return.
+//! `Cond<T>` are just values a cell can hold.
 //!
 //! A variable is one open choice. A world assigns each variable one option. `Bool` is the exact
 //! set of worlds where something holds, as a reduced, hash-consed multi-valued decision diagram,

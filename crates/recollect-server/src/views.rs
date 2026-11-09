@@ -1,6 +1,6 @@
 //! What a graph looks like from outside, shared by the web UI and Claude. All of it takes a world:
 //! some open choices pinned to an option each. Every value then reads as it does among the worlds
-//! consistent with those picks, worked out here by the same rules, so a what-if and the real thing
+//! consistent with those picks, worked out here by the same code, so a what-if and the real thing
 //! can't disagree.
 
 use std::collections::{BTreeMap, HashMap};

@@ -255,7 +255,7 @@ impl RecollectMcp {
         })
     }
 
-    #[tool(description = "What the checks report: rules that are broken, and notices worth a look. Use as a starting point, and look beyond them.")]
+    #[tool(description = "What the checks report: invariants that are broken, and notices worth a look. Use as a starting point, and look beyond them.")]
     async fn find_checks(&self) -> Result<String, String> {
         self.read(|o| Ok(views::view(o, &World::new()).checks))
     }
@@ -270,7 +270,7 @@ impl RecollectMcp {
         })
     }
 
-    #[tool(description = "Submit a change-set for the user to review in the inbox. It's checked now as if committed, and refused if it wouldn't apply or would break a rule. Returns the proposal's id.")]
+    #[tool(description = "Submit a change-set for the user to review in the inbox. It's checked now as if committed, and refused if it wouldn't apply or would break an invariant. Returns the proposal's id.")]
     async fn propose(&self, Parameters(p): Parameters<ProposeParams>) -> Result<String, String> {
         let prop = self.app.propose(p.title, p.rationale, p.ops, "claude").map_err(|e| e.to_string())?;
         Ok(format!("Proposal `{}` queued with {} op(s). The user will review it in the Recollect inbox.", prop.id, prop.ops.len()))

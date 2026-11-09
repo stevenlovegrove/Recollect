@@ -129,7 +129,7 @@ export interface OptionView {
   gap: boolean;
   possible: boolean;
   picked: boolean;
-  /** How likely it is now, given what's pinned and what rules worlds out. */
+  /** How strongly it's believed now, given what's pinned and what rules worlds out. */
   chance: number;
 }
 
