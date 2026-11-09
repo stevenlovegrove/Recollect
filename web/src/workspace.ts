@@ -179,6 +179,10 @@ export function useWorkspace(): Workspace {
 }
 
 /** Links touching a node, in each direction. */
-export function linksOf(view: View, id: string): { outgoing: Link[]; incoming: Link[] } {
-  return { outgoing: view.links.filter((l) => l.from === id), incoming: view.links.filter((l) => l.to === id) };
+/**
+ * A node's links, the way the map's arrows point: a name a formula uses points into the node whose formula
+ * reads it, though it's written the other way, from the reader.
+ */
+export function linksOf(view: View, id: string, ends: (l: Link) => { parent: string; child: string }): { outgoing: Link[]; incoming: Link[] } {
+  return { outgoing: view.links.filter((l) => ends(l).child === id), incoming: view.links.filter((l) => ends(l).parent === id) };
 }

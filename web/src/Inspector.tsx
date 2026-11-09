@@ -183,7 +183,7 @@ export function Inspector({
   const name = useDraft(text("name"), (v) => v.trim() && run([{ op: "set", id, component: "name", value: v.trim() }]));
   const notes = useDraft(text("body"), (v) => run(v.trim() ? [{ op: "set", id, component: "body", value: v.trimEnd() }] : [{ op: "set", id, component: "body" }]));
 
-  const { outgoing, incoming } = linksOf(view, id);
+  const { outgoing, incoming } = linksOf(view, id, ws.ends);
   const facts = factsOf(node);
   // Where a cell shows goes by what it is, not by who last said it, so typing over one doesn't move it.
   const typedOver = (c: string) => !!ws.info(c)?.derived && holdsFormula(ws, c);
@@ -291,8 +291,8 @@ export function Inspector({
         </section>
       )}
 
-      <LinkList title="Goes to" links={outgoing} side="to" ws={ws} onSelect={onSelect} run={run} />
-      <LinkList title="Comes from" links={incoming} side="from" ws={ws} onSelect={onSelect} run={run} />
+      <LinkList title="Goes to" id={id} links={outgoing} ws={ws} onSelect={onSelect} run={run} />
+      <LinkList title="Comes from" id={id} links={incoming} ws={ws} onSelect={onSelect} run={run} />
 
       {(
         <div className="row">
@@ -834,9 +834,10 @@ export function linkValueText(value: unknown): string {
  * A node's links, by kind. What each holds, such as an option's weight, shows beside it, and clicking that
  * edits it, so it reads the same from either end.
  */
-function LinkList({ title, links, side, ws, onSelect, run }: { title: string; links: Link[]; side: "from" | "to"; ws: Workspace; onSelect: (id: string) => void; run: (ops: Op[], why?: string) => Promise<boolean> }) {
+function LinkList({ title, id, links, ws, onSelect, run }: { title: string; id: string; links: Link[]; ws: Workspace; onSelect: (id: string) => void; run: (ops: Op[], why?: string) => Promise<boolean> }) {
   const [editing, setEditing] = useState<string | null>(null);
   if (!links.length) return null;
+  const other = (l: Link) => (l.from === id ? l.to : l.from);
   const byKind = new Map<string, Link[]>();
   for (const l of links) byKind.set(l.kind, [...(byKind.get(l.kind) ?? []), l]);
   return (
@@ -855,7 +856,7 @@ function LinkList({ title, links, side, ws, onSelect, run }: { title: string; li
                 <div key={key} className="link-row">
                   <span className="edge-chip">
                     {kind === "label" && <code className="small">{String(l.value)}</code>}
-                    <NodeChip ws={ws} id={l[side]} onSelect={onSelect} />
+                    <NodeChip ws={ws} id={other(l)} onSelect={onSelect} />
                     {holds && (
                       <button className={`link-holds ${editing === key ? "on" : ""}`} title="What this link holds. Click to change it." onClick={() => setEditing(editing === key ? null : key)}>
                         {holds}
