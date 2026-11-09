@@ -84,12 +84,13 @@ A formula that goes over edges keeps binding the node at the other end. `o in in
 
 What each system's components become, roughly. The cell names are today's where there's one.
 
-**Base** (on every node, from no system): `name`, `body`.
+**Named** is on every node, and can't be removed: `name`. A kind can give its instances a default name, as it gives any cell.
 
 **Notes**
 
 | Component | On | Cells | Requires |
 |---|---|---|---|
+| Notes | node | `body`, in markdown | |
 | Sources | node | `sources` | |
 | Drawing | node | `drawing` | |
 | serves, supports, contradicts, constrains, supersedes, relates | edge | none | |
@@ -129,7 +130,8 @@ A few things follow from these tables:
 - **Belief and prior belief become cells.** The server stops working them out on the side, and `web/src/summary.ts` stops special-casing them. They're Option's cells, flagged for cards, like any other.
 - **Requires stops showing a second "Value" badge.** Value is brought by Requires, so its card sits under Requires'.
 - **Needed is on what's part of something,** brought by `part_of` and `alternative` edges, and on work and decisions. A plain note on its own, a suspect with nothing beneath it, or a piece of evidence has none. Needed still flows down through a plain note that's part of something, because that note has Part.
-- **Where a weight lives can still be decided separately.** It's on `alternative` above, as today, but now as a proper cell. Moving it to Option is a one-line change to these tables.
+- **A weight lives on its `alternative` edge,** as today, but now as a proper cell. It's about how far the option is believed as an answer to that decision, so it belongs to the relationship, not the option.
+- **Notes are a component like any other.** A node has them when someone adds them from ＋, so one that's never had any shows no empty notes box.
 
 ## What the app shows
 
@@ -138,7 +140,7 @@ A few things follow from these tables:
 - **Collapsing.** A card can be collapsed. Which cards are collapsed is remembered per component, not per node.
 - **Its cells.** A card lists its component's cells, each showing what it comes to and where that came from: the component's default, a kind, or typed here. Any cell can be typed over, and clearing it goes back to where it came from.
 - **What it brings.** A brought component shows under what brought it.
-- **The rest.** Name and notes stay at the top. A node's own cells that no kind gives go in a card of their own. The "What it is" and "Worked out" sections go.
+- **The rest.** The name stays at the top. Notes are a card like any other, added from ＋. A node's own cells that no kind gives go in a card of their own. The "What it is" and "Worked out" sections go.
 
 **A card on the map** shows the components as badges, as now, and the cells their components flag for cards. Clicking a badge opens the inspector with that card in view.
 
@@ -161,6 +163,7 @@ Ops become:
 Old logs are upgraded as they're read, and never rewritten:
 
 - **A marker component** set on a node, such as `task` or `uncertain`, becomes `add`.
+- **A body** becomes `add notes` and `set body`. An empty one is dropped.
 - **A component that held a struct** becomes `add` plus `set`s of its cells. Decision `{chosen}` becomes `add decision` and `set chosen`.
 - **`Stored::Rule { rule: "expr@1", params: { text } }`** becomes a formula. No other rule appears in any saved log. Anything else is reported, not guessed at.
 - **A link with a value** becomes `link` plus `set`s of the edge's cells. `{weight: 3}` becomes `set weight 3` on the edge.
@@ -188,9 +191,12 @@ Each stage leaves the app working, with every test passing.
 
 Stages 1 and 2 can go either way round. Stage 4's log changes would be easiest done with stage 2, since that's when the shape of what's stored changes.
 
+## Decided
+
+- **An option's weight lives on its `alternative` edge.**
+- **Every node has a name,** through Named. Notes are a component added from ＋.
+- **A kind can't withhold one of its components from an instance.** An instance has all of its kind's components. Something that's mostly like a kind but lacks one of its components is a different kind, perhaps with the shared part as a kind of its own above both.
+
 ## Still to decide
 
-- **Where an option's weight lives:** on the `alternative` edge, as above, or on Option.
 - **What a brought component's card is called** when what brought it is an edge. For example, Option is brought by an `alternative` edge to "Who took it?".
-- **Whether `name` and `body` are a component** that every node has, so that a kind could give a default name, or stay outside the model.
-- **Whether a kind can say a component is not there,** so that an instance takes most of a kind's components but not one of them. Nothing needs it yet.
