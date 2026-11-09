@@ -1203,10 +1203,7 @@ fn type_of_value(cx: &Cx) -> Cell<ValueType> {
             }
             Some(ValueType(t))
         }
-        Some(Backed::Builtin) => match cx.own::<Options>()? {
-            Some(Options(options)) => Some(ValueType(if numeric(&options) { Type::Number } else { Type::Enum(options) })),
-            None => None,
-        },
+        Some(Backed::Builtin) => cx.own::<Options>()?.map(|Options(options)| ValueType(if numeric(&options) { Type::Number } else { Type::Enum(options) })),
         Some(Backed::Formula(text)) => {
             let e = expr::parse(&text).map_err(Error::Failed)?;
             let closed = Expander::new(cx)?.expand_all(&e).map_err(|err| in_text(err, &text))?;

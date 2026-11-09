@@ -18,7 +18,6 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -31,7 +30,7 @@ use crate::table::{self, Row};
 /// A node or an edge. An opaque handle with no meaning of its own: a name is just a cell. A node's is
 /// time-ordered, so nodes sort in creation order, and files created on two machines never collide. An
 /// edge's is worked out from its ends, so it's the same whenever those two are linked.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Entity(Uuid);
 
 /// Two hashes of some text make up the 128 bits, so a handle worked out this way can't be mistaken for
@@ -827,7 +826,7 @@ impl Graph {
             return Some((b.clone(), e));
         }
         if self.registry.cell_inheritable(cell)
-            && let Some(found) = self.from_kind(e, cell)
+            && let Some(found) = self.taken_from_kind(e, cell)
         {
             return Some(found);
         }
@@ -835,7 +834,7 @@ impl Graph {
     }
 
     /// The nearest of its kinds that says what this cell is: see `lookup`.
-    fn from_kind(&self, e: Entity, cell: &str) -> Option<(Backing, Entity)> {
+    fn taken_from_kind(&self, e: Entity, cell: &str) -> Option<(Backing, Entity)> {
         self.lookup(e).into_iter().find_map(|k| self.cells.get(&k).and_then(|c| c.get(cell)).map(|b| (b.clone(), k)))
     }
 
@@ -894,7 +893,7 @@ impl Graph {
 
     /// The kind that says what this cell is, whether or not the entity says otherwise.
     pub fn kind_beneath(&self, e: Entity, cell: &str) -> Option<Entity> {
-        self.registry.cell_inheritable(cell).then(|| self.from_kind(e, cell).map(|(_, k)| k)).flatten()
+        self.registry.cell_inheritable(cell).then(|| self.taken_from_kind(e, cell).map(|(_, k)| k)).flatten()
     }
 
     /// The typed way to read a cell.
@@ -1080,9 +1079,8 @@ impl Graph {
             return None;
         }
         let e = Entity::implicit(table, *n);
-        let mut implicit = lock(&self.implicit);
-        if !implicit.contains_key(&e) {
-            implicit.insert(e, Row { table: table.to_string(), key: key.clone() });
+        if let std::collections::hash_map::Entry::Vacant(slot) = lock(&self.implicit).entry(e) {
+            slot.insert(Row { table: table.to_string(), key: key.clone() });
             lock(&self.components).remove(&e);
         }
         Some(e)
