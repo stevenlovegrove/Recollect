@@ -818,7 +818,24 @@ function TickRow({ ws, id, c, cell, info, onSelect }: { ws: Workspace; id: strin
   );
 }
 
+/** What a link holds, in a few words, or nothing if it holds nothing. */
+export function linkValueText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== null && v !== undefined)
+      .map(([k, v]) => `${label(k).toLowerCase()} ${typeof v === "string" ? v : JSON.stringify(v)}`)
+      .join(" · ");
+  }
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+/**
+ * A node's links, by kind. What each holds, such as an option's weight, shows beside it, and clicking that
+ * edits it, so it reads the same from either end.
+ */
 function LinkList({ title, links, side, ws, onSelect, run }: { title: string; links: Link[]; side: "from" | "to"; ws: Workspace; onSelect: (id: string) => void; run: (ops: Op[], why?: string) => Promise<boolean> }) {
+  const [editing, setEditing] = useState<string | null>(null);
   if (!links.length) return null;
   const byKind = new Map<string, Link[]>();
   for (const l of links) byKind.set(l.kind, [...(byKind.get(l.kind) ?? []), l]);
@@ -830,18 +847,32 @@ function LinkList({ title, links, side, ws, onSelect, run }: { title: string; li
           <div className="rel" title={ws.info(kind)?.about}>
             {label(kind)}
           </div>
-          <div className="chips">
-            {ls.map((l) => (
-              <span key={l[side]} className="edge-chip">
-                {kind === "label" && <code className="small">{String(l.value)}</code>}
-                <NodeChip ws={ws} id={l[side]} onSelect={onSelect} />
-                {(
-                  <button className="icon small" title="Remove this link" onClick={() => run([{ op: "link", from: l.from, to: l.to, kind: l.kind }])}>
-                    ×
-                  </button>
-                )}
-              </span>
-            ))}
+          <div className="link-rows">
+            {ls.map((l) => {
+              const key = `${l.from}|${l.kind}|${l.to}`;
+              const holds = kind === "label" ? "" : linkValueText(l.value);
+              return (
+                <div key={key} className="link-row">
+                  <span className="edge-chip">
+                    {kind === "label" && <code className="small">{String(l.value)}</code>}
+                    <NodeChip ws={ws} id={l[side]} onSelect={onSelect} />
+                    {holds && (
+                      <button className={`link-holds ${editing === key ? "on" : ""}`} title="What this link holds. Click to change it." onClick={() => setEditing(editing === key ? null : key)}>
+                        {holds}
+                      </button>
+                    )}
+                    <button className="icon small" title="Remove this link" onClick={() => run([{ op: "link", from: l.from, to: l.to, kind: l.kind }])}>
+                      ×
+                    </button>
+                  </span>
+                  {editing === key && (
+                    <div className="link-holds-edit">
+                      <ValueEditor key={JSON.stringify(l.value)} value={l.value} onCommit={(value) => run([{ op: "link", from: l.from, to: l.to, kind: l.kind, value }])} />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       ))}

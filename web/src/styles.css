@@ -483,6 +483,34 @@ pre {
   display: inline-flex;
   align-items: center;
 }
+/* A node's links: chips that wrap, with what each holds beside it, and its editor on a line of its own. */
+.link-rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.link-row {
+  display: contents;
+}
+.link-holds {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  padding: 0 4px;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+.link-holds:hover,
+.link-holds.on {
+  color: var(--text);
+}
+.link-holds-edit {
+  flex-basis: 100%;
+  margin: 2px 0 6px;
+}
 .chip {
   display: inline-flex;
   align-items: center;
