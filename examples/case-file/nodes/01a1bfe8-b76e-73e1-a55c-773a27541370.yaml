@@ -1,0 +1,9 @@
+id: 01a1bfe8-b76e-73e1-a55c-773a27541370
+components:
+- decision
+- uncertain
+cells:
+  name: Who took it?
+formulas:
+  arrives: 'pick(o in in.alternative: o.arrives)'
+  from_garden: 'pick(o in in.alternative: o.from_garden)'

@@ -1,0 +1,13 @@
+id: 01a1bfe8-b445-7671-bc39-c24f7913bd33
+components:
+- task
+cells:
+  estimate: 3.0
+  name: Export extrinsics from CAD
+links:
+- to: 01a1bfe8-b445-7671-bc39-c2490db4c2fe
+  components:
+  - part_of
+- to: 01a1bfe8-b445-7671-bc39-c24eceb5df82
+  components:
+  - depends_on

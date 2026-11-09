@@ -1,0 +1,9 @@
+id: 01a1bfe8-b445-7671-bc39-c252cb4d579b
+components:
+- risk
+cells:
+  name: Diverges on weak geometry
+links:
+- to: 01a1bfe8-b445-7671-bc39-c250b10c5db7
+  components:
+  - contradicts

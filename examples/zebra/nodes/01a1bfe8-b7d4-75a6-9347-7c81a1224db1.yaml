@@ -1,0 +1,104 @@
+id: 01a1bfe8-b7d4-75a6-9347-7c81a1224db1
+components:
+- requires
+- value
+cells:
+  name: The street
+formulas:
+  value: all(constraint)
+links:
+- to: 01a1bfe8-b7d4-75a6-9347-7c82cb9daddf
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7c88a7b31149
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7c8ee5c63e1a
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7c94097727bd
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7c9aa20de9bb
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7ca0feb102e4
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7ca11ba4111e
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7ca2feeed6c8
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7ca37a5d4bd8
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7ca4c3dea1c6
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7ca5c9dc0bbf
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7ca6a6f11a95
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7ca7fb1c4037
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7ca8a248258c
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7ca955aeff84
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7caa4506281e
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7cab4a836e24
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7cac1b7675e7
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bfe8-b7d4-75a6-9347-7cad2193716f
+  components:
+  - label
+  cells:
+    called: constraint

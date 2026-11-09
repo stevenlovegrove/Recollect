@@ -1,9 +1,0 @@
-id: 01a19940-12ef-7089-b84f-9a75d91ebfb6
-components:
-  estimate: 4.0
-  name: Board detector
-  task: {}
-links:
-- to: 01a19940-12ef-7089-b84f-9a6f735203d0
-  components:
-    part_of: null

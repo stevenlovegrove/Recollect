@@ -9,36 +9,38 @@
 //! cell couldn't do.
 
 use recollect_graph::worlds::{Cond, Space, Worldly};
-use recollect_graph::{Compute, Component, Cx, Error, Registry, component};
+use recollect_graph::{Cx, Error, Registry, Shown, cell};
 use serde::{Deserialize, Serialize};
 
-use crate::expr::{Type, Val};
-use crate::formulas::{defaults_to, number_cases};
-use crate::plan::Need;
-use crate::{Catalog, Shown};
+use crate::expr::Type;
+use crate::formulas::{compiler, number_cases};
+use crate::plan::{Need, PART};
+
+/// The graph as a whole, as a plan: when it ends.
+pub const SCHEDULE: &str = "schedule";
 
 /// When it starts, per world. `None` where a gap makes that unknowable.
-#[component]
+#[cell]
 pub struct Start(pub Worldly<Option<f64>>);
 
 /// When it finishes, per world. Where it isn't needed it finishes at 0, so waiting on it costs nothing.
-#[component]
+#[cell]
 pub struct Finish(pub Worldly<Option<f64>>);
 
 /// How late it could start without moving the end of the plan.
-#[component]
+#[cell]
 pub struct LatestStart(pub Worldly<Option<f64>>);
 
 /// How late it could finish without moving the end of the plan.
-#[component]
+#[cell]
 pub struct LatestFinish(pub Worldly<Option<f64>>);
 
 /// How far it could slip without moving the end of the plan. `None` where it isn't needed.
-#[component]
+#[cell]
 pub struct Slack(pub Worldly<Option<f64>>);
 
 /// When the last task finishes, for the graph as a whole.
-#[component]
+#[cell]
 pub struct PlanEnd(pub Worldly<Option<f64>>);
 
 /// When something happens, in one world.
@@ -51,7 +53,7 @@ pub struct Span {
 
 /// When it happens, in the worlds that need it, and `None` in those that don't: what to draw, where
 /// `Finish` is what to wait for.
-#[component]
+#[cell]
 pub struct Dates(pub Cond<Option<Span>>);
 
 /// After what it depends on, and no earlier than whatever it's in play through.
@@ -73,37 +75,18 @@ const LATEST_START: &str = "if(is_leaf(), self.latest_finish - days(), min(p in 
 
 const SLACK: &str = "if(self.need, self.latest_finish - self.finish, undefined)";
 
-#[recollect_graph::rule("schedule/dates")]
-pub struct DatesRule;
-
-impl Compute for DatesRule {
-    type Output = Dates;
-    fn compute(&self, cx: &Cx) -> Result<Dates, Error> {
-        let span = cx.own_value::<Start>()?.0.0.zip(&cx.own_value::<Finish>()?.0.0, |s, f| (*s, *f)).zip(&cx.own_value::<Slack>()?.0.0, |(start, finish), slack| Some(Span { start: *start, finish: *finish, slack: *slack }));
-        Ok(Dates(Cond::when(&cx.own_value::<Need>()?.0, &span, &Space::global().pure(None))))
-    }
-}
-
-fn number<C: Component>(reg: &mut Registry, wrap: fn(Cond<Val>) -> Result<C, Error>, text: &str) {
-    defaults_to::<C>(reg, Type::Number, wrap, text);
+fn dates(cx: &Cx) -> Result<Option<Dates>, Error> {
+    let span = cx.own_value::<Start>()?.0.0.zip(&cx.own_value::<Finish>()?.0.0, |s, f| (*s, *f)).zip(&cx.own_value::<Slack>()?.0.0, |(start, finish), slack| Some(Span { start: *start, finish: *finish, slack: *slack }));
+    Ok(Some(Dates(Cond::when(&cx.own_value::<Need>()?.0, &span, &Space::global().pure(None)))))
 }
 
 pub fn install(reg: &mut Registry) {
-    number::<Start>(reg, |c| number_cases(c, "a start").map(Start), START);
-    number::<Finish>(reg, |c| number_cases(c, "a finish").map(Finish), FINISH);
-    number::<PlanEnd>(reg, |c| number_cases(c, "the end of a plan").map(PlanEnd), PLAN_END);
-    number::<LatestFinish>(reg, |c| number_cases(c, "a latest finish").map(LatestFinish), LATEST_FINISH);
-    number::<LatestStart>(reg, |c| number_cases(c, "a latest start").map(LatestStart), LATEST_START);
-    number::<Slack>(reg, |c| number_cases(c, "slack").map(Slack), SLACK);
-    reg.set_default(DatesRule);
-}
-
-pub fn describe(c: &mut Catalog) {
-    c.worldly::<Start>("When it starts, in each world.", |s| Shown::cond(&s.0.0));
-    c.worldly::<Finish>("When it finishes, in each world.", |f| Shown::cond(&f.0.0));
-    c.worldly::<Slack>("How far it could slip without moving the end of the plan.", |s| Shown::cond(&s.0.0));
-    c.worldly::<Dates>("When it happens, in the worlds that need it.", |d| Shown::cond(&d.0)).quiet = true;
-    c.internal::<LatestStart>();
-    c.internal::<LatestFinish>();
-    c.internal::<PlanEnd>();
+    reg.whole(SCHEDULE, "When the plan as a whole ends.");
+    reg.cell::<Start>(PART, "When it starts, in each world.").compiles(compiler::<Start>(Type::Number, |c| number_cases(c, "a start").map(Start))).default_formula(START).shown(|s| Shown::cond(&s.0.0));
+    reg.cell::<Finish>(PART, "When it finishes, in each world.").compiles(compiler::<Finish>(Type::Number, |c| number_cases(c, "a finish").map(Finish))).default_formula(FINISH).shown(|f| Shown::cond(&f.0.0));
+    reg.cell::<PlanEnd>(SCHEDULE, "When the last task finishes.").compiles(compiler::<PlanEnd>(Type::Number, |c| number_cases(c, "the end of a plan").map(PlanEnd))).default_formula(PLAN_END).internal();
+    reg.cell::<LatestFinish>(PART, "How late it could finish without moving the end of the plan.").compiles(compiler::<LatestFinish>(Type::Number, |c| number_cases(c, "a latest finish").map(LatestFinish))).default_formula(LATEST_FINISH).internal();
+    reg.cell::<LatestStart>(PART, "How late it could start without moving the end of the plan.").compiles(compiler::<LatestStart>(Type::Number, |c| number_cases(c, "a latest start").map(LatestStart))).default_formula(LATEST_START).internal();
+    reg.cell::<Slack>(PART, "How far it could slip without moving the end of the plan.").compiles(compiler::<Slack>(Type::Number, |c| number_cases(c, "slack").map(Slack))).default_formula(SLACK).shown(|s| Shown::cond(&s.0.0));
+    reg.cell::<Dates>(PART, "When it happens, in the worlds that need it.").builtin(dates).shown(|d| Shown::cond(&d.0)).quiet();
 }

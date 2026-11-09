@@ -9,7 +9,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow, bail};
 use notify::{RecursiveMode, Watcher};
 use recollect_graph::{CommitError, Log, Op, OpenError, Stored};
-use recollect_systems::formulas::EXPR;
 use recollect_systems::samples::{FORMAT, SAMPLES, Sample};
 use recollect_systems::{Built, build};
 use serde::{Deserialize, Serialize};
@@ -140,9 +139,8 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
 fn formulas_work(o: &Open, ops: &[Op]) -> Result<(), AppError> {
     let g = o.log.what_if(ops).map_err(|v| AppError::Refused(v.iter().map(|v| format!("{}: {}", v.rule, v.detail)).collect::<Vec<_>>().join("; ")))?;
     for op in ops {
-        if let Op::Set { id, component, to: Some(Stored::Rule(r)) } = op
-            && r.rule == EXPR
-            && let Err(e) = g.get_runtime(*id, component)
+        if let Op::Set { on, cell, to: Some(Stored::Formula(_)) } = op
+            && let Err(e) = g.get_value(on.entity(), cell)
         {
             return Err(AppError::Refused(crate::views::error_text(&e, &g)));
         }

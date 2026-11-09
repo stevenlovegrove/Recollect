@@ -1,0 +1,5 @@
+id: 01a1bfe8-b5fb-7778-b67e-94577f2bfb85
+cells:
+  name: F
+formulas:
+  f: prev.f + prev.prev.f

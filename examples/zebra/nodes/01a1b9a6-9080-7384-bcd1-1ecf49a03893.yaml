@@ -1,8 +1,0 @@
-id: 01a1b9a6-9080-7384-bcd1-1ecf49a03893
-components:
-  name: The Ukrainian drinks tea
-rules:
-  value:
-    rule: expr@1
-    params:
-      text: Nationality[Ukrainian] = Drink[Tea]

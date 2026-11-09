@@ -1,0 +1,18 @@
+id: 01a1bfe8-b4e4-71c2-900a-b2ce6f4a3dc5
+components:
+- value
+cells:
+  name: Total
+formulas:
+  value: subtotal + tax
+links:
+- to: 01a1bfe8-b4e4-71c2-900a-b2c817a10614
+  components:
+  - label
+  cells:
+    called: subtotal
+- to: 01a1bfe8-b4e4-71c2-900a-b2cd1baf1351
+  components:
+  - label
+  cells:
+    called: tax

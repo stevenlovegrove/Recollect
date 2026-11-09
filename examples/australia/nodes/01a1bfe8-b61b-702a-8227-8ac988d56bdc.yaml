@@ -1,0 +1,18 @@
+id: 01a1bfe8-b61b-702a-8227-8ac988d56bdc
+components:
+- value
+cells:
+  name: New South Wales ≠ Victoria
+formulas:
+  value: a != b
+links:
+- to: 01a1bfe8-b61b-702a-8227-8abd235c2fb6
+  components:
+  - label
+  cells:
+    called: a
+- to: 01a1bfe8-b61b-702a-8227-8abecc77e47e
+  components:
+  - label
+  cells:
+    called: b

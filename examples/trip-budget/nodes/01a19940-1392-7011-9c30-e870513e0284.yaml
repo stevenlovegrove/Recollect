@@ -1,9 +1,0 @@
-id: 01a19940-1392-7011-9c30-e870513e0284
-components:
-  decision: {}
-  name: Stay
-rules:
-  value:
-    rule: expr@1
-    params:
-      text: pick(in.alternative)

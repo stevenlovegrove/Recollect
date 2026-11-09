@@ -1,14 +1,14 @@
 //! The example problems, as workspaces. These write the files in `examples/`, through a real log,
 //! and `tests/samples.rs` checks that what's committed there still means what it should.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use recollect_graph::{Component, Entity, Name, Op, Storage};
+use recollect_graph::{CellType, Entity, Name, On, Op, Stored};
 use serde_json::{Value, json};
 
-use crate::formulas::{At, Domain, EXPR, IsA, Label, Requires, Uncertain, ValueCell};
-use crate::notes::{Body, Drawing};
-use crate::plan::{Alternative, Decision, DependsOn, Done, Estimate, Goal, PartOf, Task, Unknown};
+use crate::formulas::{AT, At, Called, IS_A, LABEL, OPTIONS, Options, REQUIRES, VALUE, ValueCell};
+use crate::notes::{Body, DRAWING, Drawing, NOTES};
+use crate::plan::{ALTERNATIVE, DECISION, DEPENDS_ON, Done, Estimate, GOAL, PART_OF, RISK, TASK, UNCERTAIN, UNKNOWN, Weight};
 
 pub struct Sample {
     pub name: &'static str,
@@ -37,13 +37,14 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "10";
+pub const FORMAT: &str = "11";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
 pub struct Build {
     pub ops: Vec<Op>,
     ids: BTreeMap<String, Entity>,
+    given: BTreeSet<(Entity, String)>,
 }
 
 impl Build {
@@ -52,105 +53,131 @@ impl Build {
         if let Some(e) = self.ids.get(name) {
             return *e;
         }
-        let e = Entity::new();
-        self.ids.insert(name.to_string(), e);
-        self.ops.push(Op::set(e, Name(name.to_string())));
-        e
+        self.named(name, name)
     }
 
     /// A node known here by `key`, and called something else.
     pub fn named(&mut self, key: &str, name: &str) -> Entity {
         let e = Entity::new();
         self.ids.insert(key.to_string(), e);
+        self.ops.push(Op::Spawn { id: e });
         self.ops.push(Op::set(e, Name(name.to_string())));
         e
     }
 
-    pub fn set<C: Component>(&mut self, name: &str, storage: impl Into<Storage<C>>) -> &mut Self {
+    /// Give a node a component.
+    pub fn add(&mut self, name: &str, component: &str) -> &mut Self {
         let e = self.e(name);
-        self.ops.push(Op::set(e, storage));
+        if self.given.insert((e, component.to_string())) {
+            self.ops.push(Op::add(e, component));
+        }
         self
     }
 
-    pub fn link<L: Component>(&mut self, from: &str, to: &str, v: L) -> &mut Self {
-        let (a, b) = (self.e(from), self.e(to));
-        self.ops.push(Op::link(a, b, v));
+    /// Write a cell of a component the node has, giving it the component if it hasn't.
+    pub fn set<C: CellType>(&mut self, name: &str, component: &str, value: C) -> &mut Self {
+        self.add(name, component);
+        let e = self.e(name);
+        self.ops.push(Op::set(e, value));
         self
+    }
+
+    /// A node's value, typed in.
+    pub fn value(&mut self, name: &str, v: f64) -> &mut Self {
+        self.set(name, VALUE, ValueCell::num(v))
+    }
+
+    /// A node's value, as a formula.
+    pub fn formula(&mut self, name: &str, text: &str) -> &mut Self {
+        self.add(name, VALUE);
+        self.formula_on(name, ValueCell::NAME, text)
+    }
+
+    pub fn note(&mut self, name: &str, text: &str) -> &mut Self {
+        self.set(name, NOTES, Body(text.to_string()))
     }
 
     /// A task taking this many days.
     pub fn task(&mut self, name: &str, days: f64) -> &mut Self {
-        self.set(name, Task {}).set(name, Estimate::days(days))
-    }
-
-    /// This node's value, as a formula.
-    pub fn formula(&mut self, name: &str, text: &str) -> &mut Self {
-        let e = self.e(name);
-        self.ops.push(Op::set_rule(e, ValueCell::NAME, EXPR, json!({ "text": text })));
-        self
+        self.set(name, TASK, Estimate::days(days))
     }
 
     /// One of the workspace's own cells, as a value.
-    pub fn put(&mut self, name: &str, component: &str, v: Value) -> &mut Self {
+    pub fn put(&mut self, name: &str, cell: &str, v: Value) -> &mut Self {
         let e = self.e(name);
-        self.ops.push(Op::set_runtime(e, component, v));
+        self.ops.push(Op::set_value(e, cell, v));
         self
     }
 
-    /// Any cell that can hold a formula, as one.
-    pub fn formula_on(&mut self, name: &str, component: &str, text: &str) -> &mut Self {
+    /// A cell, as a formula.
+    pub fn formula_on(&mut self, name: &str, cell: &str, text: &str) -> &mut Self {
         let e = self.e(name);
-        self.ops.push(Op::set_rule(e, component, EXPR, json!({ "text": text })));
+        self.ops.push(Op::set_formula(e, cell, text));
+        self
+    }
+
+    /// An edge with this component.
+    pub fn link(&mut self, from: &str, to: &str, component: &str) -> &mut Self {
+        let (a, b) = (self.e(from), self.e(to));
+        self.ops.push(Op::link(a, b, component));
+        self
+    }
+
+    /// A cell on the edge from one node to another.
+    pub fn on_edge(&mut self, from: &str, to: &str, cell: &str, v: Value) -> &mut Self {
+        let (a, b) = (self.e(from), self.e(to));
+        self.ops.push(Op::Set { on: On::Edge { from: a, to: b }, cell: cell.to_string(), to: Some(Stored::Value(v)) });
         self
     }
 
     /// What a formula on `from` calls `to`.
     pub fn label(&mut self, from: &str, to: &str, label: &str) -> &mut Self {
-        self.link(from, to, Label(label.to_string()))
+        self.link(from, to, LABEL).on_edge(from, to, Called::NAME, json!(label))
     }
 
-    fn link_named(&mut self, from: &str, to: &str, kind: &str, v: Value) -> &mut Self {
-        let (a, b) = (self.e(from), self.e(to));
-        self.ops.push(Op::link_runtime(a, b, recollect_graph::Runtime::new(kind, v)));
+    /// One of a decision's options, believed this far against the others before any evidence.
+    pub fn option(&mut self, option: &str, decision: &str, weight: Option<f64>) -> &mut Self {
+        self.link(option, decision, ALTERNATIVE);
+        if let Some(w) = weight {
+            self.on_edge(option, decision, Weight::NAME, json!(w));
+        }
         self
     }
 }
 
 fn calibration(b: &mut Build) {
-    b.set("Calibrate the lidar and camera", Goal);
-    b.set("Calibrate the lidar and camera", Body("Done when the reprojection error stays under a pixel on held-out scenes.".to_string()));
-    b.set("Which approach?", Decision::default()).link("Which approach?", "Calibrate the lidar and camera", PartOf);
+    b.add("Calibrate the lidar and camera", GOAL).note("Calibrate the lidar and camera", "Done when the reprojection error stays under a pixel on held-out scenes.");
+    b.add("Which approach?", DECISION).link("Which approach?", "Calibrate the lidar and camera", PART_OF);
     for o in ["From the CAD model", "Free-form search", "With a checkerboard"] {
-        b.link(o, "Which approach?", Alternative::default());
+        b.option(o, "Which approach?", None);
     }
-    b.set("Something else", Unknown).link("Something else", "Which approach?", Alternative::default());
-    b.task("Fit the IMU time offset", 1.0).link("Fit the IMU time offset", "Which approach?", PartOf);
-    b.task("Static captures", 2.0).link("Static captures", "From the CAD model", PartOf).link("Static captures", "Free-form search", PartOf);
-    b.task("Export extrinsics from CAD", 3.0).link("Export extrinsics from CAD", "From the CAD model", PartOf).link("Export extrinsics from CAD", "Static captures", DependsOn::default());
-    b.task("Global init search", 5.0).link("Global init search", "Free-form search", PartOf).link("Global init search", "Static captures", DependsOn::default());
-    b.task("Board detector", 4.0).link("Board detector", "With a checkerboard", PartOf);
-    b.set("Diverges on weak geometry", crate::plan::Risk);
-    b.link_named("Diverges on weak geometry", "Global init search", "contradicts", Value::Null);
+    b.add("Something else", UNKNOWN).option("Something else", "Which approach?", None);
+    b.task("Fit the IMU time offset", 1.0).link("Fit the IMU time offset", "Which approach?", PART_OF);
+    b.task("Static captures", 2.0).link("Static captures", "From the CAD model", PART_OF).link("Static captures", "Free-form search", PART_OF);
+    b.task("Export extrinsics from CAD", 3.0).link("Export extrinsics from CAD", "From the CAD model", PART_OF).link("Export extrinsics from CAD", "Static captures", DEPENDS_ON);
+    b.task("Global init search", 5.0).link("Global init search", "Free-form search", PART_OF).link("Global init search", "Static captures", DEPENDS_ON);
+    b.task("Board detector", 4.0).link("Board detector", "With a checkerboard", PART_OF);
+    b.add("Diverges on weak geometry", RISK).link("Diverges on weak geometry", "Global init search", "contradicts");
 }
 
 fn critical_path(b: &mut Build) {
     b.task("Lay foundations", 3.0).task("Wire the rooms", 2.0).task("Frame the walls", 4.0).task("Paint", 2.0);
-    b.link("Wire the rooms", "Lay foundations", DependsOn::default());
-    b.link("Frame the walls", "Lay foundations", DependsOn::default());
-    b.link("Paint", "Wire the rooms", DependsOn::default());
-    b.link("Paint", "Frame the walls", DependsOn::default());
-    b.set("Lay foundations", Done::yes());
+    b.link("Wire the rooms", "Lay foundations", DEPENDS_ON);
+    b.link("Frame the walls", "Lay foundations", DEPENDS_ON);
+    b.link("Paint", "Wire the rooms", DEPENDS_ON);
+    b.link("Paint", "Frame the walls", DEPENDS_ON);
+    b.put("Lay foundations", Done::NAME, json!(true));
 }
 
 fn invoice(b: &mut Build) {
     for (line, qty, price) in [("Widgets", 3.0, 10.0), ("Gears", 2.0, 25.0)] {
         let (q, p) = (format!("{line}: quantity"), format!("{line}: price"));
-        b.set(&q, ValueCell::num(qty)).set(&p, ValueCell::num(price));
+        b.value(&q, qty).value(&p, price);
         b.formula(line, "quantity * price").label(line, &q, "quantity").label(line, &p, "price");
         b.label("Subtotal", line, "line");
     }
     b.formula("Subtotal", "sum(line)");
-    b.set("Tax rate", ValueCell::num(0.2));
+    b.value("Tax rate", 0.2);
     b.formula("Tax", "subtotal * rate").label("Tax", "Subtotal", "subtotal").label("Tax", "Tax rate", "rate");
     b.formula("Total", "subtotal + tax").label("Total", "Subtotal", "subtotal").label("Total", "Tax", "tax");
 }
@@ -158,9 +185,9 @@ fn invoice(b: &mut Build) {
 fn trip_budget(b: &mut Build) {
     // Options are ordinary nodes, the same as in a plan, so one could have parts and dependencies too.
     for (decision, options) in [("Travel", [("Train", 80.0), ("Plane", 120.0)]), ("Stay", [("Hostel", 60.0), ("Hotel", 150.0)])] {
-        b.set(decision, Decision::default()).formula(decision, "pick(in.alternative)");
+        b.add(decision, DECISION).formula(decision, "pick(in.alternative)");
         for (option, price) in options {
-            b.set(option, ValueCell::num(price)).link(option, decision, Alternative::default());
+            b.value(option, price).option(option, decision, None);
         }
     }
     b.formula("Trip", "travel + stay").label("Trip", "Travel", "travel").label("Trip", "Stay", "stay");
@@ -168,28 +195,28 @@ fn trip_budget(b: &mut Build) {
 }
 
 fn choosing_a_car(b: &mut Build) {
-    b.set("Years kept", ValueCell::num(5.0));
+    b.value("Years kept", 5.0);
     // Not something to decide: it'll be whatever it is, and these are guesses at how likely each is.
-    b.set("Miles a year", Decision::default()).set("Miles a year", Uncertain).formula("Miles a year", "pick(in.alternative)");
+    b.add("Miles a year", DECISION).add("Miles a year", UNCERTAIN).formula("Miles a year", "pick(in.alternative)");
     for (option, miles, weight) in [("Light use", 6000.0, 1.0), ("Typical", 10000.0, 2.0), ("Heavy", 16000.0, 1.0)] {
-        b.set(option, ValueCell::num(miles)).link(option, "Miles a year", Alternative { weight: Some(weight), ..Alternative::default() });
+        b.value(option, miles).option(option, "Miles a year", Some(weight));
     }
     // What a mile costs follows from what a car runs on, so each kind says how, and each car only says
     // how far it goes on a litre or a kilowatt-hour.
-    b.set("Fuel price", ValueCell::num(1.45)).set("Electricity price", ValueCell::num(0.28));
-    b.set("Petrol car", Body("A mile costs the fuel it burns: a gallon is 4.546 litres. Each says its own mpg.".to_string()));
+    b.value("Fuel price", 1.45).value("Electricity price", 0.28);
+    b.note("Petrol car", "A mile costs the fuel it burns: a gallon is 4.546 litres. Each says its own mpg.");
     b.formula_on("Petrol car", "cost_per_mile", "fuel * 4.546 / self.mpg").label("Petrol car", "Fuel price", "fuel");
-    b.set("Electric car", Body("A mile costs the electricity it takes. Each says its own kWh a mile.".to_string()));
+    b.note("Electric car", "A mile costs the electricity it takes. Each says its own kWh a mile.");
     b.formula_on("Electric car", "cost_per_mile", "power * self.kwh_per_mile").label("Electric car", "Electricity price", "power");
     // The decision gives whatever the car it lands on says, so anything can read it.
-    b.set("Which car?", Decision::default());
+    b.add("Which car?", DECISION);
     for cell in ["price", "cost_per_mile", "insurance", "range"] {
         b.formula_on("Which car?", cell, &format!("pick(o in in.alternative: o.{cell})"));
     }
     // Three tables. Every car has a price, insurance and a range, so those are Car's. Only petrol cars
     // have an mpg, and only electric ones a kWh a mile. Petrol car[Hatchback] and Car[Hatchback] are two
     // parts of one car, and each reads what the other says.
-    b.link("Petrol car", "Car", IsA).link("Electric car", "Car", IsA);
+    b.link("Petrol car", "Car", IS_A).link("Electric car", "Car", IS_A);
     let cars: [(&str, &str, &str, f64, f64, f64, f64); 4] = [
         ("Hatchback", "Petrol car", "mpg", 52.0, 18000.0, 500.0, 550.0),
         ("Estate", "Petrol car", "mpg", 44.0, 24000.0, 550.0, 600.0),
@@ -200,27 +227,27 @@ fn choosing_a_car(b: &mut Build) {
     for (car, kind, cell, v, price, insurance, range) in cars {
         let row = format!("Car[{car}]");
         b.put(&row, "price", json!(price)).put(&row, "insurance", json!(insurance)).put(&row, "range", json!(range));
-        b.link(&row, "Which car?", Alternative::default());
+        b.option(&row, "Which car?", None);
         b.put(&format!("{kind}[{car}]"), cell, json!(v));
     }
     // Losing 15% of its value each year it's kept, running it, and insuring it.
     b.formula("Yearly cost", "car.price * (1 - 0.85 ^ years) / years + miles * car.cost_per_mile + car.insurance");
     b.label("Yearly cost", "Which car?", "car").label("Yearly cost", "Years kept", "years").label("Yearly cost", "Miles a year", "miles");
-    b.set("Miles to Edinburgh", ValueCell::num(400.0));
+    b.value("Miles to Edinburgh", 400.0);
     let trip = "Gets to Edinburgh without stopping";
     b.formula(trip, "car.range >= miles").label(trip, "Which car?", "car").label(trip, "Miles to Edinburgh", "miles");
 }
 
 fn compound_interest(b: &mut Build) {
     // One formula for every year, on the table. Year[0] says its own, so it's where the chain starts.
-    b.set("Rate", ValueCell::num(0.05));
+    b.value("Rate", 0.05);
     b.formula_on("Year", "balance", "prev.balance * (1 + rate)").label("Year", "Rate", "rate");
     // Only rows with something of their own are written. The rest are there to be read, as far as asked.
     b.put("Year[0]", "balance", json!(1000.0));
     // A choice five years in: the years before it have one balance, and the years after have one for each answer.
-    b.set("Top up in year 5?", Decision::default()).formula("Top up in year 5?", "pick(in.alternative)");
+    b.add("Top up in year 5?", DECISION).formula("Top up in year 5?", "pick(in.alternative)");
     for (option, amount) in [("No top-up", 0.0), ("Add 500", 500.0)] {
-        b.set(option, ValueCell::num(amount)).link(option, "Top up in year 5?", Alternative::default());
+        b.value(option, amount).option(option, "Top up in year 5?", None);
     }
     b.formula_on("Year[5]", "balance", "prev.balance * (1 + rate) + top_up");
     b.label("Year[5]", "Rate", "rate").label("Year[5]", "Top up in year 5?", "top_up");
@@ -242,12 +269,12 @@ struct Puzzle<'a> {
 
 impl<'a> Puzzle<'a> {
     fn new(b: &'a mut Build, root: &str) -> Self {
-        b.formula(root, "all(constraint)").set(root, Requires);
+        b.formula(root, "all(constraint)").add(root, REQUIRES);
         Puzzle { b, root: root.to_string(), next: 0 }
     }
 
     fn choice(&mut self, name: &str, options: &[&str]) {
-        self.b.set(name, Domain(options.iter().map(|s| s.to_string()).collect()));
+        self.b.set(name, OPTIONS, Options(options.iter().map(|s| s.to_string()).collect()));
     }
 
     /// A formula over the named choices, which goes towards the puzzle being solved.
@@ -283,7 +310,7 @@ impl<'a> Puzzle<'a> {
 
     /// What a table says about its rows, which goes towards the puzzle being solved.
     fn rule(&mut self, table: &str, said: &str, text: &str) {
-        self.b.formula(table, text).set(table, Body(said.to_string()));
+        self.b.formula(table, text).note(table, said);
         let root = self.root.clone();
         self.b.label(&root, table, "constraint");
     }
@@ -295,7 +322,7 @@ fn australia(b: &mut Build) {
     for r in regions {
         p.choice(r, &["red", "green", "blue"]);
     }
-    p.b.set("Map of Australia", Drawing(include_str!("drawings/australia.ts").to_string()));
+    p.b.set("Map of Australia", DRAWING, Drawing(include_str!("drawings/australia.ts").to_string()));
     let borders = [(0, 1), (0, 2), (1, 2), (1, 3), (2, 3), (2, 4), (2, 5), (3, 4), (4, 5)];
     for (x, y) in borders {
         p.different(regions[x], regions[y]);
@@ -315,13 +342,13 @@ fn eight_queens(b: &mut Build) {
 
 fn sudoku(b: &mut Build) {
     let mut p = Puzzle::new(b, "A grid");
-    p.b.set("Board with its boxes", Drawing(include_str!("drawings/sudoku.ts").to_string()));
+    p.b.set("Board with its boxes", DRAWING, Drawing(include_str!("drawings/sudoku.ts").to_string()));
     let rows = ["A", "B", "C", "D"];
     let keys: Vec<String> = rows.iter().flat_map(|r| (1..=4).map(move |c| format!("{r}{c}"))).collect();
     let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
     p.table("Cell", &["1", "2", "3", "4"], &keys);
     for (i, k) in keys.iter().enumerate() {
-        p.b.set(&format!("Cell[{k}]"), At { row: (i / 4) as u32, col: (i % 4) as u32 });
+        p.b.set(&format!("Cell[{k}]"), AT, At { row: (i / 4) as u32, col: (i % 4) as u32 });
     }
     let cells = |pick: &dyn Fn(usize, usize) -> bool| {
         let named: Vec<String> = (0..16).filter(|i| pick(i / 4, i % 4)).map(|i| format!("Cell[{}]", keys[i])).collect();
@@ -382,18 +409,14 @@ fn zebra(b: &mut Build) {
 }
 
 fn case_file(b: &mut Build) {
-    let note = |b: &mut Build, name: &str, text: &str| {
-        b.set(name, Body(text.to_string()));
-    };
-    note(
-        b,
+    b.note(
         "The case",
         "Saturday evening at Rosalind Vane's house. Her late husband's gold watch was in a locked case in the study. Clara saw it there at 9:00. Rosalind found the case open and the watch gone at 10:15. Times here are minutes past nine, so 9:40 is 40.",
     );
 
-    // Something nobody chose: it happened one way, and these are how likely each seemed before the evidence.
+    // Something nobody chose: it happened one way, and these are how far each was believed before the evidence.
     let who = "Who took it?";
-    b.set(who, Decision::default()).set(who, Uncertain);
+    b.add(who, DECISION).add(who, UNCERTAIN);
     for cell in ["arrives", "from_garden"] {
         b.formula_on(who, cell, &format!("pick(o in in.alternative: o.{cell})"));
     }
@@ -404,17 +427,17 @@ fn case_file(b: &mut Build) {
         ("Someone else", 1.0, "Someone nobody has thought of yet."),
     ];
     for (name, weight, about) in suspects {
-        b.set(name, Body(about.to_string())).link(name, who, Alternative { weight: Some(weight), ..Alternative::default() });
+        b.note(name, about).option(name, who, Some(weight));
     }
-    b.set("Someone else", Unknown);
+    b.add("Someone else", UNKNOWN);
 
     // What's in doubt, each a decision nobody made, whose options are the accounts.
     // The question's answer is which account is true. What follows from it is a cell named for what it is,
     // which each account says and the question gives for whichever is true.
     let account = |b: &mut Build, question: &str, cell: &str, options: &[(&str, Value, f64, &str)]| {
-        b.set(question, Decision::default()).set(question, Uncertain).formula_on(question, cell, &format!("pick(o in in.alternative: o.{cell})"));
+        b.add(question, DECISION).add(question, UNCERTAIN).formula_on(question, cell, &format!("pick(o in in.alternative: o.{cell})"));
         for (option, value, weight, said) in options {
-            b.put(option, cell, value.clone()).set(option, Body(said.to_string())).link(option, question, Alternative { weight: Some(*weight), ..Alternative::default() });
+            b.put(option, cell, value.clone()).note(option, said).option(option, question, Some(*weight));
         }
     };
     account(
@@ -465,7 +488,7 @@ fn case_file(b: &mut Build) {
 
     // The evidence, which rules out the worlds it doesn't fit.
     let evidence = |b: &mut Build, name: &str, formula: &str, about: &str| {
-        b.formula(name, formula).set(name, Requires).set(name, Body(about.to_string())).label(name, who, "who");
+        b.formula(name, formula).add(name, REQUIRES).note(name, about).label(name, who, "who");
     };
     evidence(b, "Whoever took it was in the house by 10:00", "who.arrives <= 60", "The case was locked at 9:00 and empty at 10:15, and it would take a while to find the key, open it, and get away.");
     evidence(b, "They came in from the garden", "who.from_garden", "Fresh mud on the study carpet, from the garden door to the case.");

@@ -1,124 +1,63 @@
-//! Rules that can be written down. A rule is JSON under a name, like a component: its key says
-//! what code it is, its fields are its parameters, and the Rust struct is the typed shortcut.
-//! A registry maps keys back to code, so a saved cell can say which rule backs it.
+//! What the systems say there is: components, and the cells each brings.
 //!
-//! Registration is explicit. A system is just a function that adds to a `Registry`, so what's
-//! active can be read from one place.
+//! A component is a facet of an entity, such as Decision or Task, and is what a badge shows. It brings
+//! cells, each with a default for when nothing says otherwise: a value, a formula, or something built
+//! in. It can require other components on the same entity, and a component on an edge can bring
+//! components to the edge's ends. So nothing here applies to every node: a cell is only there on an
+//! entity that has its component.
+//!
+//! Registration is explicit. A system is a function that adds to a `Registry`, so what's active can be
+//! read from one place.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
-use schemars::JsonSchema;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
-use crate::graph::{Backing, Cell, Component, Cx, Entity, Error, Inputs, Key, Rule, RuleSpec, erase_runtime, erase_typed, typed_backing};
-/// How a rule is written down.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SavedRule {
-    pub rule: String,
-    #[serde(default, skip_serializing_if = "Value::is_null")]
-    pub params: Value,
-}
-
-/// What `#[rule]` provides.
-pub trait RuleMeta {
-    const KEY: &'static str;
-    fn declared_inputs() -> Inputs;
-}
-
-/// What a rule returns: a component, or `Option` of one if it may decide a node has none.
-pub trait CellResult {
-    type C: Component;
-    fn into_option(self) -> Option<Self::C>;
-}
-
-impl<C: Component> CellResult for C {
-    type C = C;
-    fn into_option(self) -> Option<C> {
-        Some(self)
-    }
-}
-
-impl<C: Component> CellResult for Option<C> {
-    type C = C;
-    fn into_option(self) -> Option<C> {
-        self
-    }
-}
-
-/// A rule as a type. Define one with `#[rule("key", incoming(..), outgoing(..), scans(..))]` on a
-/// struct whose fields are its parameters.
-pub trait Compute: RuleMeta + Serialize + DeserializeOwned + JsonSchema + Clone + Send + Sync + 'static {
-    type Output: CellResult;
-    fn compute(&self, cx: &Cx) -> Result<Self::Output, Error>;
-
-    /// What it may follow. Override this if that depends on its parameters.
-    fn inputs(&self) -> Inputs {
-        Self::declared_inputs()
-    }
-}
-
-/// The component a rule type provides.
-pub type OutputOf<R> = <<R as Compute>::Output as CellResult>::C;
-
-/// A rule type as a rule. `#[rule]` makes this happen through `.into()`.
-pub fn into_rule<R: Compute>(r: R) -> Rule<OutputOf<R>> {
-    let saved = SavedRule { rule: R::KEY.to_string(), params: serde_json::to_value(&r).expect("rule parameters serialise") };
-    let inputs = r.inputs();
-    Rule { name: R::KEY.to_string(), inputs, f: Arc::new(move |cx| Ok(r.compute(cx)?.into_option())), saved: Some(saved) }
-}
-
-/// A rule with no Rust type, such as one from a TypeScript plugin.
-pub struct RuntimeRule {
-    pub key: String,
-    /// The component it provides.
-    pub output: String,
-    pub inputs: Inputs,
-    pub compute: Arc<dyn Fn(&Value, &Cx) -> Cell<Value> + Send + Sync>,
-}
-
-/// What a registered rule is, for listing: enough for the LLM to know how to attach one.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RuleInfo {
-    pub key: String,
-    pub output: String,
-    /// Other components it can fill, for a rule that isn't tied to one.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub also: Vec<String>,
-    pub inputs: BTreeMap<String, Vec<String>>,
-    pub params: Option<Value>,
-}
-
-/// The code a log's events ran under, as far as it can be written down: whatever the host says it
-/// is, and every rule's signature. It can't say what a rule's body did, which is what witnesses
-/// are for.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Code {
-    pub build: String,
-    pub rules: Vec<RuleInfo>,
-}
-
-/// Where a component is allowed to be.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Place {
-    Node,
-    Link,
-}
+use crate::graph::{Cell, CellType, Computed, Cx, Entity, Error, Graph};
+use crate::shown::Shown;
+use crate::worlds::Bool;
 
 /// Whether a value has the right shape, and if not, what's wrong with it.
 pub type Validate = fn(&Value) -> Result<(), String>;
 
-/// What's known about a component's shape. A component nothing declares is kept and unchecked.
-#[derive(Clone)]
-pub(crate) struct Declared {
-    pub(crate) place: Place,
-    pub(crate) validate: Option<Validate>,
+/// What a formula written on a cell becomes, or why it can't be one.
+pub type Compile = Arc<dyn Fn(&str) -> Result<Arc<Computed>, String> + Send + Sync>;
+
+/// A cell as a world value, for reading.
+pub type ShownFn = Arc<dyn Fn(&Graph, Entity) -> Cell<Shown> + Send + Sync>;
+
+/// The worlds an entity with some component allows, if it has something to say.
+pub type ConstraintFn = Arc<dyn Fn(&Graph, Entity) -> Cell<Bool> + Send + Sync>;
+
+/// What's wrong with one entity, in words.
+pub type CheckFn = Arc<dyn Fn(&Cx) -> Result<Vec<String>, Error> + Send + Sync>;
+
+/// What's worth saying about a graph as a whole, which no single entity's cells can see.
+pub type AdviceFn = fn(&Graph) -> Vec<Advice>;
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Advice {
+    pub rule: String,
+    pub on: Entity,
+    pub detail: String,
+}
+
+/// Where a component goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Place {
+    Node,
+    Edge,
+    /// The graph as a whole, where something is worked out once however many nodes read it.
+    Whole,
 }
 
 /// How much a check matters.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Severity {
     /// A commit that newly breaks this is refused.
     Invariant,
@@ -126,50 +65,252 @@ pub enum Severity {
     Notice,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct CheckInfo {
-    pub(crate) name: String,
-    pub(crate) severity: Severity,
+#[derive(Clone)]
+pub struct CheckDef {
+    pub name: String,
+    pub severity: Severity,
 }
 
-impl CheckInfo {
-    pub(crate) fn column(&self) -> String {
+impl CheckDef {
+    /// The cell the check's findings are worked out in.
+    pub fn cell(&self) -> String {
         format!("check/{}", self.name)
     }
 }
 
-type Build = Arc<dyn Fn(&Value) -> Result<Backing, String> + Send + Sync>;
-
-/// How a rule that can fill a workspace's own cells is made for one of them: what it may follow, and
-/// what it works out.
-pub type BuildUnowned = Arc<dyn Fn(&str, &Value) -> Result<(Inputs, Arc<dyn Fn(&Cx) -> Cell<Value> + Send + Sync>), String> + Send + Sync>;
-
-struct Registered {
-    info: RuleInfo,
-    /// How to make it, for each component it can fill.
-    builds: HashMap<String, Build>,
-    /// How to make it for a component no system owns, if it can fill those.
-    unowned: Option<BuildUnowned>,
+/// A facet of an entity.
+#[derive(Clone, Serialize)]
+pub struct ComponentDef {
+    pub name: String,
+    pub system: String,
+    pub place: Place,
+    pub about: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// Other components an entity with this one has too.
+    pub requires: Vec<String>,
+    /// For an edge: components its source has because of it.
+    pub source: Vec<String>,
+    /// For an edge: components its target has because of it.
+    pub target: Vec<String>,
+    /// It says something about this entity alone, such as which option was chosen, so it can't come
+    /// from a kind.
+    pub per_entity: bool,
+    /// Every node has it, and it can't be taken away.
+    pub everywhere: bool,
+    /// An edge that gives a graph its shape, rather than just saying something about two nodes.
+    pub arranges: bool,
+    /// For an edge that gives a graph its shape: what it points at goes beneath, not above.
+    pub reversed: bool,
+    /// An edge that says what comes first. It isn't containment, but a map can be laid out by it.
+    pub orders: bool,
+    /// Its cells, in the order they're shown.
+    pub cells: Vec<String>,
+    #[serde(skip)]
+    pub checks: Vec<CheckDef>,
+    #[serde(skip)]
+    pub constraint: Option<ConstraintFn>,
 }
 
-/// The rules a graph can load, and the defaults they set.
+impl ComponentDef {
+    pub fn icon(&mut self, icon: &str) -> &mut Self {
+        self.icon = Some(icon.to_string());
+        self
+    }
+
+    pub fn requires(&mut self, component: &str) -> &mut Self {
+        if !self.requires.iter().any(|r| r == component) {
+            self.requires.push(component.to_string());
+        }
+        self
+    }
+
+    /// For an edge: its source has this too.
+    pub fn source_has(&mut self, component: &str) -> &mut Self {
+        self.source.push(component.to_string());
+        self
+    }
+
+    /// For an edge: its target has this too.
+    pub fn target_has(&mut self, component: &str) -> &mut Self {
+        self.target.push(component.to_string());
+        self
+    }
+
+    pub fn per_entity(&mut self) -> &mut Self {
+        self.per_entity = true;
+        self
+    }
+
+    pub fn everywhere(&mut self) -> &mut Self {
+        self.everywhere = true;
+        self
+    }
+
+    pub fn arranges(&mut self) -> &mut Self {
+        self.arranges = true;
+        self
+    }
+
+    pub fn reversed(&mut self) -> &mut Self {
+        self.reversed = true;
+        self
+    }
+
+    pub fn orders(&mut self) -> &mut Self {
+        self.orders = true;
+        self
+    }
+
+    /// Only the worlds this allows, on each entity with this component, count.
+    pub fn constraint(&mut self, f: impl Fn(&Graph, Entity) -> Cell<Bool> + Send + Sync + 'static) -> &mut Self {
+        self.constraint = Some(Arc::new(f));
+        self
+    }
+}
+
+/// What a cell is when nothing says otherwise.
+#[derive(Clone)]
+pub enum Default {
+    Value(Value),
+    Formula(String),
+    Builtin(Arc<Computed>),
+}
+
+/// A cell a component brings.
+#[derive(Clone, Serialize)]
+pub struct CellDef {
+    pub name: String,
+    pub component: String,
+    pub about: String,
+    /// Plumbing, which only makes sense to what reads it.
+    pub internal: bool,
+    /// Worth a line on a card.
+    pub summary: bool,
+    /// For a view to read, rather than a person.
+    pub quiet: bool,
+    /// It's either true or false, so it can be read and set as a tick.
+    pub truth: bool,
+    /// It says something about this entity alone, such as its name or its answer, so it isn't taken
+    /// from a kind.
+    pub per_entity: bool,
+    /// What a new one starts as, when it's typed in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial: Option<Value>,
+    #[serde(skip)]
+    pub default: Option<Default>,
+    #[serde(skip)]
+    pub compile: Option<Compile>,
+    #[serde(skip)]
+    pub validate: Option<Validate>,
+    #[serde(skip)]
+    pub shown: Option<ShownFn>,
+}
+
+impl CellDef {
+    /// Whether it's worked out, unless something says otherwise.
+    pub fn computed(&self) -> bool {
+        matches!(self.default, Some(Default::Formula(_) | Default::Builtin(_)))
+    }
+
+    /// Whether it can hold a formula.
+    pub fn formulas(&self) -> bool {
+        self.compile.is_some()
+    }
+
+    /// Whether anything can be written on it: a value, or a formula.
+    pub fn settable(&self) -> bool {
+        self.compile.is_some() || !self.computed()
+    }
+}
+
+/// Says more about a cell as it's registered.
+pub struct CellBuilder<'r, C> {
+    def: &'r mut CellDef,
+    _c: PhantomData<C>,
+}
+
+impl<C: CellType> CellBuilder<'_, C> {
+    /// Worked out by this when nothing says otherwise.
+    pub fn builtin(self, f: impl Fn(&Cx) -> Cell<C> + Send + Sync + 'static) -> Self {
+        self.def.default = Some(Default::Builtin(Computed::typed(&format!("{} default", C::NAME), f)));
+        self
+    }
+
+    pub fn default_value(self, v: C) -> Self {
+        self.def.default = Some(Default::Value(serde_json::to_value(&v).expect("cells serialise")));
+        self
+    }
+
+    /// Worked out by this formula when nothing says otherwise. It's compiled by `compiles`.
+    pub fn default_formula(self, text: &str) -> Self {
+        self.def.default = Some(Default::Formula(text.to_string()));
+        self
+    }
+
+    /// How a formula written on this cell is made.
+    pub fn compiles(self, c: Compile) -> Self {
+        self.def.compile = Some(c);
+        self
+    }
+
+    pub fn shown(self, f: fn(&C) -> Shown) -> Self {
+        self.def.shown = Some(Arc::new(move |g, e| Ok(g.get::<C>(e)?.map(|c| f(&c)))));
+        self
+    }
+
+    pub fn validate(self, v: Validate) -> Self {
+        self.def.validate = Some(v);
+        self
+    }
+
+    pub fn internal(self) -> Self {
+        self.def.internal = true;
+        self
+    }
+
+    pub fn summary(self) -> Self {
+        self.def.summary = true;
+        self
+    }
+
+    pub fn quiet(self) -> Self {
+        self.def.quiet = true;
+        self
+    }
+
+    pub fn truth(self) -> Self {
+        self.def.truth = true;
+        self
+    }
+
+    pub fn per_entity(self) -> Self {
+        self.def.per_entity = true;
+        self
+    }
+
+    pub fn initial(self, v: Value) -> Self {
+        self.def.initial = Some(v);
+        self
+    }
+}
+
+/// Everything the systems say there is.
 #[derive(Default)]
 pub struct Registry {
-    rules: HashMap<String, Registered>,
-    pub(crate) defaults: HashMap<String, Backing>,
-    pub(crate) declared: HashMap<String, Declared>,
-    pub(crate) checks: Vec<CheckInfo>,
-    /// The kind of link from a node to its kind, if nodes can take cells from one.
+    components: BTreeMap<String, ComponentDef>,
+    cells: BTreeMap<String, CellDef>,
+    /// How a formula on one of the workspace's own cells is made: a cell no component brings.
+    free: Option<Compile>,
+    /// The edge from a node to its kind, if nodes can take what they don't say from one.
     pub(crate) inherits_through: Option<String>,
-    /// What systems say that a node still takes from its kind when it doesn't say it, as a row takes
-    /// its table's options.
-    pub(crate) passed_down: HashSet<String>,
+    advice: Vec<AdviceFn>,
     build: String,
+    current: String,
 }
 
-fn inputs_info(i: &Inputs) -> BTreeMap<String, Vec<String>> {
-    // `like` isn't listed: it says nothing beyond what the other rule's listing says.
-    BTreeMap::from([("incoming".to_string(), i.incoming.clone()), ("outgoing".to_string(), i.outgoing.clone()), ("scans".to_string(), i.scans.clone())])
+fn typed_validate<C: CellType>(v: &Value) -> Result<(), String> {
+    serde_json::from_value::<C>(v.clone()).map(drop).map_err(|e| e.to_string())
 }
 
 impl Registry {
@@ -177,120 +318,107 @@ impl Registry {
         Self::default()
     }
 
-    fn insert(&mut self, reg: Registered) {
-        let key = reg.info.key.clone();
-        assert!(self.rules.insert(key.clone(), reg).is_none(), "two rules are registered as {key}");
+    /// Which system is saying what follows.
+    pub fn system(&mut self, name: &str) -> &mut Self {
+        self.current = name.to_string();
+        self
     }
 
-    /// Make a rule type loadable by its key. Registering one twice is harmless.
-    pub fn rule<R: Compute>(&mut self) -> &mut Self {
-        if self.rules.contains_key(R::KEY) {
-            return self;
+    fn define(&mut self, name: &str, place: Place, about: &str) -> &mut ComponentDef {
+        let system = self.current.clone();
+        self.components.entry(name.to_string()).or_insert_with(|| ComponentDef {
+            name: name.to_string(),
+            system,
+            place,
+            about: about.to_string(),
+            icon: None,
+            requires: Vec::new(),
+            source: Vec::new(),
+            target: Vec::new(),
+            per_entity: false,
+            everywhere: false,
+            arranges: false,
+            reversed: false,
+            orders: false,
+            cells: Vec::new(),
+            checks: Vec::new(),
+            constraint: None,
+        })
+    }
+
+    /// A component that goes on nodes. Saying one again is harmless, and gives the one already there.
+    pub fn component(&mut self, name: &str, about: &str) -> &mut ComponentDef {
+        self.define(name, Place::Node, about)
+    }
+
+    /// A component that goes on edges.
+    pub fn edge(&mut self, name: &str, about: &str) -> &mut ComponentDef {
+        self.define(name, Place::Edge, about)
+    }
+
+    /// A component the graph as a whole has.
+    pub fn whole(&mut self, name: &str, about: &str) -> &mut ComponentDef {
+        self.define(name, Place::Whole, about)
+    }
+
+    /// A cell this component brings. Values written on it have to read as `C`.
+    pub fn cell<C: CellType>(&mut self, component: &str, about: &str) -> CellBuilder<'_, C> {
+        assert!(self.components.contains_key(component), "{component} has to be registered before its cells");
+        let comp = self.components.get_mut(component).expect("checked above");
+        if !comp.cells.iter().any(|c| c == C::NAME) {
+            comp.cells.push(C::NAME.to_string());
         }
-        self.insert(Registered {
-            info: RuleInfo {
-                key: R::KEY.to_string(),
-                output: <OutputOf<R>>::NAME.to_string(),
-                also: Vec::new(),
-                inputs: inputs_info(&R::declared_inputs()),
-                params: Some(schemars::schema_for!(R).to_value()),
-            },
-            builds: HashMap::from([(
-                <OutputOf<R>>::NAME.to_string(),
-                Arc::new(|params: &Value| {
-                    let r: R = serde_json::from_value(params.clone()).map_err(|e| e.to_string())?;
-                    Ok(Backing::Computed(erase_typed(into_rule(r))))
-                }) as Build,
-            )]),
-            unowned: None,
+        if let Some(existing) = self.cells.get(C::NAME) {
+            assert_eq!(existing.component, component, "{} is already a cell of {}", C::NAME, existing.component);
+        }
+        let def = self.cells.entry(C::NAME.to_string()).or_insert_with(|| CellDef {
+            name: C::NAME.to_string(),
+            component: component.to_string(),
+            about: about.to_string(),
+            internal: false,
+            summary: false,
+            quiet: false,
+            truth: false,
+            per_entity: false,
+            initial: None,
+            default: None,
+            compile: None,
+            validate: Some(typed_validate::<C>),
+            shown: None,
         });
+        CellBuilder { def, _c: PhantomData }
+    }
+
+    /// Something that must hold, or is worth a look, on every entity with this component. It's worked
+    /// out in a cell of its own, so it's memoised, and only reruns what an edit reaches.
+    pub fn check(&mut self, component: &str, name: &str, severity: Severity, f: impl Fn(&Cx) -> Result<Vec<String>, Error> + Send + Sync + 'static) -> &mut Self {
+        let check = CheckDef { name: name.to_string(), severity };
+        let cell = check.cell();
+        let comp = self.components.get_mut(component).unwrap_or_else(|| panic!("{component} has to be registered before its checks"));
+        comp.checks.push(check);
+        let computed = Computed::json(&cell, move |cx| Ok(Some(serde_json::to_value(f(cx)?).expect("strings serialise"))));
+        self.cells.insert(
+            cell.clone(),
+            CellDef { name: cell, component: component.to_string(), about: String::new(), internal: true, summary: false, quiet: false, truth: false, per_entity: true, initial: None, default: Some(Default::Builtin(computed)), compile: None, validate: None, shown: None },
+        );
         self
     }
 
-    /// This rule type, on every node that doesn't say otherwise.
-    pub fn set_default<R: Compute>(&mut self, r: R) -> &mut Self {
-        self.rule::<R>();
-        self.defaults.insert(<OutputOf<R>>::NAME.to_string(), typed_backing(crate::graph::Storage::Rule(into_rule(r))));
+    /// How a formula on one of the workspace's own cells is made.
+    pub fn free_formulas(&mut self, c: Compile) -> &mut Self {
+        self.free = Some(c);
         self
     }
 
-    /// A rule that's already loadable, as it's written down, on every node that doesn't say otherwise.
-    pub fn set_default_rule(&mut self, component: &str, key: &str, params: Value) -> &mut Self {
-        let saved = SavedRule { rule: key.to_string(), params };
-        let backing = self.resolve(&Self::column_key(component), &saved);
-        self.defaults.insert(component.to_string(), backing);
+    /// Nodes take what they don't say from what they link to by this edge, as an instance does from its
+    /// kind.
+    pub fn inherit_through(&mut self, edge: &str) -> &mut Self {
+        self.inherits_through = Some(edge.to_string());
         self
     }
 
-    /// Make a rule with no Rust type loadable by its key.
-    pub fn runtime_rule(&mut self, r: RuntimeRule) -> &mut Self {
-        let (key, inputs, compute) = (r.key.clone(), r.inputs.clone(), r.compute);
-        let output = r.output.clone();
-        let build: Build = Arc::new(move |params: &Value| {
-            let (params, compute) = (params.clone(), compute.clone());
-            let saved = SavedRule { rule: key.clone(), params: params.clone() };
-            let f = Arc::new(move |cx: &Cx| compute(&params, cx));
-            Ok(Backing::Computed(erase_runtime(Rule { name: key.clone(), inputs: inputs.clone(), f, saved: Some(saved) })))
-        });
-        self.insert(Registered { info: RuleInfo { key: r.key, output: r.output, also: Vec::new(), inputs: inputs_info(&r.inputs), params: None }, builds: HashMap::from([(output, build)]), unowned: None });
-        self
-    }
-
-    /// Make this key able to fill any component no system owns: the workspace's own cells, such as a
-    /// price or a range. A component a system owns still has to say it can hold this rule.
-    pub fn rule_on_unowned(&mut self, key: &str, build: impl Fn(&str, &Value) -> Result<(Inputs, Arc<dyn Fn(&Cx) -> Cell<Value> + Send + Sync>), String> + Send + Sync + 'static) -> &mut Self {
-        if !self.rules.contains_key(key) {
-            let info = RuleInfo { key: key.to_string(), output: "a workspace's own cell".to_string(), also: Vec::new(), inputs: BTreeMap::new(), params: None };
-            self.insert(Registered { info, builds: HashMap::new(), unowned: None });
-        }
-        self.rules.get_mut(key).expect("inserted above").unowned = Some(Arc::new(build));
-        self
-    }
-
-    /// Nodes take what they don't say about the workspace's own cells from what they link to by this
-    /// kind of link, as an instance does from its kind.
-    pub fn inherit_through(&mut self, kind: &str) -> &mut Self {
-        self.inherits_through = Some(kind.to_string());
-        self
-    }
-
-    /// Nodes take this from their kind too, if they don't say it, though a system says what it is: a
-    /// row of a table of choices has the options its table has.
-    pub fn passed_down(&mut self, component: &str) -> &mut Self {
-        self.passed_down.insert(component.to_string());
-        self
-    }
-
-    /// The components systems say what they are: declared, filled by a rule, or given a default.
-    pub fn owned(&self) -> HashSet<String> {
-        let mut out: HashSet<String> = self.declared.keys().chain(self.defaults.keys()).cloned().collect();
-        for r in self.rules.values() {
-            out.extend(r.builds.keys().cloned());
-        }
-        out
-    }
-
-    /// Make this key able to fill `C`, built from its parameters. A key can fill several typed
-    /// components this way, and it's still refused on any it hasn't said it can fill. What it may
-    /// follow can depend on its parameters.
-    pub fn rule_on<C: Component>(&mut self, key: &str, build: impl Fn(&Value) -> Result<Rule<C>, String> + Send + Sync + 'static) -> &mut Self {
-        let saved_key = key.to_string();
-        let built: Build = Arc::new(move |params: &Value| {
-            let mut r = build(params)?;
-            r.saved = Some(SavedRule { rule: saved_key.clone(), params: params.clone() });
-            Ok(Backing::Computed(erase_typed(r)))
-        });
-        match self.rules.get_mut(key) {
-            Some(reg) => {
-                reg.info.also.push(C::NAME.to_string());
-                reg.builds.insert(C::NAME.to_string(), built);
-            }
-            None => self.insert(Registered {
-                info: RuleInfo { key: key.to_string(), output: C::NAME.to_string(), also: Vec::new(), inputs: BTreeMap::new(), params: None },
-                builds: HashMap::from([(C::NAME.to_string(), built)]),
-                unowned: None,
-            }),
-        }
+    pub fn advice(&mut self, f: AdviceFn) -> &mut Self {
+        self.advice.push(f);
         self
     }
 
@@ -300,82 +428,73 @@ impl Registry {
         self
     }
 
-    /// This code, as recorded in a log.
-    pub fn code(&self) -> Code {
-        Code { build: self.build.clone(), rules: self.list() }
+    pub fn build_id(&self) -> &str {
+        &self.build
     }
 
-    /// Say that this component goes on nodes, and values must parse as this type.
-    pub fn on_nodes<C: Component>(&mut self) -> &mut Self {
-        self.declare(C::NAME, Place::Node, Some(|v| serde_json::from_value::<C>(v.clone()).map(drop).map_err(|e| e.to_string())))
+    // ---------- reading ----------
+
+    pub fn component_def(&self, name: &str) -> Option<&ComponentDef> {
+        self.components.get(name)
     }
 
-    /// Say that this component goes on links, and values must parse as this type.
-    pub fn on_links<L: Component>(&mut self) -> &mut Self {
-        self.declare(L::NAME, Place::Link, Some(|v| serde_json::from_value::<L>(v.clone()).map(drop).map_err(|e| e.to_string())))
+    pub fn cell_def(&self, name: &str) -> Option<&CellDef> {
+        self.cells.get(name)
     }
 
-    /// The same for a component with no Rust type.
-    pub fn declare(&mut self, name: &str, place: Place, validate: Option<Validate>) -> &mut Self {
-        self.declared.insert(name.to_string(), Declared { place, validate });
-        self
+    pub fn components(&self) -> impl Iterator<Item = &ComponentDef> {
+        self.components.values()
     }
 
-    /// Something that must hold at every node: `f` says what's wrong with the node it's run for.
-    /// It's an ordinary rule in its own column, so it's memoised, and may only read what `spec`
-    /// declares.
-    pub fn invariant(&mut self, spec: RuleSpec, f: impl Fn(&Cx) -> Result<Vec<String>, Error> + Send + Sync + 'static) -> &mut Self {
-        self.check(spec, Severity::Invariant, f)
+    pub fn cells(&self) -> impl Iterator<Item = &CellDef> {
+        self.cells.values()
     }
 
-    /// The same for something that's only worth a look.
-    pub fn notice(&mut self, spec: RuleSpec, f: impl Fn(&Cx) -> Result<Vec<String>, Error> + Send + Sync + 'static) -> &mut Self {
-        self.check(spec, Severity::Notice, f)
+    /// The component whose cell this is, if a component brings it.
+    pub fn owner(&self, cell: &str) -> Option<&str> {
+        self.cells.get(cell).map(|d| d.component.as_str())
     }
 
-    fn check(&mut self, spec: RuleSpec, severity: Severity, f: impl Fn(&Cx) -> Result<Vec<String>, Error> + Send + Sync + 'static) -> &mut Self {
-        let info = CheckInfo { name: spec.name, severity };
-        let column = info.column();
-        let compute = move |_: &Value, cx: &Cx| Ok(Some(serde_json::to_value(f(cx)?).expect("strings serialise")));
-        self.runtime_rule(RuntimeRule { key: column.clone(), output: column.clone(), inputs: spec.inputs, compute: Arc::new(compute) });
-        let saved = SavedRule { rule: column.clone(), params: Value::Null };
-        let backing = self.resolve(&Self::column_key(&column), &saved);
-        self.defaults.insert(column, backing);
-        self.checks.push(info);
-        self
+    /// Whether a node takes this component from its kind.
+    pub fn inheritable(&self, component: &str) -> bool {
+        self.components.get(component).is_none_or(|c| !c.per_entity && c.place == Place::Node)
     }
 
-    /// Everything registered, sorted by key.
-    pub fn list(&self) -> Vec<RuleInfo> {
-        let mut out: Vec<RuleInfo> = self.rules.values().map(|r| r.info.clone()).collect();
-        out.sort_by(|a, b| a.key.cmp(&b.key));
-        out
+    /// Whether a node takes what's in this cell from its kind, when it doesn't say it itself.
+    pub fn cell_inheritable(&self, cell: &str) -> bool {
+        match self.cells.get(cell) {
+            Some(def) => !def.per_entity && self.inheritable(&def.component),
+            None => true,
+        }
     }
 
-    pub fn contains(&self, key: &str) -> bool {
-        self.rules.contains_key(key)
+    pub(crate) fn free(&self) -> Option<&Compile> {
+        self.free.as_ref()
     }
 
-    /// What a written-down rule becomes on this cell. If it can't run, the cell says why, and
-    /// what was written is kept.
-    pub(crate) fn resolve(&self, cell: &Key, saved: &SavedRule) -> Backing {
-        let broken = |e: Error| Backing::Broken(saved.clone(), e);
-        let Some(reg) = self.rules.get(&saved.rule) else {
-            return broken(Error::UnknownRule(saved.rule.clone()));
-        };
-        let Some(build) = reg.builds.get(&cell.1) else {
-            if let Some(unowned) = reg.unowned.as_ref().filter(|_| !self.owned().contains(&cell.1)) {
-                return match unowned(&cell.1, &saved.params) {
-                    Ok((inputs, f)) => Backing::Computed(erase_runtime(Rule { name: saved.rule.clone(), inputs, f, saved: Some(saved.clone()) })),
-                    Err(detail) => broken(Error::Malformed { cell: cell.clone(), detail }),
-                };
+    pub fn all_advice(&self, g: &Graph) -> Vec<Advice> {
+        self.advice.iter().flat_map(|f| f(g)).collect()
+    }
+
+    /// Every check, with the component it's about.
+    pub fn checks(&self) -> impl Iterator<Item = (&str, &CheckDef)> {
+        self.components.values().flat_map(|c| c.checks.iter().map(move |k| (c.name.as_str(), k)))
+    }
+
+    /// The worlds that count: those every entity's constraints allow. `None` if nothing narrows them.
+    pub fn constrained(&self, g: &Graph) -> Option<Bool> {
+        let mut acc: Option<Bool> = None;
+        for c in self.components.values() {
+            let Some(f) = &c.constraint else { continue };
+            for e in g.having(&c.name) {
+                if let Ok(Some(b)) = f(g, e) {
+                    acc = Some(match acc {
+                        Some(a) => &a & &b,
+                        None => b,
+                    });
+                }
             }
-            return broken(Error::WrongRule { rule: saved.rule.clone(), component: cell.1.clone(), provides: reg.info.output.clone() });
-        };
-        build(&saved.params).unwrap_or_else(|detail| broken(Error::Malformed { cell: cell.clone(), detail }))
-    }
-
-    pub(crate) fn column_key(component: &str) -> Key {
-        (Entity::nil(), component.to_string())
+        }
+        acc
     }
 }

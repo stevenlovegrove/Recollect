@@ -1,8 +1,0 @@
-id: 01a1b94e-797b-77e2-9dfe-d0d61960db5e
-components:
-  name: The 80th
-rules:
-  value:
-    rule: expr@1
-    params:
-      text: F[80].f

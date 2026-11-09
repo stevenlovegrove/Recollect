@@ -1,0 +1,7 @@
+id: 01a1bfe8-b5c9-76e4-9799-e0c96ddf79d7
+components:
+- value
+cells:
+  name: After 30 years
+formulas:
+  value: Year[30].balance

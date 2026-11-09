@@ -1,0 +1,14 @@
+id: 01a1bfe8-b67a-7504-86a6-1b3435c811c4
+components:
+- requires
+- value
+cells:
+  name: A board
+formulas:
+  value: all(constraint)
+links:
+- to: 01a1bfe8-b67a-7504-86a6-1b3584b908bf
+  components:
+  - label
+  cells:
+    called: constraint

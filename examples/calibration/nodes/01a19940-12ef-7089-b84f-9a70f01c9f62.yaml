@@ -1,8 +1,0 @@
-id: 01a19940-12ef-7089-b84f-9a70f01c9f62
-components:
-  name: Something else
-  unknown: null
-links:
-- to: 01a19940-12ef-7089-b84f-9a6c78e26291
-  components:
-    alternative: {}

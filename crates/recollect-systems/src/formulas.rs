@@ -1,5 +1,5 @@
-//! Formulas, as a system. A node's `value` is a number or some text typed in, a choice from a
-//! `Domain`, or a formula over what its labelled links reach. See `docs/expressions.md`.
+//! Formulas, as a system. Any cell can hold a value typed in or a formula over what its node has
+//! labelled, and a node's `value` can also be a choice from its options. See `docs/expressions.md`.
 //!
 //! A formula's meaning doesn't mention worlds: in any world, its value is what ordinary evaluation
 //! gives on its inputs' values in that world. World values are how that's worked out exactly, and
@@ -12,19 +12,16 @@
 
 use std::cell::{Cell as StdCell, RefCell};
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
-use recollect_graph::worlds::{Bool, Cond, Space, Worldly};
 use recollect_graph::table::Key;
-use recollect_graph::{Cell, Component, Compute, Cx, Entity, Error, Graph, Inputs, Place, Registry, Rule, RuleMeta, component, rule};
+use recollect_graph::worlds::{Bool, Cond, Space, Worldly};
+use recollect_graph::{Backed, Cell, CellType, Compile, Computed, Cx, Entity, Error, Graph, Registry, Shown, cell};
 use serde_json::{Value, json};
 
-use crate::expr::{self, BinOp, CORE, Expr, Type, Val, inputs_of};
+use crate::expr::{self, BinOp, CORE, Expr, Type, Val};
 use crate::plan::{Choice, Done, Dropped, Need};
 use crate::schedule::{Finish, LatestFinish, LatestStart, PlanEnd, Start};
-use crate::{Catalog, Shown};
-
-/// The rule. Its meaning is fixed by this key, so a change in meaning needs a new one.
-pub const EXPR: &str = "expr@1";
 
 /// The most distinct values a formula can have across worlds. Beyond this, it says so.
 const MOST_CASES: usize = 10_000;
@@ -33,8 +30,16 @@ const MOST_PAIRS: usize = 4_000_000;
 /// The most steps in expanding one formula. Macros calling macros can get very big very quickly.
 pub(crate) const MOST_STEPS: usize = 200_000;
 
-/// A node's answer. Typed in, or from a `Domain`, or from a formula.
-#[component("value")]
+pub const VALUE: &str = "value";
+pub const OPTIONS: &str = "options";
+pub const AT: &str = "at";
+pub const REQUIRES: &str = "requires";
+pub const MACRO: &str = "macro";
+pub const LABEL: &str = "label";
+pub const IS_A: &str = "is_a";
+
+/// A node's answer. Typed in, or a choice from its options, or a formula.
+#[cell("value")]
 pub struct ValueCell(pub Worldly<Val>);
 
 impl ValueCell {
@@ -52,39 +57,24 @@ pub fn truth(v: &ValueCell) -> Bool {
     v.0.0.holds(|v| *v == Val::Bool(true))
 }
 
-/// The options this choice has.
-#[component]
-pub struct Domain(pub Vec<String>);
+/// The options a choice has.
+#[cell("options")]
+pub struct Options(pub Vec<String>);
 
-/// Where this choice goes on a board, if the puzzle has one.
-#[derive(Copy)]
-#[component]
+/// Where a choice goes on a board, if the puzzle has one.
+#[cell("at")]
 pub struct At {
     pub row: u32,
     pub col: u32,
 }
 
-/// Link: the name a formula here uses for that node. Several links with one name make a group.
-#[component]
-pub struct Label(pub String);
-
-/// Link: what kind of thing this is. A node takes any of the workspace's own cells it doesn't say for
-/// itself from its kind, and a formula taken that way reads what the kind has labelled.
-#[component("is_a")]
-pub struct IsA;
-
-/// Only the worlds where this node's value is true count.
-#[component]
-pub struct Requires;
-
-/// A choice that isn't anyone's to make, such as how far you'll drive: it lands one way or another, as
-/// likely as its weights say. What's expected averages over these, and never over a choice still to be
-/// made.
-#[component]
-pub struct Uncertain;
+/// On a label edge: the name a formula on its source uses for its target. Several edges with one name
+/// make a group.
+#[cell]
+pub struct Called(pub String);
 
 /// A function of your own, written as a formula over its parameters.
-#[component("macro")]
+#[cell("macro")]
 pub struct Macro {
     pub params: Vec<String>,
     pub body: String,
@@ -92,7 +82,7 @@ pub struct Macro {
 
 /// A macro, with the macros it uses found. It's a cell so a macro calling itself is a loop in these
 /// cells, which needs nothing special, and so a caller only ever reads one hop.
-#[component("macro_body")]
+#[cell("macro_body")]
 pub struct MacroBody {
     pub params: Vec<String>,
     pub body: Expr,
@@ -101,22 +91,15 @@ pub struct MacroBody {
 
 /// What type a node's value is. A type doesn't depend on a world, or on any value that isn't typed
 /// in, so this reruns far less often than the value does, and stops there when it comes out the same.
-#[component("value_type")]
+#[cell("value_type")]
 pub struct ValueType(pub Type);
 
-/// A formula tried out on a node without changing anything, and how it expands.
-#[component("formula_try")]
-pub struct TryValue(pub Worldly<Val>);
-
-#[component("formula_expansion")]
-pub struct TryExpansion(pub String);
-
-/// What the components of compiled systems hold, for a formula reading them. Anything else is
-/// checked as it runs.
-pub(crate) fn component_type(component: &str) -> Type {
-    match component {
-        "need" | "actionable" | "blocked" | "done" | "dropped" | "requires" => Type::Bool,
-        "estimate" | "start" | "finish" | "latest_start" | "latest_finish" | "slack" | "plan_end" => Type::Number,
+/// What the cells of compiled systems hold, for a formula reading them. Anything else is checked as
+/// it runs.
+pub(crate) fn component_type(cell: &str) -> Type {
+    match cell {
+        "need" | "actionable" | "blocked" | "done" | "dropped" => Type::Bool,
+        "estimate" | "start" | "finish" | "latest_start" | "latest_finish" | "slack" | "plan_end" | "weight" => Type::Number,
         "name" | "body" | "choice" => Type::Text,
         _ => Type::Any,
     }
@@ -205,6 +188,8 @@ enum Binding {
 #[derive(Clone, Default)]
 struct Scope<'m> {
     vars: HashMap<String, Binding>,
+    /// For a node being gone over in an edge's direction, the edge it was reached by: `o.via`.
+    via: HashMap<String, Entity>,
     /// In a macro: what it can call. It can't see anything else.
     macro_uses: Option<&'m BTreeMap<String, MacroBody>>,
 }
@@ -227,9 +212,10 @@ impl<'c, 'a> Expander<'c, 'a> {
         let mut labels: BTreeMap<String, Vec<Entity>> = BTreeMap::new();
         // Names are what the node the formula's written on has labelled, which is a kind's for a
         // formula taken from one.
-        for (to, label) in cx.outgoing_from_origin(Label::NAME)? {
-            let Label(name) = label.decode().map_err(|e| Error::Malformed { cell: (cx.origin(), Label::NAME.to_string()), detail: e.to_string() })?;
-            labels.entry(name).or_default().push(to);
+        for (to, edge) in cx.outgoing_from_origin(LABEL) {
+            if let Some(Called(name)) = cx.get::<Called>(edge)? {
+                labels.entry(name).or_default().push(to);
+            }
         }
         Ok(Expander { cx, labels, parts: RefCell::new(Vec::new()), steps: StdCell::new(0) })
     }
@@ -285,11 +271,16 @@ impl<'c, 'a> Expander<'c, 'a> {
     }
 
     fn group(&self, path: &[String], scope: &Scope) -> Result<Vec<Entity>, Error> {
+        Ok(self.members(path, scope)?.into_iter().map(|(n, _)| n).collect())
+    }
+
+    /// A group's nodes, each with the edge it was reached by, if it was reached along one.
+    fn members(&self, path: &[String], scope: &Scope) -> Result<Vec<(Entity, Option<Entity>)>, Error> {
         let (root, rest) = path.split_first().expect("a path has a first name");
         if let Some(b) = scope.vars.get(root) {
             return match b {
-                Binding::Node(n) => Ok(vec![*n]),
-                Binding::Group(g) => Ok(g.clone()),
+                Binding::Node(n) => Ok(vec![(*n, None)]),
+                Binding::Group(g) => Ok(g.iter().map(|n| (*n, None)).collect()),
                 Binding::Value(_) => failed(format!("{root} isn't a group of nodes")),
             };
         }
@@ -297,25 +288,37 @@ impl<'c, 'a> Expander<'c, 'a> {
             if scope.is_macro() {
                 return failed(format!("a macro can only use its parameters, not {root}.…"));
             }
-            let Some(kind) = rest.first() else { return failed(format!("{root} needs to say which kind")) };
-            return match root.as_str() {
-                "in" => Ok(self.cx.incoming_runtime(kind)?.into_iter().map(|(e, _)| e).collect()),
-                "out" => Ok(self.cx.outgoing_runtime(kind)?.into_iter().map(|(e, _)| e).collect()),
-                _ => self.cx.scan(kind),
-            };
+            let Some(component) = rest.first() else { return failed(format!("{root} needs to say which component, such as {root}.part_of")) };
+            let along = |edges: Vec<(Entity, Entity)>| edges.into_iter().map(|(n, e)| (n, Some(e))).collect();
+            return Ok(match root.as_str() {
+                "in" => along(self.cx.incoming(component)),
+                "out" => along(self.cx.outgoing(component)),
+                _ => self.cx.scan(component).into_iter().map(|n| (n, None)).collect(),
+            });
         }
         if scope.is_macro() {
             return failed(format!("a macro can only use its parameters, not {root}"));
         }
-        if root == "rows" {
-            return Ok(self.cx.rows());
+        let nodes = if root == "rows" {
+            self.cx.rows()
+        } else if rest == ["rows"] && !self.labels.contains_key(root) {
+            // Another table's rows, by its name, as `Arrived.rows`.
+            self.cx.rows_of(root)
+        } else {
+            // No edges yet is fine for a group: a total with no lines is 0.
+            self.labels.get(root).cloned().unwrap_or_default()
+        };
+        Ok(nodes.into_iter().map(|n| (n, None)).collect())
+    }
+
+    /// On an edge, its source as `from` and its target as `to`.
+    fn end(&self, root: &str) -> Option<Entity> {
+        let (from, to) = self.cx.ends()?;
+        match root {
+            "from" => Some(from),
+            "to" => Some(to),
+            _ => None,
         }
-        // Another table's rows, by its name, as `Arrived.rows`.
-        if rest == ["rows"] && !self.labels.contains_key(root) {
-            return Ok(self.cx.rows_of(root));
-        }
-        // No links yet is fine for a group: a total with no lines is 0.
-        Ok(self.labels.get(root).cloned().unwrap_or_default())
     }
 
     fn node_arg(&self, e: &Expr, scope: &Scope) -> Result<Entity, Error> {
@@ -335,6 +338,8 @@ impl<'c, 'a> Expander<'c, 'a> {
                 }
             } else if root == "self" && path.len() == 1 && !scope.is_macro() {
                 return Ok(Binding::Node(self.cx.id()));
+            } else if let Some(end) = self.end(root).filter(|_| path.len() == 1 && !scope.is_macro()) {
+                return Ok(Binding::Node(end));
             } else if along(root).is_some() && !scope.is_macro() {
                 let (by, rest) = steps_along(path);
                 if rest.is_empty()
@@ -394,6 +399,14 @@ impl<'c, 'a> Expander<'c, 'a> {
     fn path(&self, path: &[String], scope: &Scope) -> Result<Id, Error> {
         let (root, rest) = path.split_first().expect("a path has a first name");
         match scope.vars.get(root) {
+            // The edge a node was reached along, as `o.via.weight`.
+            Some(Binding::Node(_)) if rest.first().is_some_and(|r| r == "via") => {
+                return match scope.via.get(root) {
+                    Some(edge) if rest.len() > 1 => Ok(self.read(*edge, &rest[1..])),
+                    Some(_) => failed(format!("{root}.via is an edge, so it needs to say which cell, such as {root}.via.weight")),
+                    None => failed(format!("{root} wasn't reached along an edge, so it has no via")),
+                };
+            }
             Some(Binding::Node(n)) => return Ok(self.read(*n, rest)),
             Some(Binding::Value(c)) if rest.is_empty() => return Ok(*c),
             Some(Binding::Value(c)) => return Ok(self.add(Part::Field(*c, rest.to_vec()))),
@@ -408,6 +421,8 @@ impl<'c, 'a> Expander<'c, 'a> {
             "self" => Ok(self.read(self.cx.id(), rest)),
             "whole" if rest.is_empty() => failed("whole needs to say which cell, such as whole.plan_end"),
             "whole" => Ok(self.read(Entity::whole(), rest)),
+            "from" | "to" if self.end(root).is_some() && rest.is_empty() => failed(format!("{root} needs to say which cell, such as {root}.need")),
+            "from" | "to" if self.end(root).is_some() => Ok(self.read(self.end(root).expect("checked above"), rest)),
             // Before the first row, or with a gap, there's nothing there.
             "prev" | "next" => {
                 let (by, rest) = steps_along(path);
@@ -483,10 +498,16 @@ impl<'c, 'a> Expander<'c, 'a> {
     }
 
     fn fold(&self, func: &str, var: &str, group: &[String], body: &Expr, start: Option<&Expr>, scope: &Scope) -> Result<Id, Error> {
-        let nodes = self.group(group, scope)?;
+        let members = self.members(group, scope)?;
+        let nodes: Vec<Entity> = members.iter().map(|(n, _)| *n).collect();
+        let via: HashMap<Entity, Entity> = members.iter().filter_map(|(n, e)| Some((*n, (*e)?))).collect();
         let copy = |n: Entity| {
             let mut inner = scope.clone();
             inner.vars.insert(var.to_string(), Binding::Node(n));
+            match via.get(&n) {
+                Some(edge) => inner.via.insert(var.to_string(), *edge),
+                None => inner.via.remove(var),
+            };
             self.expand(body, &inner)
         };
         let from = |unit: Val| start.map_or_else(|| Ok(self.lit(unit)), |s| self.expand(s, scope));
@@ -547,7 +568,7 @@ impl<'c, 'a> Expander<'c, 'a> {
             // The library isn't a macro of the kind a workspace writes: it can follow what it says,
             // which is why `inputs_of` looks inside it.
             let vars = self.bind(name, &m.params, args, scope)?;
-            return self.expand(&m.body, &Scope { vars, macro_uses: None });
+            return self.expand(&m.body, &Scope { vars, ..Scope::default() });
         }
         if scope.is_macro() {
             return failed(format!("no function called {name} that this macro has a link to"));
@@ -571,7 +592,7 @@ impl<'c, 'a> Expander<'c, 'a> {
 
     fn call_macro(&self, name: &str, params: &[String], body: &Expr, uses: &BTreeMap<String, MacroBody>, args: &[Expr], scope: &Scope) -> Result<Id, Error> {
         let vars = self.bind(name, params, args, scope)?;
-        self.expand(body, &Scope { vars, macro_uses: Some(uses) })
+        self.expand(body, &Scope { vars, macro_uses: Some(uses), ..Scope::default() })
     }
 
     fn core(&self, name: &str, args: &[Expr], scope: &Scope) -> Result<Id, Error> {
@@ -832,9 +853,9 @@ fn read_cell(cx: &Cx, node: Entity, component: &str, fields: &[String]) -> Resul
         LatestStart::NAME => number_cell(cx.get::<LatestStart>(node)?.map(|c| c.0)),
         LatestFinish::NAME => number_cell(cx.get::<LatestFinish>(node)?.map(|c| c.0)),
         PlanEnd::NAME => number_cell(cx.get::<PlanEnd>(node)?.map(|c| c.0)),
-        _ => match cx.get_runtime(node, component)? {
+        _ => match cx.get_value(node, component)? {
             None => Ev::Data(pure(Val::Undefined)),
-            Some(r) => from_json(r.value).map_err(|detail| Error::Malformed { cell: (node, component.to_string()), detail })?,
+            Some(v) => from_json(v).map_err(|detail| Error::Malformed { cell: (node, component.to_string()), detail })?,
         },
     };
     if fields.is_empty() {
@@ -870,7 +891,11 @@ fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
             };
             Ev::Truth { yes: !&undefined, undefined: space.never() }
         }
-        Part::Has(node, component) => Ev::Truth { yes: space.truth(cx.get_runtime(*node, component)?.is_some()), undefined: space.never() },
+        // A component, if there's one by that name, and otherwise whether there's anything in that cell.
+        Part::Has(node, name) => {
+            let has = if cx.registry().component_def(name).is_some() { cx.has(*node, name) } else { cx.get_value(*node, name)?.is_some() };
+            Ev::Truth { yes: space.truth(has), undefined: space.never() }
+        }
         Part::Chose(decision, option) => {
             let Some(Choice(choice)) = cx.get::<Choice>(*decision)? else { return failed("chose needs a decision") };
             Ev::Truth { yes: choice.holds(|c| *c == Some(*option)), undefined: space.never() }
@@ -1010,7 +1035,7 @@ fn from_json(v: Value) -> Result<Ev, String> {
     Ok(Ev::Data(w.0))
 }
 
-// ---------- the rules ----------
+// ---------- compiling ----------
 
 /// What goes in the cell, given what a formula works out.
 type Wrap<C> = fn(Cond<Val>) -> Result<C, Error>;
@@ -1025,23 +1050,36 @@ fn work_out(cx: &Cx, e: &Expr, expected: &Type) -> Result<Cond<Val>, Error> {
     Ok(evaluate(cx, &closed)?.data())
 }
 
-/// The text a formula is written in, from its rule's parameters.
-pub fn formula_text(params: &Value) -> Result<&str, String> {
-    params.get("text").and_then(Value::as_str).ok_or_else(|| "a formula's parameters are { text }".to_string())
+/// How a formula on a cell that holds `C` is made: it has to give `expected`, and `wrap` makes that
+/// the cell's type.
+pub fn compiler<C: CellType>(expected: Type, wrap: Wrap<C>) -> Compile {
+    Arc::new(move |text: &str| {
+        let e = expr::parse(text)?;
+        let text = text.to_string();
+        let expected = expected.clone();
+        let is_value = C::NAME == ValueCell::NAME;
+        Ok(Computed::typed(&format!("formula on {}", C::NAME), move |cx| {
+            // A value's type is a cell of its own. Reading it first means a loop or a type error is found
+            // there, by looking only at types.
+            if is_value {
+                cx.own::<ValueType>()?;
+            }
+            Ok(Some(wrap(work_out(cx, &e, &expected).map_err(|err| in_text(err, &text))?)?))
+        }))
+    })
 }
 
-/// Say that a formula can fill this component.
-pub fn fills<C: Component>(reg: &mut Registry, expected: Type, wrap: Wrap<C>) {
-    reg.rule_on::<C>(EXPR, move |params| build::<C>(params, expected.clone(), wrap));
-}
-
-/// Say that a formula can fill this component, and what it's worked out by on any node that doesn't
-/// say otherwise. A node can type over it with a value or a formula of its own, and removing that
-/// brings this back.
-pub fn defaults_to<C: Component>(reg: &mut Registry, expected: Type, wrap: Wrap<C>, text: &str) {
-    fills::<C>(reg, expected, wrap);
-    reg.on_nodes::<C>();
-    reg.set_default_rule(C::NAME, EXPR, json!({ "text": text }));
+/// A formula on one of the workspace's own cells, such as a price or a range, which no component
+/// brings. Its type is checked as it runs.
+fn free_compiler() -> Compile {
+    Arc::new(|text: &str| {
+        let e = expr::parse(text)?;
+        let text = text.to_string();
+        Ok(Computed::json("formula", move |cx| {
+            let c = work_out(cx, &e, &Type::Any).map_err(|err| in_text(err, &text))?;
+            Ok(Some(serde_json::to_value(Worldly(c)).expect("values serialise")))
+        }))
+    })
 }
 
 /// What a formula gives a cell that holds true or false. Undefined is `None`.
@@ -1060,32 +1098,15 @@ pub fn number_cases(c: Cond<Val>, what: &str) -> Result<Worldly<Option<f64>>, Er
     Ok(Worldly(c.map(|v| if let Val::Num(n) = v { Some(*n) } else { None })))
 }
 
-fn build<C: Component>(params: &Value, expected: Type, wrap: Wrap<C>) -> Result<Rule<C>, String> {
-    let text = formula_text(params)?;
-    let e = expr::parse(text)?;
-    let inputs = inputs_of(&e);
-    let text = text.to_string();
-    let is_value = C::NAME == ValueCell::NAME;
-    Ok(rule(EXPR).following(inputs).optional(move |cx| {
-        // A value's type is its own column. Reading it first means a loop or a type error is found
-        // there, by looking only at types.
-        if is_value {
-            cx.own::<ValueType>()?;
-        }
-        Ok(Some(wrap(work_out(cx, &e, &expected).map_err(|err| in_text(err, &text))?)?))
-    }))
-}
-
 /// What this formula would give on this node, and what it expands to, with nothing changed. Any part
 /// of a formula can be asked about this way, because it can read what the whole formula can.
 pub fn try_formula(g: &Graph, e: Entity, text: &str) -> Result<(Cond<Val>, String), Error> {
-    let mut tried = g.fork();
-    let params = json!({ "text": text });
-    tried.set_rule(e, TryValue::NAME, EXPR, params.clone());
-    tried.set_rule(e, TryExpansion::NAME, EXPR, params);
-    let value = tried.get::<TryValue>(e)?.expect("a formula always gives something");
-    let expansion = tried.get::<TryExpansion>(e)?.expect("a formula always gives something");
-    Ok((value.0.0, expansion.0))
+    let parsed = expr::parse(text).map_err(Error::Failed)?;
+    g.run(e, |cx| {
+        let expansion = render(&Expander::new(cx)?.expand_all(&parsed)?);
+        let value = work_out(cx, &parsed, &Type::Any).map_err(|err| in_text(err, text))?;
+        Ok((value, expansion))
+    })
 }
 
 /// A formula as it reads once it's been expanded, with nodes as handles. It's as long as it's useful
@@ -1125,111 +1146,6 @@ fn render(closed: &Closed) -> String {
     out.pop().unwrap_or_default()
 }
 
-fn build_expansion(params: &Value) -> Result<Rule<TryExpansion>, String> {
-    let text = formula_text(params)?;
-    let e = expr::parse(text)?;
-    Ok(rule(EXPR).following(inputs_of(&e)).compute(move |cx| Ok(TryExpansion(render(&Expander::new(cx)?.expand_all(&e)?)))))
-}
-
-/// What `expr` gives a `value`.
-fn value_cell(c: Cond<Val>) -> Result<ValueCell, Error> {
-    Ok(ValueCell(Worldly(c)))
-}
-
-/// A formula on one of the workspace's own cells, such as a price or a range, which no system says
-/// anything about. Its type is checked as it runs.
-#[allow(clippy::type_complexity)]
-fn build_unowned(_component: &str, params: &Value) -> Result<(Inputs, std::sync::Arc<dyn Fn(&Cx) -> Cell<Value> + Send + Sync>), String> {
-    let text = formula_text(params)?.to_string();
-    let e = expr::parse(&text)?;
-    let inputs = inputs_of(&e);
-    Ok((
-        inputs,
-        std::sync::Arc::new(move |cx: &Cx| {
-            let c = work_out(cx, &e, &Type::Any).map_err(|err| in_text(err, &text))?;
-            Ok(Some(serde_json::to_value(Worldly(c)).expect("values serialise")))
-        }),
-    ))
-}
-
-/// One of the workspace's own cells as a world value, if it holds what a formula would.
-pub(crate) fn shown_unowned(g: &Graph, e: Entity, component: &str) -> Option<Cell<Shown>> {
-    let r = match g.get_runtime(e, component) {
-        Ok(Some(r)) => r,
-        Ok(None) => return Some(Ok(None)),
-        Err(err) => return Some(Err(err)),
-    };
-    let w: Worldly<Val> = serde_json::from_value(r.value).ok()?;
-    Some(Ok(Some(shown_of(&ValueCell(w)))))
-}
-
-/// A choice's value, for a node with a domain. If its options are all numbers, it reads as numbers.
-#[recollect_graph::rule("formulas/choice")]
-pub struct ChoiceOf;
-
-fn numeric(options: &[String]) -> bool {
-    !options.is_empty() && options.iter().all(|o| o.parse::<f64>().is_ok_and(f64::is_finite))
-}
-
-impl Compute for ChoiceOf {
-    type Output = Option<ValueCell>;
-    fn compute(&self, cx: &Cx) -> Result<Option<ValueCell>, Error> {
-        let Some(Domain(options)) = cx.own::<Domain>()? else { return Ok(None) };
-        // A table's options are what its rows choose from: it isn't a choice itself.
-        if cx.row_key().is_none() && !cx.rows().is_empty() {
-            return Ok(None);
-        }
-        let names: Vec<&str> = options.iter().map(String::as_str).collect();
-        let var = Space::global().uniform(&cx.id().to_string(), &names);
-        let is_numeric = numeric(&options);
-        Ok(Some(ValueCell(Worldly(var.value().map(|o| if is_numeric { Val::Num(o.parse().expect("checked above")) } else { Val::Text(o.clone()) })))))
-    }
-}
-
-/// The options a node chooses between, if it's a choice: it has options, said or taken from its kind or
-/// table, and it isn't a table, whose options are what its rows choose from.
-pub fn options_of(g: &Graph, e: Entity) -> Option<Vec<String>> {
-    let Domain(options) = g.get::<Domain>(e).ok()??;
-    let table = g.row_of(e).is_none() && g.table_here(e).is_some_and(|t| !g.rows(&t).is_empty());
-    (!table).then_some(options)
-}
-
-/// What type a node's value is. It's allowed to read whatever the formula on `value` can.
-#[recollect_graph::rule("formulas/type")]
-pub struct TypeOf;
-
-impl Compute for TypeOf {
-    type Output = Option<ValueType>;
-
-    fn inputs(&self) -> Inputs {
-        Inputs { like: Some(ValueCell::NAME.to_string()), outgoing: vec![Label::NAME.to_string()], ..Inputs::default() }
-    }
-
-    fn compute(&self, cx: &Cx) -> Result<Option<ValueType>, Error> {
-        let Some(saved) = cx.own_rule(ValueCell::NAME) else {
-            let Some(stored) = cx.get_runtime(cx.id(), ValueCell::NAME)? else { return Ok(None) };
-            let v: Worldly<Val> = serde_json::from_value(stored.value).map_err(|e| Error::Malformed { cell: (cx.id(), ValueCell::NAME.to_string()), detail: e.to_string() })?;
-            let mut t = Type::Undefined;
-            for (_, v) in v.0.cases() {
-                t = t.join(&Type::of(v)).unwrap_or(Type::Any);
-            }
-            return Ok(Some(ValueType(t)));
-        };
-        if saved.rule == ChoiceOf::KEY {
-            let Some(Domain(options)) = cx.own::<Domain>()? else { return Ok(None) };
-            return Ok(Some(ValueType(if numeric(&options) { Type::Number } else { Type::Enum(options) })));
-        }
-        if saved.rule != EXPR {
-            return Ok(Some(ValueType(Type::Any)));
-        }
-        let text = formula_text(&saved.params).map_err(Error::Failed)?;
-        let e = expr::parse(text).map_err(Error::Failed)?;
-        let closed = Expander::new(cx)?.expand_all(&e).map_err(|err| in_text(err, text))?;
-        let found = check(cx, &closed).map_err(|err| in_text(err, text))?;
-        Ok(Some(ValueType(found)))
-    }
-}
-
 fn in_text(err: Error, text: &str) -> Error {
     match err {
         Error::Failed(why) => Error::Failed(format!("{why}, in: {text}")),
@@ -1237,44 +1153,86 @@ fn in_text(err: Error, text: &str) -> Error {
     }
 }
 
-/// A macro, with the macros it calls found.
-#[recollect_graph::rule("formulas/macro", outgoing(Label))]
-pub struct MacroOf;
-
-impl Compute for MacroOf {
-    type Output = Option<MacroBody>;
-    fn compute(&self, cx: &Cx) -> Result<Option<MacroBody>, Error> {
-        let Some(Macro { params, body }) = cx.own::<Macro>()? else { return Ok(None) };
-        let parsed = expr::parse(&body).map_err(|e| Error::Failed(format!("{e}, in: {body}")))?;
-        let mut uses = BTreeMap::new();
-        for (to, Label(name)) in cx.outgoing::<Label>()? {
-            if let Some(m) = cx.get::<MacroBody>(to)? {
-                uses.insert(name, m);
-            }
-        }
-        Ok(Some(MacroBody { params, body: parsed, uses }))
-    }
+/// One of the workspace's own cells as a world value, if it holds what a formula would.
+pub fn shown_free(g: &Graph, e: Entity, cell: &str) -> Option<Cell<Shown>> {
+    let v = match g.get_value(e, cell) {
+        Ok(Some(v)) => v,
+        Ok(None) => return Some(Ok(None)),
+        Err(err) => return Some(Err(err)),
+    };
+    let w: Worldly<Val> = serde_json::from_value(v).ok()?;
+    Some(Ok(Some(shown_of(&ValueCell(w)))))
 }
 
-fn valid_label(v: &Value) -> Result<(), String> {
+// ---------- what's built in ----------
+
+fn numeric(options: &[String]) -> bool {
+    !options.is_empty() && options.iter().all(|o| o.parse::<f64>().is_ok_and(f64::is_finite))
+}
+
+/// A choice's value, for a node with options. If its options are all numbers, it reads as numbers. A
+/// table's options are what its rows choose from: it isn't a choice itself.
+fn choice_of(cx: &Cx) -> Cell<ValueCell> {
+    let Some(Options(options)) = cx.own::<Options>()? else { return Ok(None) };
+    if cx.row_key().is_none() && !cx.rows().is_empty() {
+        return Ok(None);
+    }
+    let names: Vec<&str> = options.iter().map(String::as_str).collect();
+    let var = Space::global().uniform(&cx.id().to_string(), &names);
+    let is_numeric = numeric(&options);
+    Ok(Some(ValueCell(Worldly(var.value().map(|o| if is_numeric { Val::Num(o.parse().expect("checked above")) } else { Val::Text(o.clone()) })))))
+}
+
+/// The options a node chooses between, if it's a choice: it has options, said or taken from its kind or
+/// table, and it isn't a table, whose options are what its rows choose from.
+pub fn options_of(g: &Graph, e: Entity) -> Option<Vec<String>> {
+    let Options(options) = g.get::<Options>(e).ok()??;
+    let table = g.row_of(e).is_none() && g.table_here(e).is_some_and(|t| !g.rows(&t).is_empty());
+    (!table).then_some(options)
+}
+
+/// What type a node's value is.
+fn type_of_value(cx: &Cx) -> Cell<ValueType> {
+    Ok(match cx.backed(ValueCell::NAME) {
+        None => None,
+        Some(Backed::Value(v)) => {
+            let v: Worldly<Val> = serde_json::from_value(v).map_err(|e| Error::Malformed { cell: (cx.id(), ValueCell::NAME.to_string()), detail: e.to_string() })?;
+            let mut t = Type::Undefined;
+            for (_, v) in v.0.cases() {
+                t = t.join(&Type::of(v)).unwrap_or(Type::Any);
+            }
+            Some(ValueType(t))
+        }
+        Some(Backed::Builtin) => match cx.own::<Options>()? {
+            Some(Options(options)) => Some(ValueType(if numeric(&options) { Type::Number } else { Type::Enum(options) })),
+            None => None,
+        },
+        Some(Backed::Formula(text)) => {
+            let e = expr::parse(&text).map_err(Error::Failed)?;
+            let closed = Expander::new(cx)?.expand_all(&e).map_err(|err| in_text(err, &text))?;
+            Some(ValueType(check(cx, &closed).map_err(|err| in_text(err, &text))?))
+        }
+    })
+}
+
+/// A macro, with the macros it calls found.
+fn macro_of(cx: &Cx) -> Cell<MacroBody> {
+    let Some(Macro { params, body }) = cx.own::<Macro>()? else { return Ok(None) };
+    let parsed = expr::parse(&body).map_err(|e| Error::Failed(format!("{e}, in: {body}")))?;
+    let mut uses = BTreeMap::new();
+    for (to, edge) in cx.outgoing(LABEL) {
+        if let (Some(Called(name)), Some(m)) = (cx.get::<Called>(edge)?, cx.get::<MacroBody>(to)?) {
+            uses.insert(name, m);
+        }
+    }
+    Ok(Some(MacroBody { params, body: parsed, uses }))
+}
+
+fn valid_name(v: &Value) -> Result<(), String> {
     match v.as_str() {
         Some(s) if expr::is_name(s) => Ok(()),
         _ => Err(format!("a label has to be a name a formula can use, such as rate, not {v}")),
     }
-}
-
-pub fn install(reg: &mut Registry) {
-    if reg.contains(EXPR) {
-        return;
-    }
-    fills::<ValueCell>(reg, Type::Any, value_cell);
-    fills::<TryValue>(reg, Type::Any, |c| Ok(TryValue(Worldly(c))));
-    reg.rule_on::<TryExpansion>(EXPR, build_expansion);
-    reg.rule_on_unowned(EXPR, build_unowned);
-    reg.set_default(ChoiceOf).set_default(TypeOf).set_default(MacroOf);
-    reg.on_nodes::<ValueCell>().on_nodes::<Domain>().on_nodes::<At>().on_nodes::<Requires>().on_nodes::<Uncertain>().on_nodes::<Macro>();
-    reg.declare(Label::NAME, Place::Link, Some(valid_label));
-    reg.on_links::<IsA>().inherit_through(IsA::NAME).passed_down(Domain::NAME);
 }
 
 /// How a value reads. If it's only ever true or false, it reads as the worlds where it's true.
@@ -1283,32 +1241,32 @@ fn shown_of(v: &ValueCell) -> Shown {
     if c.cases().iter().all(|(_, v)| matches!(v, Val::Bool(_))) { Shown::Bool(truth(v)) } else { Shown::cond(c) }
 }
 
-/// The worlds where this node's requirement is met, if it has one.
-fn requirement(g: &Graph, e: Entity) -> Cell<Bool> {
-    if !g.has_own(e, Requires::NAME) {
-        return Ok(None);
-    }
-    Ok(g.get::<ValueCell>(e)?.map(|v| truth(&v)))
-}
+pub fn install(reg: &mut Registry) {
+    reg.free_formulas(free_compiler());
+    reg.component(VALUE, "An answer: typed in, a choice from its options, or a formula over what it has labelled.").icon("=");
+    reg.cell::<ValueCell>(VALUE, "This node's answer: typed in, a choice from its options, or a formula over what it has labelled.")
+        .compiles(compiler::<ValueCell>(Type::Any, |c| Ok(ValueCell(Worldly(c)))))
+        .builtin(choice_of)
+        .shown(shown_of)
+        .summary()
+        .per_entity()
+        .initial(json!(0.0));
+    reg.cell::<ValueType>(VALUE, "").builtin(type_of_value).internal();
 
-pub fn describe(c: &mut Catalog) {
-    let value = c.worldly::<ValueCell>("This node's answer: typed in, a choice from its domain, or a formula over what it has labelled.", shown_of);
-    value.derived = false;
-    value.summary = true;
-    value.initial = Some(json!(0.0));
-    c.fact::<Domain>("The options this choice has.", json!([]));
-    c.fact::<At>("Where this choice goes on a board.", json!({ "row": 0, "col": 0 }));
-    c.fact::<Requires>("Only the worlds where this node's value is true count.", Value::Null);
-    c.fact::<Uncertain>("Not anyone's choice: it lands one way or another, as likely as its weights say. Expected values average over it.", Value::Null);
-    c.fact::<Macro>("A function of your own, which formulas can call by linking here with a label.", json!({ "params": [], "body": "0" }));
-    c.internal::<ValueType>();
-    c.internal::<MacroBody>();
-    c.internal::<TryValue>();
-    c.internal::<TryExpansion>();
-    let label = c.arranging::<Label>("The name a formula on this node uses for that one.", json!(""));
-    label.reversed = true;
+    reg.component(OPTIONS, "A choice between options, one of which its value is.").icon("◇").requires(VALUE);
+    reg.cell::<Options>(OPTIONS, "The options it chooses between.").initial(json!([]));
+    reg.component(AT, "Where a choice goes on a board.").requires(OPTIONS);
+    reg.cell::<At>(AT, "Where a choice goes on a board.").initial(json!({ "row": 0, "col": 0 }));
+
+    reg.component(REQUIRES, "Only the worlds where this node's value is true count.").icon("✦").requires(VALUE).constraint(|g, e| Ok(g.get::<ValueCell>(e)?.map(|v| truth(&v))));
+
+    reg.component(MACRO, "A function of your own, which formulas call by labelling this node.").icon("ƒ");
+    reg.cell::<Macro>(MACRO, "Its parameters, and the formula it stands for.").initial(json!({ "params": [], "body": "0" }));
+    reg.cell::<MacroBody>(MACRO, "").builtin(macro_of).internal();
+
+    reg.edge(LABEL, "The name a formula on this node uses for that one.").arranges().reversed();
+    reg.cell::<Called>(LABEL, "The name a formula on the source uses for the target.").validate(valid_name).initial(json!(""));
     // A kind is where a formula is written, not a step its numbers go through, so it doesn't shape a map.
-    // What its formulas read goes beneath the nodes they run for instead.
-    c.link::<IsA>("What kind of thing this is: it takes any cell of its own it doesn't say from there.", Value::Null);
-    c.constraint_on(requirement);
+    reg.edge(IS_A, "What kind of thing this is: it has its kind's components, and takes any cell it doesn't say from there.");
+    reg.inherit_through(IS_A);
 }

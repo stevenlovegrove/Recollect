@@ -1,9 +1,0 @@
-id: 01a19940-1392-7011-9c30-e86d312176bd
-components:
-  decision: {}
-  name: Travel
-rules:
-  value:
-    rule: expr@1
-    params:
-      text: pick(in.alternative)

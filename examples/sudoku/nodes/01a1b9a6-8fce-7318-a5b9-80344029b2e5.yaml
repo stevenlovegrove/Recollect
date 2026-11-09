@@ -1,8 +1,0 @@
-id: 01a1b9a6-8fce-7318-a5b9-80344029b2e5
-components:
-  name: Column 4 has each number once
-rules:
-  value:
-    rule: expr@1
-    params:
-      text: distinct(Cell[A4], Cell[B4], Cell[C4], Cell[D4])

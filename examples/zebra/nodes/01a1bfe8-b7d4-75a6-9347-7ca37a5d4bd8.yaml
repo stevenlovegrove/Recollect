@@ -1,0 +1,7 @@
+id: 01a1bfe8-b7d4-75a6-9347-7ca37a5d4bd8
+components:
+- value
+cells:
+  name: The Ukrainian drinks tea
+formulas:
+  value: Nationality[Ukrainian] = Drink[Tea]

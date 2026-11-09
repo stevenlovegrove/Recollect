@@ -1,9 +1,0 @@
-id: 01a1b94e-7949-73e6-ad5c-76b603775f14
-components:
-  decision: {}
-  name: Top up in year 5?
-rules:
-  value:
-    rule: expr@1
-    params:
-      text: pick(in.alternative)

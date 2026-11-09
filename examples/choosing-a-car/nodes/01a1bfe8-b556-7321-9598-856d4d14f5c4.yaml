@@ -1,0 +1,9 @@
+id: 01a1bfe8-b556-7321-9598-856d4d14f5c4
+components:
+- decision
+- uncertain
+- value
+cells:
+  name: Miles a year
+formulas:
+  value: pick(in.alternative)

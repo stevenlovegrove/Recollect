@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/recollect-server", "crates/recollect-kernel", "crates/recollect-graph", "crates/recollect-graph-macros", "crates/recollect-systems"]
+members = ["crates/recollect-server", "crates/recollect-graph", "crates/recollect-graph-macros", "crates/recollect-systems"]
 
 [workspace.package]
 version = "0.1.0"

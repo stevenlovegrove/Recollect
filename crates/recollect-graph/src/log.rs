@@ -1,18 +1,16 @@
-//! The action log. A graph held by a `Log` only changes through `commit`, so its state is the
-//! replay of its events, and every fact can answer who set it, when and why.
+//! The action log. A graph held by a `Log` only changes through `commit`, so its state is the replay
+//! of its events, and every fact can answer who set it, when and why.
 //!
 //! ```
 //! # use std::sync::Arc;
-//! # use recollect_graph::{Log, Op, Registry, component};
-//! #[component]
-//! struct Note(String);
-//!
+//! # use recollect_graph::{Log, Op, On, Registry, Stored, Entity};
+//! # use serde_json::json;
 //! let mut log = Log::new(Arc::new(Registry::new()));
-//! let a = recollect_graph::Entity::new();
-//! let seq = log.commit("steven", "first thoughts", vec![Op::set(a, Note("hello".into()))]).unwrap();
-//! assert_eq!(log.graph().get(a), Ok(Some(Note("hello".into()))));
+//! let a = Entity::new();
+//! let seq = log.commit("steven", "first thoughts", vec![Op::Spawn { id: a }, Op::Set { on: On::Node { id: a }, cell: "note".into(), to: Some(Stored::Value(json!("hello"))) }]).unwrap();
+//! assert_eq!(log.graph().get_value(a, "note"), Ok(Some(json!("hello"))));
 //! log.undo(seq, "steven", "changed my mind").unwrap();
-//! assert_eq!(log.graph().get::<Note>(a), Ok(None));
+//! assert!(!log.graph().contains(a));
 //! ```
 //!
 //! On disk the log is what's true, and the YAML files are a projection of it. A commit appends one
@@ -33,19 +31,53 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::graph::{Backing, Component, Entity, Error, Graph, Runtime, Storage};
-use crate::registry::{Code, Place, Registry, SavedRule, Severity};
-use crate::saved::{DirError, LoadProblem, SavedDefaults, SavedGraph, SavedLink, SavedNode, node_path, read_files, remove_temp_files, sync_dir, write_atomically, write_files, write_if_changed};
+use crate::graph::{Backed, Entity, Error, Graph};
+use crate::registry::{Place, Registry, Severity};
+use crate::saved::{DirError, LoadProblem, SavedEdge, SavedGraph, SavedNode, node_path, read_files, remove_temp_files, sync_dir, write_atomically, write_files, write_if_changed};
 
-/// What backs a cell, written down. A closure has no written form, so it can't get into a log.
+/// What's written in a cell.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Stored {
     Value(Value),
-    Rule(SavedRule),
+    Formula(String),
+}
+
+impl Stored {
+    fn of(b: Backed) -> Option<Stored> {
+        match b {
+            Backed::Value(v) => Some(Stored::Value(v)),
+            Backed::Formula(t) => Some(Stored::Formula(t)),
+            Backed::Builtin => None,
+        }
+    }
+}
+
+/// What a cell is on: a node, or the edge from one node to another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum On {
+    Node { id: Entity },
+    Edge { from: Entity, to: Entity },
+}
+
+impl On {
+    pub fn entity(&self) -> Entity {
+        match *self {
+            On::Node { id } => id,
+            On::Edge { from, to } => Entity::edge(from, to),
+        }
+    }
+
+    pub fn target(&self) -> Target {
+        match *self {
+            On::Node { id } => Target::Node(id),
+            On::Edge { from, to } => Target::Edge(from, to),
+        }
+    }
 }
 
 /// The only ways a logged graph changes. Each has an exact inverse, so undo is just more ops.
@@ -54,69 +86,54 @@ pub enum Stored {
 pub enum Op {
     /// A node with nothing on it.
     Spawn { id: Entity },
-    /// Remove a node and every cell on it. Its links have to go first.
+    /// Remove a node and everything it says. Its edges have to go first.
     Despawn { id: Entity },
-    /// Back one cell, creating the node if it's new. `None` removes the cell.
-    Set { id: Entity, component: String, to: Option<Stored> },
-    /// Set one kind on a link. `None` removes it, and removing the last kind removes the link.
-    Link {
-        from: Entity,
-        to: Entity,
-        kind: String,
-        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "present")]
-        value: Option<Value>,
+    /// Give a node a component.
+    Add { id: Entity, component: String },
+    /// Take a component from a node.
+    Remove { id: Entity, component: String },
+    /// Give the edge from one node to another a component, making the edge if it's new.
+    Link { from: Entity, to: Entity, component: String },
+    /// Take a component off an edge. Taking the last one takes the edge.
+    Unlink { from: Entity, to: Entity, component: String },
+    /// Write a value or a formula in a cell. `None` takes away what's written there. As JSON it reads
+    /// `{"op": "set", "id": .., "cell": .., "value": ..}`, or `"formula"`, and an edge's cell has
+    /// `"from"` and `"to"` in place of `"id"`.
+    Set {
+        #[serde(flatten)]
+        on: On,
+        cell: String,
+        #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
+        to: Option<Stored>,
     },
-    /// What backs a component on every node that doesn't say otherwise. `None` goes back to what
-    /// the code says.
-    Default { component: String, to: Option<Stored> },
-}
-
-/// A link value can be `null`, as a unit component is, so `null` here still means it's there.
-fn present<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Value>, D::Error> {
-    Value::deserialize(d).map(Some)
 }
 
 impl Op {
-    /// Back a cell with a value or a registered rule. A closure can't be logged, so passing one
-    /// is a programming error and panics.
-    pub fn set<C: Component>(id: Entity, storage: impl Into<Storage<C>>) -> Op {
-        let to = match storage.into() {
-            Storage::Value(v) => Stored::Value(serde_json::to_value(&v).expect("components serialise")),
-            Storage::Rule(r) => Stored::Rule(r.saved.unwrap_or_else(|| panic!("rule {} is a closure, so it can't be logged: register it", r.name))),
-        };
-        Op::Set { id, component: C::NAME.to_string(), to: Some(to) }
+    pub fn set_value(id: Entity, cell: &str, value: Value) -> Op {
+        Op::Set { on: On::Node { id }, cell: cell.to_string(), to: Some(Stored::Value(value)) }
     }
 
-    pub fn set_runtime(id: Entity, component: &str, value: Value) -> Op {
-        Op::Set { id, component: component.to_string(), to: Some(Stored::Value(value)) }
+    pub fn set<C: crate::CellType>(id: Entity, value: C) -> Op {
+        Op::set_value(id, C::NAME, serde_json::to_value(&value).expect("cells serialise"))
     }
 
-    /// A registered rule by its key.
-    pub fn set_rule(id: Entity, component: &str, rule: &str, params: Value) -> Op {
-        Op::Set { id, component: component.to_string(), to: Some(Stored::Rule(SavedRule { rule: rule.to_string(), params })) }
+    pub fn set_formula(id: Entity, cell: &str, text: &str) -> Op {
+        Op::Set { on: On::Node { id }, cell: cell.to_string(), to: Some(Stored::Formula(text.to_string())) }
     }
 
-    pub fn remove<C: Component>(id: Entity) -> Op {
-        Op::Set { id, component: C::NAME.to_string(), to: None }
+    pub fn add(id: Entity, component: &str) -> Op {
+        Op::Add { id, component: component.to_string() }
     }
 
-    pub fn link<L: Component>(from: Entity, to: Entity, value: L) -> Op {
-        Op::link_runtime(from, to, Runtime::of(&value))
-    }
-
-    pub fn link_runtime(from: Entity, to: Entity, c: Runtime) -> Op {
-        Op::Link { from, to, kind: c.name, value: Some(c.value) }
-    }
-
-    pub fn unlink<L: Component>(from: Entity, to: Entity) -> Op {
-        Op::Link { from, to, kind: L::NAME.to_string(), value: None }
+    pub fn link(from: Entity, to: Entity, component: &str) -> Op {
+        Op::Link { from, to, component: component.to_string() }
     }
 
     pub fn target(&self) -> Target {
         match self {
-            Op::Spawn { id } | Op::Despawn { id } | Op::Set { id, .. } => Target::Node(*id),
-            Op::Link { from, to, .. } => Target::Link(*from, *to),
-            Op::Default { .. } => Target::Defaults,
+            Op::Spawn { id } | Op::Despawn { id } | Op::Add { id, .. } | Op::Remove { id, .. } => Target::Node(*id),
+            Op::Link { from, to, .. } | Op::Unlink { from, to, .. } => Target::Edge(*from, *to),
+            Op::Set { on, .. } => on.target(),
         }
     }
 }
@@ -125,8 +142,17 @@ impl Op {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Target {
     Node(Entity),
-    Link(Entity, Entity),
-    Defaults,
+    Edge(Entity, Entity),
+}
+
+impl Target {
+    /// The nodes it's about.
+    pub fn nodes(&self) -> Vec<Entity> {
+        match *self {
+            Target::Node(e) => vec![e],
+            Target::Edge(a, b) => vec![a, b],
+        }
+    }
 }
 
 /// Something that doesn't hold, and where.
@@ -153,49 +179,17 @@ pub struct Event {
     pub inverse: Vec<Op>,
 }
 
-/// What a cell read as.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Seen {
-    Absent,
-    Value(Value),
-    Error(String),
-}
-
-/// A record that a cell read as this just after this event, under the code current then. Derived
-/// values aren't otherwise kept, so this is what lets a later audit tell if the code has moved.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Witness {
-    pub seq: Option<u64>,
-    pub node: Entity,
-    pub component: String,
-    pub seen: Seen,
-}
-
-/// A witnessed cell that reads differently now, from the same stored facts. So the code changed
-/// what it means.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Drift {
-    pub witness: Witness,
-    pub now: Seen,
-    pub build_then: Option<String>,
-    pub build_now: String,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "record", rename_all = "snake_case")]
 enum Record {
-    /// The code in use from this seq on.
-    Code { from: u64, code: Code },
     Event(Event),
-    Witness(Witness),
     /// The head moved here, with no new event.
     Head { seq: u64, at: u64, author: String, why: String },
 }
 
 #[derive(Debug)]
 pub enum CommitError {
-    /// Nothing changed: these rules would be newly broken, or the ops don't apply.
+    /// Nothing changed: these checks would be newly broken, or the ops don't apply.
     Refused(Vec<Violation>),
     /// Nothing changed: the log couldn't be written.
     Io(std::io::Error),
@@ -300,15 +294,13 @@ pub struct Log {
     events: Vec<Event>,
     /// Where the log is now. `None` only before anything has happened.
     head: Option<u64>,
-    codes: Vec<(u64, Code)>,
-    witnesses: Vec<Witness>,
     disk: Option<Disk>,
 }
 
 impl Log {
     /// A log that lives only in memory.
     pub fn new(registry: Arc<Registry>) -> Self {
-        Log { graph: Graph::with_registry(registry), events: Vec::new(), head: None, codes: Vec::new(), witnesses: Vec::new(), disk: None }
+        Log { graph: Graph::with_registry(registry), events: Vec::new(), head: None, disk: None }
     }
 
     /// Open a directory, creating what's missing and repairing what a crash left. If the files
@@ -349,14 +341,8 @@ impl Log {
         let mut lines = BTreeMap::new();
         for (line, record) in records.into_iter().enumerate() {
             match record {
-                Record::Code { from, code } => log.codes.push((from, code)),
-                Record::Witness(w) => log.witnesses.push(w),
                 Record::Head { seq, .. } => log.head = Some(seq),
-                Record::Event(mut ev) => {
-                    // A log from before there were branches says nothing, and is one straight line.
-                    if ev.parent.is_none() && ev.seq > 0 {
-                        ev.parent = Some(ev.seq - 1);
-                    }
+                Record::Event(ev) => {
                     if ev.seq != log.events.len() as u64 || ev.parent.is_some_and(|p| p >= ev.seq) {
                         return Err(OpenError::Corrupt { line: line + 1, detail: format!("event {} is out of order", ev.seq) });
                     }
@@ -377,11 +363,11 @@ impl Log {
                 apply(&mut log.graph, &op).map_err(|detail| OpenError::Corrupt { line: lines[&seq], detail })?;
             }
         }
-        let replayed = log.saved();
+        let replayed = log.graph.save();
         // The files may be as old as the state at `applied`, which can even be on another branch.
         let base = match applied {
             None => SavedGraph::default(),
-            Some(a) if Some(a) != log.head && (a as usize) < log.events.len() => log.state_at(a).save().expect("only written-down rules reach a log"),
+            Some(a) if Some(a) != log.head && (a as usize) < log.events.len() => log.state_at(a).save(),
             Some(_) => replayed.clone(),
         };
         let last = log.last_seq();
@@ -393,11 +379,6 @@ impl Log {
 
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
         log.disk = Some(Disk { dir: dir.to_path_buf(), log: file, _lock: lock, stale: false, crash_after });
-        if let Some(code) = log.codes.last().map(|(_, c)| c.clone())
-            && code != registry.code()
-        {
-            problems.push(LoadProblem::CodeChanged { was: code, now: registry.code() });
-        }
         if let Some(ops) = Some(diff(&replayed, &intended)).filter(|ops| !ops.is_empty()) {
             let seq = log.record_unchecked(author, "external edit", ops).map_err(|e| match e {
                 CommitError::Io(e) => OpenError::Dir(DirError::Io(e)),
@@ -408,18 +389,12 @@ impl Log {
         }
 
         // Anything still out of step is only behind.
-        let now = log.saved();
+        let now = log.graph.save();
         if applied != log.last_seq() || last != log.last_seq() || !same_graph(&on_disk, &now) {
             log.write_all_files().map_err(OpenError::Dir)?;
         }
 
-        for e in log.graph.entities() {
-            for (name, b) in log.graph.cells.get(&e).into_iter().flatten() {
-                if let Backing::Broken(_, error) = b {
-                    problems.push(LoadProblem::BrokenRule((e, name.clone()), error.clone()));
-                }
-            }
-        }
+        problems.extend(log.graph.broken().into_iter().map(|(key, error)| LoadProblem::BrokenFormula(key, error)));
         let standing = log.violations();
         if !standing.is_empty() {
             problems.push(LoadProblem::Standing(standing));
@@ -474,12 +449,7 @@ impl Log {
         newest
     }
 
-    fn saved(&self) -> SavedGraph {
-        self.graph.save().expect("only written-down rules reach a log, and each resolved against this registry")
-    }
-
-    /// The graph as it was just after event `seq`, with its derived values worked out by the code
-    /// running now.
+    /// The graph as it was just after event `seq`, worked out by the code running now.
     pub fn state_at(&self, seq: u64) -> Graph {
         let mut g = Graph::with_registry(self.graph.registry.clone());
         for s in self.ancestors(seq) {
@@ -495,18 +465,9 @@ impl Log {
         self.path().into_iter().filter(|ev| ev.ops.iter().any(|op| op.target() == target)).collect()
     }
 
-    /// Who last gave a cell or link kind a value on the way here, and why, if anyone has.
-    pub fn blame(&self, target: Target, component: &str) -> Option<&Event> {
-        self.path().into_iter().rev().find(|ev| {
-            ev.ops.iter().any(|op| {
-                op.target() == target
-                    && match op {
-                        Op::Set { component: c, to: Some(_), .. } | Op::Default { component: c, to: Some(_) } => c == component,
-                        Op::Link { kind, value: Some(_), .. } => kind == component,
-                        _ => false,
-                    }
-            })
-        })
+    /// Who last wrote in a cell on the way here, and why, if anyone has.
+    pub fn blame(&self, on: On, cell: &str) -> Option<&Event> {
+        self.path().into_iter().rev().find(|ev| ev.ops.iter().any(|op| matches!(op, Op::Set { on: o, cell: c, to: Some(_) } if *o == on && c == cell)))
     }
 
     /// Every invariant that doesn't hold now, such as after a hand edit.
@@ -530,19 +491,10 @@ impl Log {
         Ok(hypothetical)
     }
 
-    /// The code in use at this event, if it was recorded.
-    pub fn code_at(&self, seq: u64) -> Option<&Code> {
-        self.codes.iter().rev().find(|(from, _)| *from <= seq).map(|(_, c)| c)
-    }
-
-    pub fn witnesses(&self) -> &[Witness] {
-        &self.witnesses
-    }
-
     // ---------- writing ----------
 
-    /// Apply `ops` atomically, or refuse them and change nothing. Rules already broken, such as
-    /// by a hand edit, don't block a commit unless it breaks them in a new way.
+    /// Apply `ops` atomically, or refuse them and change nothing. Checks already broken, such as by a
+    /// hand edit, don't block a commit unless it breaks them in a new way.
     pub fn commit(&mut self, author: &str, why: &str, ops: Vec<Op>) -> Result<u64, CommitError> {
         let inverse = try_apply(&mut self.graph, &ops).map_err(CommitError::Refused)?;
         self.record(author, why, ops, inverse)
@@ -597,9 +549,9 @@ impl Log {
 
     /// Bring in a graph edited outside the log, such as by hand or `git pull`. The files are what
     /// they are, so this always records, as ordinary ops worked out by diffing, and reports any
-    /// rules the edit now breaks rather than refusing it.
+    /// checks the edit now breaks rather than refusing it.
     pub fn reconcile(&mut self, disk: &SavedGraph, author: &str) -> Result<Vec<Violation>, CommitError> {
-        let ops = diff(&self.saved(), disk);
+        let ops = diff(&self.graph.save(), disk);
         if !ops.is_empty() {
             self.record_unchecked(author, "external edit", ops)?;
         }
@@ -611,7 +563,7 @@ impl Log {
     /// whenever something on disk may have changed.
     pub fn reload(&mut self, author: &str) -> Result<Option<u64>, DirError> {
         let Some(dir) = self.disk.as_ref().map(|d| d.dir.clone()) else { return Ok(None) };
-        let ops = diff(&self.saved(), &read_files(&dir)?);
+        let ops = diff(&self.graph.save(), &read_files(&dir)?);
         if ops.is_empty() {
             return Ok(None);
         }
@@ -621,42 +573,6 @@ impl Log {
             Err(CommitError::Io(e)) => Err(DirError::Io(e)),
             Err(other) => unreachable!("{other:?}"),
         }
-    }
-
-    /// Record what a cell reads as now, for a later audit to compare.
-    pub fn witness(&mut self, node: Entity, component: &str) -> Result<Witness, CommitError> {
-        let w = Witness { seq: self.last_seq(), node, component: component.to_string(), seen: seen(&self.graph, node, component) };
-        if let Some(disk) = &mut self.disk {
-            disk.append(&[Record::Witness(w.clone())]).map_err(CommitError::Io)?;
-        }
-        self.witnesses.push(w.clone());
-        Ok(w)
-    }
-
-    /// Replay the log under the code running now, and compare every witnessed cell with what it
-    /// read as at the time. The stored facts are the same by construction, so a difference means
-    /// the code changed what they mean, even if no rule's key or signature did.
-    pub fn audit(&self) -> Vec<Drift> {
-        let build_now = self.graph.registry.code().build;
-        let mut drift = Vec::new();
-        let mut g = Graph::with_registry(self.graph.registry.clone());
-        let mut compare = |g: &Graph, seq: Option<u64>| {
-            for w in self.witnesses.iter().filter(|w| w.seq == seq) {
-                let now = seen(g, w.node, &w.component);
-                if now != w.seen {
-                    let build_then = w.seq.and_then(|s| self.code_at(s)).map(|c| c.build.clone());
-                    drift.push(Drift { witness: w.clone(), now, build_then, build_now: build_now.clone() });
-                }
-            }
-        };
-        compare(&g, None);
-        // Each from nothing, since witnesses can be on any branch.
-        let witnessed: BTreeSet<u64> = self.witnesses.iter().filter_map(|w| w.seq).collect();
-        for seq in witnessed {
-            g = self.state_at(seq);
-            compare(&g, Some(seq));
-        }
-        drift
     }
 
     fn record_unchecked(&mut self, author: &str, why: &str, ops: Vec<Op>) -> Result<u64, CommitError> {
@@ -675,25 +591,14 @@ impl Log {
         let at = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
         let event = Event { seq, parent: self.head, at, author: author.to_string(), why: why.to_string(), ops, inverse };
 
-        let code = self.graph.registry.code();
-        let new_code = self.codes.last().is_none_or(|(_, c)| *c != code);
-        let mut records = Vec::new();
-        if new_code {
-            records.push(Record::Code { from: seq, code: code.clone() });
-        }
-        records.push(Record::Event(event.clone()));
-
         // This is the moment it happens.
         if let Some(disk) = &mut self.disk
-            && let Err(e) = disk.append(&records)
+            && let Err(e) = disk.append(&[Record::Event(event.clone())])
         {
             for op in &event.inverse {
                 apply(&mut self.graph, op).expect("an inverse applies");
             }
             return Err(CommitError::Io(e));
-        }
-        if new_code {
-            self.codes.push((seq, code));
         }
         let touched: BTreeSet<Target> = event.ops.iter().map(Op::target).collect();
         self.events.push(event);
@@ -717,17 +622,16 @@ impl Log {
     }
 
     /// Just the files these changes affect, which is what keeps a commit from costing the whole
-    /// graph. A link lives with its source.
+    /// graph. An edge lives with its source.
     fn write_only(&mut self, touched: &BTreeSet<Target>) -> Result<(), DirError> {
         let last = self.last_seq();
-        let mut ids = BTreeSet::new();
-        for t in touched {
-            match t {
-                Target::Node(e) | Target::Link(e, _) => ids.insert(*e),
-                Target::Defaults => false,
-            };
-        }
-        let saved = self.graph.save_only(ids.iter().copied().filter(|e| self.graph.entities.contains(e))).map_err(DirError::Save)?;
+        let ids: BTreeSet<Entity> = touched
+            .iter()
+            .map(|t| match *t {
+                Target::Node(e) | Target::Edge(e, _) => e,
+            })
+            .collect();
+        let saved = self.graph.save_only(ids.iter().copied().filter(|e| self.graph.contains(*e)));
         let disk = self.disk.as_mut().expect("checked by the caller");
         let (dir, crash) = (disk.dir.clone(), &mut disk.crash_after);
         let mut tick = || step(crash);
@@ -742,9 +646,6 @@ impl Log {
                 tick();
             }
         }
-        if touched.contains(&Target::Defaults) {
-            write_if_changed(&dir.join("graph.yaml"), &serde_yaml_ng::to_string(&saved.defaults)?, &mut tick)?;
-        }
         // Everything has to be durable before anything says it's applied.
         sync_dir(&dir.join("nodes"))?;
         disk.mark_applied(last)?;
@@ -752,7 +653,7 @@ impl Log {
     }
 
     fn write_all_files(&mut self) -> Result<(), DirError> {
-        let (saved, last) = (self.saved(), self.last_seq());
+        let (saved, last) = (self.graph.save(), self.last_seq());
         let Some(disk) = &mut self.disk else { return Ok(()) };
         let dir = disk.dir.clone();
         let crash = &mut disk.crash_after;
@@ -760,16 +661,6 @@ impl Log {
         disk.mark_applied(last)?;
         disk.stale = false;
         Ok(())
-    }
-}
-
-fn seen(g: &Graph, node: Entity, component: &str) -> Seen {
-    match g.get_runtime(node, component) {
-        Ok(None) => Seen::Absent,
-        Ok(Some(r)) => Seen::Value(r.value),
-        // Which cell a loop is said to start from can depend on what was asked first.
-        Err(Error::Cycle(_)) => Seen::Error("a cycle".to_string()),
-        Err(e) => Seen::Error(format!("{e:?}")),
     }
 }
 
@@ -814,87 +705,84 @@ fn read_log(path: &Path) -> Result<(Vec<Record>, u64), OpenError> {
 
 // ---------- applying ----------
 
-fn backing_of(g: &Graph, id: Entity, component: &str, to: &Stored) -> Backing {
-    match to {
-        Stored::Value(v) => Backing::Stored(v.clone()),
-        Stored::Rule(saved) => g.registry.resolve(&(id, component.to_string()), saved),
-    }
-}
-
-fn stored_of(b: &Backing) -> Stored {
-    match b {
-        Backing::Stored(v) => Stored::Value(v.clone()),
-        Backing::Broken(saved, _) => Stored::Rule(saved.clone()),
-        Backing::Computed(r) => Stored::Rule(r.saved.clone().expect("a closure can't get into a log")),
-    }
+/// What's written on an entity, as the ops that would write it back.
+fn rewrite(g: &Graph, on: On) -> Vec<Op> {
+    g.written(on.entity()).into_iter().filter_map(|(cell, b)| Some(Op::Set { on, cell, to: Some(Stored::of(b)?) })).collect()
 }
 
 /// Apply one op, returning what exactly undoes it, in order.
 pub(crate) fn apply(g: &mut Graph, op: &Op) -> Result<Vec<Op>, String> {
+    let node = |g: &Graph, id: &Entity| if g.contains(*id) { Ok(()) } else { Err(format!("{id} doesn't exist")) };
     match op {
         Op::Spawn { id } => {
-            if g.entities.contains(id) {
+            if g.contains(*id) {
                 return Err(format!("{id} already exists"));
             }
             g.adopt(*id);
             Ok(vec![Op::Despawn { id: *id }])
         }
         Op::Despawn { id } => {
-            if !g.entities.contains(id) {
-                return Err(format!("{id} doesn't exist"));
-            }
+            node(g, id)?;
             let mut undo = vec![Op::Spawn { id: *id }];
-            for (name, b) in g.cells.get(id).into_iter().flatten() {
-                undo.push(Op::Set { id: *id, component: name.clone(), to: Some(stored_of(b)) });
-            }
+            undo.extend(g.given(*id).into_iter().map(|component| Op::Add { id: *id, component }));
+            undo.extend(rewrite(g, On::Node { id: *id }));
             if !g.despawn(*id) {
-                return Err(format!("{id} still has links"));
+                return Err(format!("{id} still has edges"));
             }
             Ok(undo)
         }
-        Op::Set { id, component, to } => {
-            let existed = g.entities.contains(id);
-            if !existed && to.is_none() {
-                return Err(format!("{id} doesn't exist"));
+        Op::Add { id, component } => {
+            node(g, id)?;
+            if g.given(*id).contains(component) {
+                return Ok(vec![]);
             }
-            let old = g.cells.get(id).and_then(|c| c.get(component)).map(stored_of);
-            g.adopt(*id);
+            g.add(*id, component);
+            Ok(vec![Op::Remove { id: *id, component: component.clone() }])
+        }
+        Op::Remove { id, component } => {
+            node(g, id)?;
+            if !g.given(*id).contains(component) {
+                return Err(format!("{id} doesn't have {component}"));
+            }
+            g.remove(*id, component);
+            Ok(vec![Op::Add { id: *id, component: component.clone() }])
+        }
+        Op::Link { from, to, component } => {
+            node(g, from)?;
+            node(g, to)?;
+            if g.linked(*from, *to, component) {
+                return Ok(vec![]);
+            }
+            g.link(*from, *to, component);
+            Ok(vec![Op::Unlink { from: *from, to: *to, component: component.clone() }])
+        }
+        Op::Unlink { from, to, component } => {
+            if !g.linked(*from, *to, component) {
+                return Err(format!("the edge {from} → {to} doesn't have {component}"));
+            }
+            let edge = Entity::edge(*from, *to);
+            let last = g.given(edge).len() == 1;
+            let mut undo = vec![Op::Link { from: *from, to: *to, component: component.clone() }];
+            if last {
+                undo.extend(rewrite(g, On::Edge { from: *from, to: *to }));
+            }
+            g.unlink(*from, *to, component);
+            Ok(undo)
+        }
+        Op::Set { on, cell, to } => {
+            let e = on.entity();
+            match on {
+                On::Node { id } => node(g, id)?,
+                On::Edge { from, to } if !g.is_edge(e) => return Err(format!("there's no edge {from} → {to}")),
+                On::Edge { .. } => {}
+            }
+            let old = g.written(e).remove(cell).and_then(Stored::of);
             match to {
-                Some(to) => {
-                    let backing = backing_of(g, *id, component, to);
-                    g.back(*id, component, backing);
-                }
-                None => {
-                    g.remove_named(*id, component);
-                }
-            }
-            // Creating something is undone by removing it, not by leaving it empty.
-            Ok(if existed { vec![Op::Set { id: *id, component: component.clone(), to: old }] } else { vec![Op::Despawn { id: *id }] })
-        }
-        Op::Link { from, to, kind, value } => {
-            if !g.entities.contains(from) || !g.entities.contains(to) {
-                return Err(format!("link {from} → {to} needs both ends to exist"));
-            }
-            let bag = g.links.get(&(*from, *to));
-            if bag.is_none() && value.is_none() {
-                return Err(format!("link {from} → {to} doesn't exist"));
-            }
-            let old = bag.and_then(|b| b.get(kind)).cloned();
-            match value {
-                Some(v) => g.link_runtime(*from, *to, Runtime::new(kind, v.clone())),
-                None => g.unlink_named(*from, *to, kind),
+                Some(Stored::Value(v)) => g.set_value(e, cell, v.clone()),
+                Some(Stored::Formula(text)) => g.set_formula(e, cell, text),
+                None => g.clear(e, cell),
             };
-            Ok(vec![Op::Link { from: *from, to: *to, kind: kind.clone(), value: old }])
-        }
-        Op::Default { component, to } => {
-            let from_code = g.registry.defaults.get(component).cloned();
-            let old = g.defaults.get(component).filter(|b| !from_code.as_ref().is_some_and(|c| crate::saved::same(c, b))).map(stored_of);
-            let backing = match to {
-                Some(to) => Some(backing_of(g, Entity::nil(), component, to)),
-                None => from_code,
-            };
-            g.back_default(component, backing);
-            Ok(vec![Op::Default { component: component.clone(), to: old }])
+            Ok(vec![Op::Set { on: *on, cell: cell.clone(), to: old }])
         }
     }
 }
@@ -937,76 +825,76 @@ fn try_apply(g: &mut Graph, ops: &[Op]) -> Result<Vec<Op>, Vec<Violation>> {
 
 // ---------- checking ----------
 
-/// What declarations say about these targets, which doesn't depend on anything else, so a commit
+/// What the definitions say about these targets, which doesn't depend on anything else, so a commit
 /// only has to look at what it touched.
 fn check_values(g: &Graph, targets: &BTreeSet<Target>) -> Vec<Violation> {
+    let reg = g.registry();
     let mut out = Vec::new();
-    let declared = &g.registry.declared;
-    let mut check = |on: Target, place: Place, what: String, c: &str, v: Option<&Value>| {
-        let Some(d) = declared.get(c) else { return };
-        if d.place != place {
-            out.push(Violation { rule: "component_on_wrong_target".to_string(), on, detail: format!("{what} holds {c}, which goes on a {}", if d.place == Place::Node { "node" } else { "link" }) });
-        }
-        if let (Some(v), Some(validate)) = (v, d.validate)
-            && let Err(e) = validate(v)
-        {
-            out.push(Violation { rule: "malformed_component".to_string(), on, detail: format!("{what}.{c}: {e}") });
-        }
-    };
-    let mut broken = Vec::new();
     for t in targets {
-        match *t {
-            Target::Node(e) => {
-                for (c, b) in g.cells.get(&e).into_iter().flatten() {
-                    let value = if let Backing::Stored(v) = b { Some(v) } else { None };
-                    check(*t, Place::Node, e.to_string(), c, value);
-                    if let Backing::Broken(_, error) = b {
-                        broken.push(Violation { rule: "rule_cannot_run".to_string(), on: *t, detail: format!("{e}.{c}: {error:?}") });
+        let (e, place, what) = match *t {
+            Target::Node(e) if g.contains(e) => (e, Place::Node, e.to_string()),
+            Target::Edge(from, to) if g.is_edge(Entity::edge(from, to)) => {
+                if from == to {
+                    out.push(Violation { rule: "no_self_links".to_string(), on: *t, detail: format!("{from} links to itself") });
+                }
+                (Entity::edge(from, to), Place::Edge, format!("{from} → {to}"))
+            }
+            _ => continue,
+        };
+        for c in g.given(e) {
+            match reg.component_def(&c) {
+                None => out.push(Violation { rule: "unknown_component".to_string(), on: *t, detail: format!("{what} has {c}, which no system provides") }),
+                Some(def) if def.place != place => out.push(Violation { rule: "component_on_wrong_target".to_string(), on: *t, detail: format!("{what} has {c}, which goes on {}", if def.place == Place::Node { "a node" } else { "an edge" }) }),
+                Some(_) => {}
+            }
+        }
+        for (cell, b) in g.written(e) {
+            let def = reg.cell_def(&cell);
+            if let Some(def) = def
+                && !g.has(e, &def.component)
+            {
+                out.push(Violation { rule: "cell_without_component".to_string(), on: *t, detail: format!("{what}.{cell} belongs to {}, which it doesn't have", def.component) });
+            }
+            match b {
+                Backed::Value(v) => {
+                    if let Some(Err(why)) = def.and_then(|d| d.validate).map(|f| f(&v)) {
+                        out.push(Violation { rule: "malformed_cell".to_string(), on: *t, detail: format!("{what}.{cell}: {why}") });
                     }
                 }
-            }
-            Target::Link(from, to) => {
-                for (c, v) in g.links.get(&(from, to)).into_iter().flatten() {
-                    check(*t, Place::Link, format!("{from} → {to}"), c, Some(v));
-                }
-                if from == to && g.links.contains_key(&(from, to)) {
-                    broken.push(Violation { rule: "no_self_links".to_string(), on: *t, detail: format!("{from} links to itself") });
-                }
-            }
-            Target::Defaults => {
-                for (c, b) in &g.defaults {
-                    if let Backing::Broken(_, error) = b {
-                        broken.push(Violation { rule: "rule_cannot_run".to_string(), on: *t, detail: format!("{c}: {error:?}") });
+                Backed::Formula(_) => {
+                    if let Some(error) = g.formula_error(e, &cell) {
+                        out.push(Violation { rule: "formula_cannot_be_read".to_string(), on: *t, detail: format!("{what}.{cell}: {error:?}") });
                     }
                 }
+                Backed::Builtin => {}
             }
         }
     }
-    out.append(&mut broken);
     out
 }
 
 fn all_targets(g: &Graph) -> BTreeSet<Target> {
     let nodes = g.entities().map(Target::Node);
-    let links = g.links.keys().map(|(f, t)| Target::Link(*f, *t));
-    nodes.chain(links).chain([Target::Defaults]).collect()
+    let edges = g.edges().map(|(_, f, t)| Target::Edge(f, t));
+    nodes.chain(edges).collect()
 }
 
-/// Every check of this severity, at every node. They're memoised, so this only reruns the ones an
-/// edit reached.
+/// Every check of this severity, on everything with its component. They're memoised, so this only
+/// reruns the ones an edit reached.
 fn check_rules(g: &Graph, severity: Severity) -> Vec<Violation> {
     let mut out = Vec::new();
-    for check in g.registry.checks.iter().filter(|c| c.severity == severity) {
-        let column = check.column();
-        for e in g.entities() {
-            let details = match g.get_runtime(e, &column) {
-                Ok(Some(r)) => serde_json::from_value::<Vec<String>>(r.value).unwrap_or_default(),
+    let entities: Vec<(Entity, Target)> = g.entities().map(|e| (e, Target::Node(e))).chain(g.edges().map(|(e, f, t)| (e, Target::Edge(f, t)))).collect();
+    for (component, check) in g.registry().checks().filter(|(_, c)| c.severity == severity) {
+        let cell = check.cell();
+        for (e, target) in entities.iter().filter(|(e, _)| g.has(*e, component)) {
+            let details = match g.get_value(*e, &cell) {
+                Ok(Some(v)) => serde_json::from_value::<Vec<String>>(v).unwrap_or_default(),
                 Ok(None) => Vec::new(),
                 Err(Error::Cycle(_)) => vec!["couldn't be checked: it reads itself".to_string()],
                 Err(error) => vec![format!("couldn't be checked: {error:?}")],
             };
             for detail in details {
-                out.push(Violation { rule: check.name.clone(), on: Target::Node(e), detail });
+                out.push(Violation { rule: check.name.clone(), on: *target, detail });
             }
         }
     }
@@ -1020,11 +908,11 @@ fn by_id(g: &SavedGraph) -> BTreeMap<Entity, &SavedNode> {
 }
 
 fn same_graph(a: &SavedGraph, b: &SavedGraph) -> bool {
-    by_id(a) == by_id(b) && a.defaults == b.defaults
+    by_id(a) == by_id(b)
 }
 
 /// What the files are saying, given the state they might still be catching up from and the state
-/// they should now be in. `disk` may also mention nodes only as link targets, which get an empty
+/// they should now be in. `disk` may also mention nodes only as edge targets, which get an empty
 /// node, as a load would.
 fn merge(disk: &SavedGraph, base: &SavedGraph, current: &SavedGraph, problems: &mut Vec<LoadProblem>) -> SavedGraph {
     let (d, b, c) = (by_id(disk), by_id(base), by_id(current));
@@ -1043,57 +931,54 @@ fn merge(disk: &SavedGraph, base: &SavedGraph, current: &SavedGraph, problems: &
             dangling.insert(link.to);
         }
     }
-    nodes.extend(dangling.into_iter().map(|id| SavedNode { id, components: BTreeMap::new(), rules: BTreeMap::new(), links: Vec::new() }));
+    nodes.extend(dangling.into_iter().map(SavedNode::empty));
     nodes.sort_by_key(|n| n.id);
-    let defaults: SavedDefaults = if disk.defaults == base.defaults || disk.defaults == current.defaults { current.defaults.clone() } else { disk.defaults.clone() };
-    SavedGraph { nodes, defaults }
+    SavedGraph { nodes }
 }
 
-fn cells_of(components: &BTreeMap<String, Value>, rules: &BTreeMap<String, SavedRule>) -> BTreeMap<String, Stored> {
-    let values = components.iter().map(|(c, v)| (c.clone(), Stored::Value(v.clone())));
-    values.chain(rules.iter().map(|(c, r)| (c.clone(), Stored::Rule(r.clone())))).collect()
+fn cells_of(cells: &BTreeMap<String, Value>, formulas: &BTreeMap<String, String>) -> BTreeMap<String, Stored> {
+    let values = cells.iter().map(|(c, v)| (c.clone(), Stored::Value(v.clone())));
+    values.chain(formulas.iter().map(|(c, f)| (c.clone(), Stored::Formula(f.clone())))).collect()
 }
 
-fn links_of(links: &[SavedLink]) -> BTreeMap<(Entity, String), Value> {
-    links.iter().flat_map(|l| l.components.iter().map(|(k, v)| ((l.to, k.clone()), v.clone()))).collect()
+/// The ops that turn one cell list into another.
+fn set_ops(on: On, was: BTreeMap<String, Stored>, is: BTreeMap<String, Stored>, ops: &mut Vec<Op>) {
+    for (c, v) in &is {
+        if was.get(c) != Some(v) {
+            ops.push(Op::Set { on, cell: c.clone(), to: Some(v.clone()) });
+        }
+    }
+    ops.extend(was.keys().filter(|c| !is.contains_key(*c)).map(|c| Op::Set { on, cell: c.clone(), to: None }));
 }
 
 /// The ops that turn one written-down graph into another: new nodes first and gone nodes last, so
 /// they all apply.
 fn diff(from: &SavedGraph, to: &SavedGraph) -> Vec<Op> {
     let (old, new) = (by_id(from), by_id(to));
-    let empty = SavedNode { id: Entity::nil(), components: BTreeMap::new(), rules: BTreeMap::new(), links: Vec::new() };
+    let empty = SavedNode::empty(Entity::whole());
     let mut ops: Vec<Op> = new.keys().filter(|id| !old.contains_key(id)).map(|id| Op::Spawn { id: *id }).collect();
-
-    let (was, is) = (cells_of(&from.defaults.components, &from.defaults.rules), cells_of(&to.defaults.components, &to.defaults.rules));
-    for (c, v) in &is {
-        if was.get(c) != Some(v) {
-            ops.push(Op::Default { component: c.clone(), to: Some(v.clone()) });
-        }
-    }
-    ops.extend(was.keys().filter(|c| !is.contains_key(*c)).map(|c| Op::Default { component: c.clone(), to: None }));
-
-    let mut link_ops = Vec::new();
+    let (mut edge_ops, mut removals) = (Vec::new(), Vec::new());
     for id in old.keys().chain(new.keys()).collect::<BTreeSet<_>>() {
         let (a, b) = (old.get(id).copied().unwrap_or(&empty), new.get(id).copied().unwrap_or(&empty));
         if new.contains_key(id) {
-            let (was, is) = (cells_of(&a.components, &a.rules), cells_of(&b.components, &b.rules));
-            for (c, v) in &is {
-                if was.get(c) != Some(v) {
-                    ops.push(Op::Set { id: *id, component: c.clone(), to: Some(v.clone()) });
-                }
-            }
-            ops.extend(was.keys().filter(|c| !is.contains_key(*c)).map(|c| Op::Set { id: *id, component: c.clone(), to: None }));
+            ops.extend(b.components.iter().filter(|c| !a.components.contains(c)).map(|c| Op::Add { id: *id, component: c.clone() }));
+            set_ops(On::Node { id: *id }, cells_of(&a.cells, &a.formulas), cells_of(&b.cells, &b.formulas), &mut ops);
+            removals.extend(a.components.iter().filter(|c| !b.components.contains(c)).map(|c| Op::Remove { id: *id, component: c.clone() }));
         }
-        let (was, is) = (links_of(&a.links), links_of(&b.links));
-        for ((t, k), v) in &is {
-            if was.get(&(*t, k.clone())) != Some(v) {
-                link_ops.push(Op::Link { from: *id, to: *t, kind: k.clone(), value: Some(v.clone()) });
+        let edges = |n: &SavedNode| -> BTreeMap<Entity, SavedEdge> { n.links.iter().map(|l| (l.to, l.clone())).collect() };
+        let (was, is) = (edges(a), edges(b));
+        for t in was.keys().chain(is.keys()).collect::<BTreeSet<_>>() {
+            let blank = SavedEdge { to: *t, components: Vec::new(), cells: BTreeMap::new(), formulas: BTreeMap::new() };
+            let (x, y) = (was.get(t).unwrap_or(&blank), is.get(t).unwrap_or(&blank));
+            edge_ops.extend(y.components.iter().filter(|c| !x.components.contains(c)).map(|c| Op::Link { from: *id, to: *t, component: c.clone() }));
+            if !y.components.is_empty() {
+                set_ops(On::Edge { from: *id, to: *t }, cells_of(&x.cells, &x.formulas), cells_of(&y.cells, &y.formulas), &mut edge_ops);
             }
+            edge_ops.extend(x.components.iter().filter(|c| !y.components.contains(c)).map(|c| Op::Unlink { from: *id, to: *t, component: c.clone() }));
         }
-        link_ops.extend(was.keys().filter(|k| !is.contains_key(*k)).map(|(t, k)| Op::Link { from: *id, to: *t, kind: k.clone(), value: None }));
     }
-    ops.append(&mut link_ops);
+    ops.append(&mut edge_ops);
+    ops.append(&mut removals);
     ops.extend(old.keys().filter(|id| !new.contains_key(id)).map(|id| Op::Despawn { id: *id }));
     ops
 }

@@ -1,0 +1,18 @@
+id: 01a1bfe8-b61b-702a-8227-8ac5b392dd5f
+components:
+- value
+cells:
+  name: South Australia ≠ Queensland
+formulas:
+  value: a != b
+links:
+- to: 01a1bfe8-b61b-702a-8227-8abbf7f64e07
+  components:
+  - label
+  cells:
+    called: a
+- to: 01a1bfe8-b61b-702a-8227-8abcc391acee
+  components:
+  - label
+  cells:
+    called: b

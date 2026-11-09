@@ -1,0 +1,18 @@
+id: 01a1bfe8-b4e4-71c2-900a-b2c7ed5c0ea0
+components:
+- value
+cells:
+  name: Widgets
+formulas:
+  value: quantity * price
+links:
+- to: 01a1bfe8-b4e4-71c2-900a-b2c58f276762
+  components:
+  - label
+  cells:
+    called: quantity
+- to: 01a1bfe8-b4e4-71c2-900a-b2c6981d896a
+  components:
+  - label
+  cells:
+    called: price

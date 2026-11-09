@@ -1,8 +1,0 @@
-id: 01a1b9a6-9081-76c8-be09-f9655fa1d589
-components:
-  name: The Norwegian lives in the first house
-rules:
-  value:
-    rule: expr@1
-    params:
-      text: Nationality[Norwegian] = 1

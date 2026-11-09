@@ -6,11 +6,10 @@
 use std::collections::{BTreeMap, HashMap};
 
 use recollect_graph::worlds::{Bool, Picks, Space, Var};
-use recollect_graph::{Component, Entity, Error, Event, Graph, Log, Op, Stored, Target, Violation};
-use recollect_systems::formulas::{EXPR, Uncertain, formula_text};
+use recollect_graph::{Backed, CellDef, ComponentDef, ComponentType, Entity, Error, Event, Graph, Log, Named, On, Op, Origin, Shown, Source, Stored, Violation};
+use recollect_systems::formulas::{LABEL, shown_free};
 use recollect_systems::notes::Body;
-use recollect_systems::plan::{self, Matrix, WorkItem};
-use recollect_systems::{Catalog, ComponentInfo, Shown};
+use recollect_systems::plan::{self, Matrix, UNCERTAIN, WorkItem};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -21,19 +20,15 @@ pub type World = BTreeMap<String, String>;
 /// What a cell holds, for reading.
 #[derive(Debug, Serialize)]
 pub struct CellView {
-    /// "stored" if typed in, "rule" if worked out.
+    /// Where what's in it comes from: "own" if the entity says it, "kind" if it takes it from a kind,
+    /// and "default" if it's what its component says when nothing else does.
     pub source: &'static str,
-    /// The rule, if one backs it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rule: Option<String>,
-    /// Whether this node says so itself, rather than taking the default for every node.
-    pub own: bool,
-    /// The kind that says what it is, if one does. It's taken from there unless `own`.
+    /// The kind it's taken from, if it is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<Entity>,
-    /// One of the workspace's own cells, such as a price, which no system says anything about.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub workspace: bool,
+    /// The kind that would say what it is, if this entity didn't.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub beneath: Option<Entity>,
     /// The formula, if one backs it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub formula: Option<String>,
@@ -80,10 +75,33 @@ pub struct NamedView {
     pub when: Reading,
 }
 
+/// Why an entity has a component.
+#[derive(Debug, Serialize)]
+pub struct HasView {
+    pub name: String,
+    /// "given", "everywhere", "kind", "requires" or "edge".
+    pub why: &'static str,
+    /// The kind or edge it comes from, or the component that requires it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+}
+
+fn has_view(name: &str, origin: &Origin) -> HasView {
+    let (why, from) = match origin {
+        Origin::Given => ("given", None),
+        Origin::Everywhere => ("everywhere", None),
+        Origin::Kind(k) => ("kind", Some(k.to_string())),
+        Origin::Requires(c) => ("requires", Some(c.clone())),
+        Origin::Edge(e) => ("edge", Some(e.to_string())),
+    };
+    HasView { name: name.to_string(), why, from }
+}
+
 #[derive(Debug, Serialize)]
 pub struct NodeView {
     pub id: Entity,
     pub name: String,
+    pub components: Vec<HasView>,
     pub cells: BTreeMap<String, CellView>,
     /// Which row of which table its name makes it, if it does.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -91,7 +109,7 @@ pub struct NodeView {
     /// The rows of related tables with the same key: with this one, they're one thing.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<Entity>,
-    /// The rows its cells read by where they are, as `prev` or `Year[3]` do, rather than through a link.
+    /// The rows its cells read by where they are, as `prev` or `Year[3]` do, rather than through an edge.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub reads: Vec<Entity>,
     /// A row nobody wrote, here because something that was written reads it. It's worked out from its
@@ -101,40 +119,19 @@ pub struct NodeView {
 }
 
 #[derive(Debug, Serialize)]
+pub struct EdgeView {
+    pub id: Entity,
+    pub from: Entity,
+    pub to: Entity,
+    pub components: Vec<String>,
+    pub cells: BTreeMap<String, CellView>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct RowView {
     pub table: String,
     /// A number for a row in order, or text.
     pub key: Value,
-}
-
-fn node_view(g: &Graph, e: Entity, name: String, cells: BTreeMap<String, CellView>) -> NodeView {
-    let row = g.row_of(e).map(|r| RowView {
-        table: r.table.clone(),
-        key: match &r.key {
-            recollect_graph::table::Key::Num(n) => json!(n),
-            recollect_graph::table::Key::Text(t) => json!(t),
-        },
-    });
-    // What its cells read last time they ran, which they just did.
-    let mut reads: Vec<Entity> = cells
-        .keys()
-        .flat_map(|c| g.reads_of(e, c))
-        .filter_map(|d| match d {
-            recollect_graph::Dep::Cell((x, _)) if x != e && g.row_of(x).is_some() && g.link_value(e, x, "label").is_none() => Some(x),
-            _ => None,
-        })
-        .collect();
-    reads.sort();
-    reads.dedup();
-    NodeView { id: e, name, cells, row, parts: g.parts_of(e), reads, unwritten: !g.contains(e) }
-}
-
-#[derive(Debug, Serialize)]
-pub struct LinkView {
-    pub from: Entity,
-    pub to: Entity,
-    pub kind: String,
-    pub value: Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -142,12 +139,13 @@ pub struct OptionView {
     /// What the option is called to the engine: a handle, or plain text for a puzzle.
     pub id: String,
     pub name: String,
+    /// How strongly it was believed before any evidence: its weight, out of all the options'.
     pub weight: f64,
     pub gap: bool,
     /// Some world still in play lands here.
     pub possible: bool,
     pub picked: bool,
-    /// How likely it is now: its weight, given what's pinned and whatever rules worlds out.
+    /// How strongly it's believed now, given what's pinned and whatever rules worlds out.
     pub chance: f64,
 }
 
@@ -155,7 +153,7 @@ pub struct OptionView {
 #[derive(Debug, Serialize)]
 pub struct ClueView {
     pub var: String,
-    /// The chance of this question's likeliest answer, on average over what that one turns out to be.
+    /// The belief in this question's likeliest answer, on average over what that one turns out to be.
     pub sure: f64,
 }
 
@@ -166,7 +164,7 @@ pub struct VarView {
     pub options: Vec<OptionView>,
     /// Not anyone's to choose, so what's expected averages over it.
     pub uncertain: bool,
-    /// For something uncertain that's still open: the chance of its likeliest answer now.
+    /// For something uncertain that's still open: the belief in its likeliest answer now.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sure: Option<f64>,
     /// The other uncertain things that would help most to find out, best first, for working this out.
@@ -207,11 +205,43 @@ pub struct WorkspaceView {
 #[derive(Debug, Serialize)]
 pub struct RanView {
     pub node: Entity,
+    pub cell: String,
+}
+
+/// A cell's definition, with what follows from it.
+#[derive(Debug, Serialize)]
+pub struct CellInfo {
+    #[serde(flatten)]
+    pub def: CellDefView,
+    /// Worked out, unless something says otherwise.
+    pub computed: bool,
+    /// It can hold a formula.
+    pub formulas: bool,
+    /// Anything can be written in it.
+    pub settable: bool,
+}
+
+/// What's said about a cell, as it's sent.
+#[derive(Debug, Serialize)]
+pub struct CellDefView {
+    pub name: String,
     pub component: String,
+    pub about: String,
+    pub internal: bool,
+    pub summary: bool,
+    pub quiet: bool,
+    pub truth: bool,
+    pub per_entity: bool,
+    pub initial: Option<Value>,
+}
+
+fn cell_info(d: &CellDef) -> CellInfo {
+    let def = CellDefView { name: d.name.clone(), component: d.component.clone(), about: d.about.clone(), internal: d.internal, summary: d.summary, quiet: d.quiet, truth: d.truth, per_entity: d.per_entity, initial: d.initial.clone() };
+    CellInfo { def, computed: d.computed(), formulas: d.formulas(), settable: d.settable() }
 }
 
 /// Everything there is to see.
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct View {
     pub workspace: WorkspaceView,
     /// Where the log is now.
@@ -221,9 +251,9 @@ pub struct View {
     pub nodes: Vec<NodeView>,
     /// Rows nobody wrote that a node here reads, so a map can show them: see `NodeView::unwritten`.
     pub unwritten: Vec<NodeView>,
-    pub links: Vec<LinkView>,
-    pub components: Vec<ComponentInfo>,
-    pub rules: Vec<recollect_graph::RuleInfo>,
+    pub edges: Vec<EdgeView>,
+    pub components: Vec<ComponentDef>,
+    pub cells: Vec<CellInfo>,
     pub worlds: WorldsView,
     pub checks: Vec<CheckView>,
     /// The cells that actually ran to answer this, since the last time anyone asked.
@@ -265,12 +295,9 @@ fn describe_error(e: &Error, labels: &Labels) -> String {
             names.dedup();
             format!("depends on itself, through {}", names.join(", "))
         }
-        Error::Undeclared { rule, read } => format!("{rule} read {read}, which it didn't declare"),
         Error::Missing((n, c)) => format!("needs {c} on {}, which isn't there", labels.of(&n.to_string())),
         Error::Malformed { cell: (n, c), detail } => format!("{c} on {} isn't valid: {detail}", labels.of(&n.to_string())),
         Error::Failed(s) => relabel(s, labels),
-        Error::UnknownRule(r) => format!("no system provides the rule {r}"),
-        Error::WrongRule { rule, component, provides } => format!("{rule} provides {provides}, not {component}"),
     }
 }
 
@@ -283,8 +310,8 @@ fn show(s: &Shown, labels: &Labels, in_play: &Bool) -> ShownView {
 }
 
 /// The worlds that are left once these picks are made, and whatever rules worlds out has.
-fn in_play(g: &Graph, catalog: &Catalog, picks: &Picks) -> Bool {
-    catalog.constrained(g).map_or_else(|| Space::global().always(), |c| c.given(picks))
+fn in_play(g: &Graph, picks: &Picks) -> Bool {
+    g.registry().constrained(g).map_or_else(|| Space::global().always(), |c| c.given(picks))
 }
 
 /// The same in every world that's left, though it could differ in worlds that are ruled out.
@@ -297,15 +324,29 @@ fn settled(s: &Shown, in_play: &Bool) -> bool {
     }
 }
 
-fn cell_view(g: &Graph, catalog: &Catalog, e: Entity, c: &str, picks: &Picks, in_play: &Bool, labels: &Labels, vars: &mut BTreeMap<String, Var>) -> Option<CellView> {
-    let rule = g.rule_of(e, c).map(|(r, _)| r);
-    let source = if rule.is_some() { "rule" } else { "stored" };
-    let own = g.has_own(e, c);
-    let formula = g.saved_rule(e, c).filter(|r| r.rule == EXPR).and_then(|r| formula_text(&r.params).ok().map(String::from));
-    let kind = g.kind_beneath(e, c);
-    let workspace = catalog.is_own_cell(c) && c != recollect_graph::Name::NAME;
-    let cell = |value, shown, open: Vec<String>, varies, error| CellView { source, rule: rule.clone(), own, kind, workspace, formula: formula.clone(), value, shown, vars: open, varies, error };
-    if let Some(shown) = catalog.shown(g, e, c) {
+/// A cell as a world value, if that's what it is.
+fn shown_of(g: &Graph, e: Entity, c: &str) -> Option<Result<Option<Shown>, Error>> {
+    match g.registry().cell_def(c) {
+        Some(def) => def.shown.as_ref().map(|f| f(g, e)),
+        // The workspace's own cells read the way a value does, whether typed in or worked out.
+        None => shown_free(g, e, c),
+    }
+}
+
+fn cell_view(g: &Graph, e: Entity, c: &str, picks: &Picks, in_play: &Bool, labels: &Labels, vars: &mut BTreeMap<String, Var>) -> Option<CellView> {
+    let (backed, source) = g.backed(e, c)?;
+    let (source, kind) = match source {
+        Source::Own => ("own", None),
+        Source::Kind(k) => ("kind", Some(k)),
+        Source::Default => ("default", None),
+    };
+    let formula = match backed {
+        Backed::Formula(t) => Some(t),
+        _ => None,
+    };
+    let beneath = g.kind_beneath(e, c);
+    let cell = |value, shown, open: Vec<String>, varies, error| CellView { source, kind, beneath, formula: formula.clone(), value, shown, vars: open, varies, error };
+    if let Some(shown) = shown_of(g, e, c) {
         return match shown {
             Ok(None) => None,
             Err(err) => Some(cell(None, None, Vec::new(), false, Some(labels.error(&err, g)))),
@@ -330,16 +371,49 @@ fn cell_view(g: &Graph, catalog: &Catalog, e: Entity, c: &str, picks: &Picks, in
             }
         };
     }
-    match g.get_runtime(e, c) {
+    match g.get_value(e, c) {
         Ok(None) => None,
         Err(err) => Some(cell(None, None, Vec::new(), false, Some(labels.error(&err, g)))),
-        Ok(Some(r)) => Some(cell(Some(r.value), None, Vec::new(), false, None)),
+        Ok(Some(v)) => Some(cell(Some(v), None, Vec::new(), false, None)),
     }
 }
 
-fn worlds(g: &Graph, catalog: &Catalog, world: &World, picks: &Picks, labels: &Labels, vars: BTreeMap<String, Var>) -> WorldsView {
-    let constraint = catalog.constrained(g);
-    let in_play = in_play(g, catalog, picks);
+/// Whether a cell is plumbing, which only makes sense to what reads it.
+fn internal(g: &Graph, c: &str) -> bool {
+    g.registry().cell_def(c).is_some_and(|d| d.internal)
+}
+
+/// Every cell an entity has that's worth seeing.
+fn cells(g: &Graph, e: Entity, picks: &Picks, in_play: &Bool, labels: &Labels, vars: &mut BTreeMap<String, Var>) -> BTreeMap<String, CellView> {
+    g.cells_of(e).into_iter().filter(|c| !internal(g, c)).filter_map(|c| cell_view(g, e, &c, picks, in_play, labels, vars).map(|v| (c, v))).collect()
+}
+
+fn node_view(g: &Graph, e: Entity, name: String, cells: BTreeMap<String, CellView>) -> NodeView {
+    let row = g.row_of(e).map(|r| RowView {
+        table: r.table.clone(),
+        key: match &r.key {
+            recollect_graph::table::Key::Num(n) => json!(n),
+            recollect_graph::table::Key::Text(t) => json!(t),
+        },
+    });
+    // What its cells read last time they ran, which they just did.
+    let mut reads: Vec<Entity> = cells
+        .keys()
+        .flat_map(|c| g.reads_of(e, c))
+        .filter_map(|d| match d {
+            recollect_graph::Dep::Cell((x, _)) if x != e && g.row_of(x).is_some() && !g.linked(e, x, LABEL) => Some(x),
+            _ => None,
+        })
+        .collect();
+    reads.sort();
+    reads.dedup();
+    let components = g.components_of(e).iter().map(|(c, o)| has_view(c, o)).collect();
+    NodeView { id: e, name, components, cells, row, parts: g.parts_of(e), reads, unwritten: !g.contains(e) }
+}
+
+fn worlds(g: &Graph, world: &World, picks: &Picks, labels: &Labels, vars: BTreeMap<String, Var>) -> WorldsView {
+    let constraint = g.registry().constrained(g);
+    let in_play = in_play(g, picks);
     let mut applied = World::new();
     let mut unpicked = Vec::new();
     let mut count = Some(1u128);
@@ -372,7 +446,7 @@ fn worlds(g: &Graph, catalog: &Catalog, world: &World, picks: &Picks, labels: &L
                 OptionView { id: o.clone(), name: labels.of(o), weight: weights[i], gap: gaps[i], possible, picked: picked == Some(o), chance }
             })
             .collect();
-        let uncertain = id.parse::<Entity>().is_ok_and(|e| g.has_own(e, Uncertain::NAME));
+        let uncertain = id.parse::<Entity>().is_ok_and(|e| g.has(e, UNCERTAIN));
         views.push(VarView { id: id.clone(), name: labels.of(id), options: views_options, uncertain, sure: None, clues: Vec::new() });
     }
     views.sort_by(|a, b| a.id.cmp(&b.id));
@@ -430,19 +504,11 @@ fn clues(views: &mut [VarView], vars: &BTreeMap<String, Var>, in_play: &Bool, he
     }
 }
 
-fn target_nodes(t: Target) -> Vec<Entity> {
-    match t {
-        Target::Node(e) => vec![e],
-        Target::Link(a, b) => vec![a, b],
-        Target::Defaults => vec![],
-    }
-}
-
-fn checks(log: &Log, catalog: &Catalog, labels: &Labels) -> Vec<CheckView> {
-    let check = |severity: &'static str, v: Violation| CheckView { severity, rule: v.rule, on: target_nodes(v.on), detail: relabel(&v.detail, labels) };
+fn checks(log: &Log, labels: &Labels) -> Vec<CheckView> {
+    let check = |severity: &'static str, v: Violation| CheckView { severity, rule: v.rule, on: v.on.nodes(), detail: relabel(&v.detail, labels) };
     let mut out: Vec<CheckView> = log.violations().into_iter().map(|v| check("broken", v)).collect();
     out.extend(log.notices().into_iter().map(|v| check("notice", v)));
-    out.extend(catalog.all_advice(log.graph()).into_iter().map(|a| CheckView { severity: "notice", rule: a.rule, on: vec![a.on], detail: relabel(&a.detail, labels) }));
+    out.extend(log.graph().registry().all_advice(log.graph()).into_iter().map(|a| CheckView { severity: "notice", rule: a.rule, on: vec![a.on], detail: relabel(&a.detail, labels) }));
     out
 }
 
@@ -460,13 +526,12 @@ fn relabel(text: &str, labels: &Labels) -> String {
 /// The whole graph, narrowed to `world`.
 pub fn view(o: &Open, world: &World) -> View {
     let g: &Graph = o.log.graph();
-    let catalog = &o.built.catalog;
     let labels = Labels(recollect_systems::labels(g));
     let picks = Space::global().picks(world);
-    let playing = in_play(g, catalog, &picks);
+    let playing = in_play(g, &picks);
     let mut vars = BTreeMap::new();
     let mut node = |e: Entity, name: String| {
-        let cells = g.components_of(e).into_iter().filter(|c| !catalog.is_internal(c)).filter_map(|c| cell_view(g, catalog, e, &c, &picks, &playing, &labels, &mut vars).map(|v| (c, v))).collect();
+        let cells = cells(g, e, &picks, &playing, &labels, &mut vars);
         node_view(g, e, name, cells)
     };
     let nodes: Vec<NodeView> = g.entities().map(|e| node(e, recollect_systems::label_of(g, e))).collect();
@@ -482,25 +547,20 @@ pub fn view(o: &Open, world: &World) -> View {
             n
         })
         .collect();
-    let mut links = Vec::new();
-    for (from, to, bag) in g.links() {
-        for (kind, value) in bag {
-            links.push(LinkView { from, to, kind: kind.clone(), value: value.clone() });
-        }
-    }
-    let worlds = worlds(g, catalog, world, &picks, &labels, vars);
-    let ran = g.take_ran().into_iter().filter(|(_, c)| !catalog.is_internal(c)).map(|(node, component)| RanView { node, component }).collect();
+    let edges = g.edges().map(|(e, from, to)| EdgeView { id: e, from, to, components: g.given(e).into_iter().collect(), cells: cells(g, e, &picks, &playing, &labels, &mut vars) }).collect();
+    let worlds = worlds(g, world, &picks, &labels, vars);
+    let ran = g.take_ran().into_iter().filter(|(_, c)| !internal(g, c)).map(|(node, cell)| RanView { node, cell }).collect();
     View {
         workspace: WorkspaceView { name: o.config.name.clone(), about: o.config.about.clone(), dir: o.dir.display().to_string(), systems: o.built.names.clone(), sample: o.sample.clone(), direct_writes: o.config.llm_direct_writes },
         last_seq: o.log.last_seq(),
         latest: o.log.last_seq().and_then(|h| o.log.newest_after(h)),
         nodes,
         unwritten,
-        links,
-        components: catalog.components().filter(|c| !c.internal).cloned().collect(),
-        rules: g.registry().list().into_iter().filter(|r| !r.key.starts_with("check/")).collect(),
+        edges,
+        components: g.registry().components().cloned().collect(),
+        cells: g.registry().cells().filter(|c| !c.internal).map(cell_info).collect(),
         worlds,
-        checks: checks(&o.log, catalog, &labels),
+        checks: checks(&o.log, &labels),
         ran,
         proposals: o.proposals.len(),
     }
@@ -521,17 +581,17 @@ pub fn try_formula(o: &Open, e: Entity, text: &str, world: &World) -> Tried {
         Ok((value, expansion)) => {
             let picks = Space::global().picks(world);
             let narrowed = Shown::cond(&value).given(&picks);
-            Tried { shown: Some(show(&narrowed, &labels, &in_play(g, &o.built.catalog, &picks))), expansion: Some(relabel(&expansion, &labels).replace(['“', '”'], "")), error: None }
+            Tried { shown: Some(show(&narrowed, &labels, &in_play(g, &picks))), expansion: Some(relabel(&expansion, &labels).replace(['“', '”'], "")), error: None }
         }
         Err(err) => Tried { shown: None, expansion: None, error: Some(describe_error(&err, &labels)) },
     }
 }
 
-/// A cell, by its node and component.
+/// A cell, by its node and name.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CellRef {
     pub node: Entity,
-    pub component: String,
+    pub cell: String,
 }
 
 /// Some cells, as they'd be with another cell typed in as one value.
@@ -549,7 +609,6 @@ pub fn sweep(o: &Open, set: &CellRef, values: &[f64], read: &[CellRef], world: &
     if !g.entities().any(|e| e == set.node) {
         return Err(format!("there's no node {}", set.node));
     }
-    let catalog = &o.built.catalog;
     let labels = Labels(recollect_systems::labels(g));
     let picks = Space::global().picks(world);
     let mut copy = g.fork();
@@ -557,9 +616,9 @@ pub fn sweep(o: &Open, set: &CellRef, values: &[f64], read: &[CellRef], world: &
     Ok(values
         .iter()
         .map(|&at| {
-            copy.set_runtime(set.node, &set.component, json!(at));
-            let playing = in_play(&copy, catalog, &picks);
-            Swept { at, cells: read.iter().map(|r| cell_view(&copy, catalog, r.node, &r.component, &picks, &playing, &labels, &mut vars)).collect() }
+            copy.set_value(set.node, &set.cell, json!(at));
+            let playing = in_play(&copy, &picks);
+            Swept { at, cells: read.iter().map(|r| cell_view(&copy, r.node, &r.cell, &picks, &playing, &labels, &mut vars)).collect() }
         })
         .collect())
 }
@@ -579,15 +638,14 @@ pub struct RowCells {
 /// as far as the table goes on: see `Graph::row_at`.
 pub fn rows(o: &Open, table: &str, from: i64, to: i64, world: &World) -> Vec<RowCells> {
     let g = o.log.graph();
-    let catalog = &o.built.catalog;
     let labels = Labels(recollect_systems::labels(g));
     let picks = Space::global().picks(world);
-    let playing = in_play(g, catalog, &picks);
+    let playing = in_play(g, &picks);
     let mut vars = BTreeMap::new();
     (from..=to)
         .filter_map(|n| {
             let e = g.row_at(table, &recollect_graph::table::Key::Num(n))?;
-            let cells = g.components_of(e).into_iter().filter(|c| !catalog.is_internal(c)).filter_map(|c| cell_view(g, catalog, e, &c, &picks, &playing, &labels, &mut vars).map(|v| (c, v))).collect();
+            let cells = cells(g, e, &picks, &playing, &labels, &mut vars);
             Some(RowCells { key: n, id: e, written: g.contains(e), cells })
         })
         .collect()
@@ -614,28 +672,40 @@ pub fn planning(o: &Open, world: &World) -> Result<PlanView, String> {
 /// An op, in words someone can read back.
 #[derive(Debug, Serialize)]
 pub struct OpView {
+    /// What it does: "create", "delete", "add", "remove", "link", "unlink", "set" or "clear".
     pub verb: &'static str,
     pub node: Option<Entity>,
+    /// For an edge, its target.
     pub other: Option<Entity>,
+    /// The component or cell.
     pub what: Option<String>,
     pub value: Option<Value>,
+    /// What's set is a formula.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub formula: bool,
 }
 
 pub fn op_view(op: &Op) -> OpView {
+    let plain = |verb, node, other, what: &str| OpView { verb, node: Some(node), other, what: Some(what.to_string()), value: None, formula: false };
     match op {
-        Op::Spawn { id } => OpView { verb: "create", node: Some(*id), other: None, what: None, value: None },
-        Op::Despawn { id } => OpView { verb: "delete", node: Some(*id), other: None, what: None, value: None },
-        Op::Set { id, component, to } => {
-            let (verb, value) = match to {
-                None => ("remove", None),
-                Some(Stored::Value(v)) => ("set", Some(v.clone())),
-                // A formula is what you'd want to review, not which rule runs it.
-                Some(Stored::Rule(r)) => ("set_rule", Some(json!(formula_text(&r.params).ok().filter(|_| r.rule == EXPR).unwrap_or(&r.rule)))),
+        Op::Spawn { id } => OpView { verb: "create", node: Some(*id), other: None, what: None, value: None, formula: false },
+        Op::Despawn { id } => OpView { verb: "delete", node: Some(*id), other: None, what: None, value: None, formula: false },
+        Op::Add { id, component } => plain("add", *id, None, component),
+        Op::Remove { id, component } => plain("remove", *id, None, component),
+        Op::Link { from, to, component } => plain("link", *from, Some(*to), component),
+        Op::Unlink { from, to, component } => plain("unlink", *from, Some(*to), component),
+        Op::Set { on, cell, to } => {
+            let (node, other) = match *on {
+                On::Node { id } => (id, None),
+                On::Edge { from, to } => (from, Some(to)),
             };
-            OpView { verb, node: Some(*id), other: None, what: Some(component.clone()), value }
+            let (verb, value, formula) = match to {
+                None => ("clear", None, false),
+                Some(Stored::Value(v)) => ("set", Some(v.clone()), false),
+                Some(Stored::Formula(t)) => ("set", Some(json!(t)), true),
+            };
+            OpView { verb, node: Some(node), other, what: Some(cell.clone()), value, formula }
         }
-        Op::Link { from, to, kind, value } => OpView { verb: if value.is_some() { "link" } else { "unlink" }, node: Some(*from), other: Some(*to), what: Some(kind.clone()), value: value.clone() },
-        Op::Default { component, to } => OpView { verb: if to.is_some() { "set_default" } else { "remove_default" }, node: None, other: None, what: Some(component.clone()), value: None },
     }
 }
 
@@ -662,7 +732,7 @@ pub fn history(o: &Open, node: Option<Entity>) -> Vec<EventView> {
     let here = |ev: &&Event| path.contains(&ev.seq);
     match node {
         None => o.log.events().iter().rev().map(|ev| event_view(ev, here(&ev))).collect(),
-        Some(n) => o.log.path().into_iter().rev().filter(|ev| ev.ops.iter().any(|op| target_nodes(op.target()).contains(&n))).map(|ev| event_view(ev, true)).collect(),
+        Some(n) => o.log.path().into_iter().rev().filter(|ev| ev.ops.iter().any(|op| op.target().nodes().contains(&n))).map(|ev| event_view(ev, true)).collect(),
     }
 }
 
@@ -677,17 +747,12 @@ pub struct Brief {
 
 fn brief(o: &Open, e: Entity) -> Brief {
     let g = o.log.graph();
-    let components = g.components_of(e).into_iter().filter(|c| g.has_own(e, c) && !catalog_hides(c)).collect();
-    Brief { id: e, name: recollect_systems::label_of(g, e), components }
-}
-
-fn catalog_hides(c: &str) -> bool {
-    c == recollect_graph::Name::NAME
+    Brief { id: e, name: recollect_systems::label_of(g, e), components: g.components_of(e).keys().filter(|c| *c != Named::NAME).cloned().collect() }
 }
 
 pub fn list(o: &Open, component: Option<&str>) -> Vec<Brief> {
     let g = o.log.graph();
-    g.entities().filter(|e| component.is_none_or(|c| g.has_own(*e, c) || matches!(g.get_runtime(*e, c), Ok(Some(_))))).map(|e| brief(o, e)).collect()
+    g.entities().filter(|e| component.is_none_or(|c| g.has(*e, c))).map(|e| brief(o, e)).collect()
 }
 
 pub fn search(o: &Open, query: &str, limit: usize) -> Vec<Brief> {
@@ -710,40 +775,34 @@ pub fn search(o: &Open, query: &str, limit: usize) -> Vec<Brief> {
 pub struct NodeDetail {
     #[serde(flatten)]
     pub node: NodeView,
-    pub outgoing: Vec<LinkBrief>,
-    pub incoming: Vec<LinkBrief>,
+    pub outgoing: Vec<EdgeBrief>,
+    pub incoming: Vec<EdgeBrief>,
     pub history: Vec<EventView>,
 }
 
 #[derive(Debug, Serialize)]
-pub struct LinkBrief {
-    pub kind: String,
+pub struct EdgeBrief {
+    pub components: Vec<String>,
     pub node: Entity,
     pub name: String,
-    pub value: Value,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub cells: BTreeMap<String, CellView>,
 }
 
 pub fn node(o: &Open, e: Entity, world: &World) -> NodeDetail {
     let g = o.log.graph();
-    let catalog = &o.built.catalog;
     let labels = Labels(recollect_systems::labels(g));
     let picks = Space::global().picks(world);
-    let playing = in_play(g, catalog, &picks);
+    let playing = in_play(g, &picks);
     let mut vars = BTreeMap::new();
-    let cells = g.components_of(e).into_iter().filter(|c| !catalog.is_internal(c)).filter_map(|c| cell_view(g, catalog, e, &c, &picks, &playing, &labels, &mut vars).map(|v| (c, v))).collect();
-    let mut outgoing = Vec::new();
-    let mut incoming = Vec::new();
-    for (from, to, bag) in g.links() {
-        for (kind, value) in bag {
-            if from == e {
-                outgoing.push(LinkBrief { kind: kind.clone(), node: to, name: labels.of(&to.to_string()), value: value.clone() });
-            }
-            if to == e {
-                incoming.push(LinkBrief { kind: kind.clone(), node: from, name: labels.of(&from.to_string()), value: value.clone() });
-            }
-        }
+    let mine = cells(g, e, &picks, &playing, &labels, &mut vars);
+    let (mut outgoing, mut incoming) = (Vec::new(), Vec::new());
+    for (edge, from, to) in g.edges().filter(|(_, f, t)| *f == e || *t == e) {
+        let other = if from == e { to } else { from };
+        let brief = EdgeBrief { components: g.given(edge).into_iter().collect(), node: other, name: labels.of(&other.to_string()), cells: cells(g, edge, &picks, &playing, &labels, &mut vars) };
+        if from == e { outgoing.push(brief) } else { incoming.push(brief) }
     }
-    NodeDetail { node: node_view(g, e, labels.of(&e.to_string()), cells), outgoing, incoming, history: history(o, Some(e)) }
+    NodeDetail { node: node_view(g, e, labels.of(&e.to_string()), mine), outgoing, incoming, history: history(o, Some(e)) }
 }
 
 #[derive(Debug, Serialize)]
@@ -760,7 +819,7 @@ pub struct TreeNode {
 
 /// What's beneath a node, over the kinds of link that give the graph its shape.
 pub fn tree(o: &Open, root: Entity, depth: usize) -> TreeNode {
-    let kinds = o.built.catalog.arranging_kinds().into_iter().map(String::from).collect::<Vec<_>>();
+    let kinds = o.log.graph().registry().components().filter(|c| c.arranges).map(|c| c.name.clone()).collect::<Vec<_>>();
     let labels = Labels(recollect_systems::labels(o.log.graph()));
     fn walk(o: &Open, kinds: &[String], labels: &Labels, e: Entity, depth: usize, seen: &mut Vec<Entity>) -> TreeNode {
         let g = o.log.graph();
@@ -768,7 +827,7 @@ pub fn tree(o: &Open, root: Entity, depth: usize) -> TreeNode {
         seen.push(e);
         let mut children = Vec::new();
         if !shared && depth > 0 {
-            let mut below: Vec<Entity> = kinds.iter().flat_map(|k| if o.built.catalog.info(k).is_some_and(|c| c.reversed) { g.targets_of(e, k) } else { g.sources_of(e, k) }).collect();
+            let mut below: Vec<Entity> = kinds.iter().flat_map(|k| if g.registry().component_def(k).is_some_and(|c| c.reversed) { g.targets_of(e, k) } else { g.sources_of(e, k) }).collect();
             below.dedup();
             for c in below {
                 children.push(walk(o, kinds, labels, c, depth - 1, seen));
@@ -780,12 +839,13 @@ pub fn tree(o: &Open, root: Entity, depth: usize) -> TreeNode {
     walk(o, &kinds, &labels, root, depth, &mut Vec::new())
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct Overview {
     pub workspace: WorkspaceView,
     pub nodes: usize,
-    pub components: Vec<ComponentInfo>,
-    pub rules: Vec<String>,
+    /// Every component there is, with the cells it brings.
+    pub components: Vec<ComponentDef>,
+    pub cells: Vec<CellInfo>,
     pub checks: Vec<CheckView>,
     pub open_choices: Vec<VarView>,
     pub pending_proposals: usize,
@@ -798,7 +858,7 @@ pub fn overview(o: &Open) -> Overview {
         nodes: v.nodes.len(),
         workspace: v.workspace,
         components: v.components,
-        rules: v.rules.into_iter().map(|r| r.key).collect(),
+        cells: v.cells,
         checks: v.checks,
         open_choices: v.worlds.vars,
         pending_proposals: v.proposals,

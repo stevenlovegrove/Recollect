@@ -4,7 +4,6 @@
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
-use recollect_graph::Inputs;
 use serde::{Deserialize, Serialize};
 
 /// A value in one world. Undefined is `null`, the same as `None` in a `Cond<Option<T>>`, so what a
@@ -193,56 +192,6 @@ static PARSED_LIBRARY: LazyLock<BTreeMap<&'static str, LibraryMacro>> = LazyLock
 
 pub fn library(name: &str) -> Option<&'static LibraryMacro> {
     PARSED_LIBRARY.get(name)
-}
-
-/// What a formula may follow: labelled links always, and whatever its groups name.
-pub fn inputs_of(e: &Expr) -> Inputs {
-    fn add(list: &mut Vec<String>, kind: &str) {
-        if !list.iter().any(|k| k == kind) {
-            list.push(kind.to_string());
-        }
-    }
-    fn walk(e: &Expr, i: &mut Inputs) {
-        match e {
-            Expr::Lit(_) | Expr::Path(_) | Expr::Row { .. } => {}
-            Expr::Not(a) | Expr::Neg(a) => walk(a, i),
-            Expr::Bin(_, a, b) => {
-                walk(a, i);
-                walk(b, i);
-            }
-            Expr::Call(name, args) => {
-                if let Some(m) = library(name) {
-                    walk(&m.body, i);
-                }
-                args.iter().for_each(|a| group_arg(a, i));
-                args.iter().for_each(|a| walk(a, i));
-            }
-            Expr::Fold { group, body, start, .. } => {
-                group_path(group, i);
-                walk(body, i);
-                if let Some(start) = start {
-                    walk(start, i);
-                }
-            }
-        }
-    }
-    // A macro's parameter can be a group, so anything shaped like one counts.
-    fn group_arg(e: &Expr, i: &mut Inputs) {
-        if let Expr::Path(p) = e {
-            group_path(p, i);
-        }
-    }
-    fn group_path(p: &[String], i: &mut Inputs) {
-        match p {
-            [root, kind, ..] if root == "in" => add(&mut i.incoming, kind),
-            [root, kind, ..] if root == "out" => add(&mut i.outgoing, kind),
-            [root, kind, ..] if root == "with" => add(&mut i.scans, kind),
-            _ => {}
-        }
-    }
-    let mut i = Inputs { outgoing: vec!["label".to_string()], ..Inputs::default() };
-    walk(e, &mut i);
-    i
 }
 
 // ---------- reading it ----------

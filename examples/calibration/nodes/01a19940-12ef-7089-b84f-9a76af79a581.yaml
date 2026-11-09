@@ -1,8 +1,0 @@
-id: 01a19940-12ef-7089-b84f-9a76af79a581
-components:
-  name: Diverges on weak geometry
-  risk: null
-links:
-- to: 01a19940-12ef-7089-b84f-9a74d8882893
-  components:
-    contradicts: null

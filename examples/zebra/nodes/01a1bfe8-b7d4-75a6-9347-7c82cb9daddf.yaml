@@ -1,0 +1,16 @@
+id: 01a1bfe8-b7d4-75a6-9347-7c82cb9daddf
+components:
+- notes
+- options
+- value
+cells:
+  body: Each in a different house
+  name: Nationality
+  options:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+formulas:
+  value: distinct(rows)

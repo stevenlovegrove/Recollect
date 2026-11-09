@@ -1,8 +1,0 @@
-id: 01a1b9a6-9081-76c8-be09-f967a22cec7b
-components:
-  name: Kools are smoked next to the house with the horse
-rules:
-  value:
-    rule: expr@1
-    params:
-      text: abs(Smoke[Kools] - Pet[Horse]) = 1

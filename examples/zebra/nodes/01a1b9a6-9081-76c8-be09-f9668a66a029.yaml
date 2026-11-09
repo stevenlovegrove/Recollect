@@ -1,8 +1,0 @@
-id: 01a1b9a6-9081-76c8-be09-f9668a66a029
-components:
-  name: The Chesterfield smoker lives next to the man with the fox
-rules:
-  value:
-    rule: expr@1
-    params:
-      text: abs(Smoke[Chesterfield] - Pet[Fox]) = 1

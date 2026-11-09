@@ -1,28 +1,34 @@
-//! Writing, as the web UI and Claude do it. Everything comes down to the log's five ops, and this
-//! takes the few things that make them easier to write:
+//! Writing, as the web UI and Claude do it. Everything comes down to the log's ops, and this takes the
+//! few things that make them easier to write:
 //!
 //! - A node can be named by handle or, if it's unambiguous, by its name.
 //! - `"new:anything"` anywhere stands for a node that doesn't exist yet, and means the same node
 //!   wherever it's used in one change-set.
-//! - `{"op": "set", "id": .., "component": .., "value": ..}` or `"rule"` and `"params"` sets a cell,
-//!   and with neither it removes it.
-//! - `{"op": "add_node", "id": "new:x", "name": .., "body": .., "components": {..}, "rules": {..},
-//!   "links": [{"to": .., "kind": .., "value": ..}]}` writes out to several ops.
-//! - `{"op": "delete_node", "id": ..}` takes the node's links with it.
-//! - `{"op": "set", "id": .., "component": .., "formula": "a + b", "labels": {"a": .., "b": ..}}` sets
-//!   a cell to a formula and says what its names mean, as one change. Labels it no longer has go.
-//!   `add_node` takes `formula` and `labels` too, for the node's `value`.
+//! - `{"op": "set", "id": .., "cell": .., "value": ..}` or `"formula": ..` writes in a cell, and with
+//!   neither it takes away what's written there. With `"from"` and `"to"` instead of `"id"`, it's a cell
+//!   of that edge. A formula can come with `"labels": {"a": .., "b": ..}`, which say what its names
+//!   mean, as one change: labels it no longer has go. Writing in a cell of a component a node doesn't
+//!   have gives it the component.
+//! - `{"op": "add", "id": .., "component": ..}` and `"remove"` give a node a component or take it away.
+//! - `{"op": "link", "from": .., "to": .., "component": .., "cells": {..}}` gives the edge from one node
+//!   to another a component, and `"unlink"` takes it away.
+//! - `{"op": "add_node", "id": "new:x", "name": .., "body": .., "components": [..], "cells": {..},
+//!   "links": [{"to": .., "component": .., "cells": {..}}]}` writes out to several ops. A cell is a
+//!   value, or `{"formula": .., "labels": {..}}`.
+//! - `{"op": "delete_node", "id": ..}` takes the node's edges with it.
 //! - `{"op": "table", "name": "Car", "is_a": "Vehicle", "columns": {..}, "rows": [{"key": "Hatchback",
 //!   ..}, ..]}` writes a table: the node named `Car`, with `columns` its cells, which every row takes
 //!   unless it says otherwise, and a node named `Car[Hatchback]` for each row, with its own cells.
-//!   A cell is a value, or `{"formula": .., "labels": {..}}`. A row can be just its key, and
-//!   `"range": [0, 10]` adds numbered rows. Nodes with those names already are used, not made again.
-//!   `"alternative_of": "Which car?"` makes every row one of that decision's options.
+//!   A row can be just its key, and `"range": [0, 10]` adds numbered rows. Nodes with those names
+//!   already are used, not made again. `"alternative_of": "Which car?"` makes every row one of that
+//!   decision's options.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use recollect_graph::{Component, Entity, Graph, Name, Op};
-use recollect_systems::formulas::{EXPR, Label, ValueCell};
+use recollect_graph::{CellType, Entity, Graph, Name, Op};
+use recollect_systems::formulas::{Called, IS_A, LABEL};
+use recollect_systems::notes::{Body, NOTES};
+use recollect_systems::plan::ALTERNATIVE;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
@@ -38,6 +44,10 @@ struct Resolver<'a> {
     g: &'a Graph,
     created: BTreeMap<String, Entity>,
     names: BTreeMap<String, Vec<Entity>>,
+    /// The components this change-set gives each node, so far.
+    adding: BTreeMap<String, BTreeSet<String>>,
+    /// The nodes this change-set makes.
+    spawned: BTreeSet<String>,
 }
 
 impl Resolver<'_> {
@@ -76,95 +86,163 @@ impl Resolver<'_> {
         Ok(())
     }
 
-    /// What a formula on `id` calls which nodes.
+    fn entity(v: &Value) -> Result<Entity, String> {
+        serde_json::from_value(v.clone()).map_err(|e| e.to_string())
+    }
+
+    /// Give a node a component, unless it has it, or this change-set has already given it something that
+    /// brings it.
+    fn ensure(&mut self, id: &Value, component: &str, out: &mut Vec<Value>) {
+        let key = id.as_str().unwrap_or_default().to_string();
+        let reg = self.g.registry();
+        let mut has: BTreeSet<String> = self.adding.get(&key).cloned().unwrap_or_default();
+        let mut todo: Vec<String> = has.iter().cloned().collect();
+        while let Some(c) = todo.pop() {
+            for r in reg.component_def(&c).map(|d| d.requires.clone()).unwrap_or_default() {
+                if has.insert(r.clone()) {
+                    todo.push(r);
+                }
+            }
+        }
+        let existing = key.parse::<Entity>().ok().is_some_and(|e| self.g.has(e, component));
+        if !existing && !has.contains(component) {
+            self.add(id, component, out);
+        }
+    }
+
+    fn add(&mut self, id: &Value, component: &str, out: &mut Vec<Value>) {
+        self.adding.entry(id.as_str().unwrap_or_default().to_string()).or_default().insert(component.to_string());
+        out.push(json!({ "op": "add", "id": id, "component": component }));
+    }
+
+    /// Writing in a cell: `what` is `{"value": ..}`, `{"formula": .., "labels": {..}}`, or nothing, to
+    /// take away what's there.
+    fn set(&mut self, on: Map<String, Value>, cell: &str, mut what: Map<String, Value>, out: &mut Vec<Value>) -> Result<(), String> {
+        let mut op = on.clone();
+        op.insert("op".to_string(), json!("set"));
+        op.insert("cell".to_string(), json!(cell));
+        // On a node, writing in a component's cell gives the node that component.
+        if let Some(id) = on.get("id").cloned()
+            && let Some(owner) = self.g.registry().owner(cell).map(String::from)
+            && !what.is_empty()
+        {
+            self.ensure(&id, &owner, out);
+        }
+        if let Some(labels) = what.remove("labels") {
+            let id = on.get("id").cloned().ok_or("only a node's formula can have labels")?;
+            self.labels(&id, labels, out)?;
+        }
+        for field in ["value", "formula"] {
+            if let Some(v) = what.remove(field) {
+                op.insert(field.to_string(), v);
+            }
+        }
+        out.push(Value::Object(op));
+        Ok(())
+    }
+
+    /// What a formula on `id` calls which nodes. These replace what's there, so a name the formula no
+    /// longer uses doesn't stay.
     fn labels(&self, id: &Value, labels: Value, out: &mut Vec<Value>) -> Result<(), String> {
         let Value::Object(labels) = labels else { return Err("labels are {name: node}".to_string()) };
+        if let Ok(known) = Self::entity(id)
+            && self.g.contains(known)
+        {
+            for (to, edge) in self.g.edges_from(known, LABEL) {
+                let name = self.g.get::<Called>(edge).ok().flatten().map(|c| c.0).unwrap_or_default();
+                if !labels.contains_key(&name) {
+                    out.push(json!({ "op": "unlink", "from": id, "to": to, "component": LABEL }));
+                }
+            }
+        }
         for (name, nodes) in labels {
             let nodes = if let Value::Array(many) = nodes { many } else { vec![nodes] };
             for mut to in nodes {
                 self.node(&mut to)?;
-                out.push(json!({ "op": "link", "from": id, "to": to, "kind": Label::NAME, "value": name }));
+                out.push(json!({ "op": "link", "from": id, "to": to, "component": LABEL }));
+                out.push(json!({ "op": "set", "from": id, "to": to, "cell": Called::NAME, "value": name }));
             }
         }
         Ok(())
     }
 
-    fn write(&self, mut op: Map<String, Value>, out: &mut Vec<Value>) -> Result<(), String> {
+    fn write(&mut self, mut op: Map<String, Value>, out: &mut Vec<Value>) -> Result<(), String> {
         let kind = op.get("op").and_then(Value::as_str).unwrap_or("").to_string();
         match kind.as_str() {
             "add_node" => {
                 let id = op.get("id").cloned().ok_or("add_node needs an id, such as \"new:x\"")?;
-                let mut set = |component: &str, to: Value| out.push(json!({ "op": "set", "id": id, "component": component, "to": to }));
-                if let Some(name) = op.remove("name") {
-                    set(Name::NAME, json!({ "value": name }));
-                }
-                if let Some(body) = op.remove("body") {
-                    set("body", json!({ "value": body }));
-                }
-                if let Some(Value::Object(components)) = op.remove("components") {
-                    for (c, v) in components {
-                        set(&c, json!({ "value": v }));
-                    }
-                }
-                if let Some(Value::Object(rules)) = op.remove("rules") {
-                    for (c, r) in rules {
-                        set(&c, json!({ "rule": r }));
-                    }
-                }
-                if let Some(formula) = op.remove("formula") {
-                    set(ValueCell::NAME, json!({ "rule": { "rule": EXPR, "params": { "text": formula } } }));
-                }
-                if !out.iter().any(|o| o["id"] == id) {
+                // The same node, said twice in one change-set, is made once.
+                if self.spawned.insert(id.as_str().unwrap_or_default().to_string()) {
                     out.push(json!({ "op": "spawn", "id": id }));
                 }
-                if let Some(labels) = op.remove("labels") {
-                    self.labels(&id, labels, out)?;
+                if let Some(name) = op.remove("name") {
+                    out.push(json!({ "op": "set", "id": id, "cell": Name::NAME, "value": name }));
+                }
+                if let Some(Value::Array(components)) = op.remove("components") {
+                    for c in components {
+                        let c = c.as_str().ok_or("a component is its name")?.to_string();
+                        self.add(&id, &c, out);
+                    }
+                }
+                if let Some(body) = op.remove("body") {
+                    self.ensure(&id, NOTES, out);
+                    out.push(json!({ "op": "set", "id": id, "cell": Body::NAME, "value": body }));
+                }
+                if let Some(Value::Object(cells)) = op.remove("cells") {
+                    for (c, v) in cells {
+                        self.set(on_node(&id), &c, written(v), out)?;
+                    }
                 }
                 if let Some(Value::Array(links)) = op.remove("links") {
                     for l in links {
                         let mut l = l.as_object().cloned().ok_or("a link has to be an object")?;
-                        self.nodes_in(&mut l)?;
-                        let to = l.get("to").cloned().ok_or("a link needs a `to`")?;
-                        let kind = l.get("kind").cloned().ok_or("a link needs a `kind`")?;
-                        out.push(json!({ "op": "link", "from": id, "to": to, "kind": kind, "value": l.get("value").cloned().unwrap_or(Value::Null) }));
+                        l.insert("from".to_string(), id.clone());
+                        l.insert("op".to_string(), json!("link"));
+                        self.write(l, out)?;
                     }
                 }
             }
             "delete_node" => {
                 self.nodes_in(&mut op)?;
-                let id: Entity = serde_json::from_value(op.get("id").cloned().ok_or("delete_node needs an id")?).map_err(|e| e.to_string())?;
-                for (from, to, bag) in self.g.links().filter(|(f, t, _)| *f == id || *t == id) {
-                    for k in bag.keys() {
-                        out.push(json!({ "op": "link", "from": from, "to": to, "kind": k }));
+                let id = Self::entity(op.get("id").ok_or("delete_node needs an id")?)?;
+                for (edge, from, to) in self.g.edges().filter(|(_, f, t)| *f == id || *t == id) {
+                    for c in self.g.given(edge) {
+                        out.push(json!({ "op": "unlink", "from": from, "to": to, "component": c }));
                     }
                 }
                 out.push(json!({ "op": "despawn", "id": id }));
             }
-            "set" if !op.contains_key("to") => {
+            "set" => {
                 self.nodes_in(&mut op)?;
-                if let Some(labels) = op.remove("labels") {
-                    let id = op.get("id").cloned().ok_or("set needs an id")?;
-                    let known: Entity = serde_json::from_value(id.clone()).map_err(|e| e.to_string())?;
-                    // These replace what's there, so a name the formula no longer uses doesn't stay.
-                    for (from, to, bag) in self.g.links().filter(|(f, _, b)| *f == known && b.contains_key(Label::NAME)) {
-                        let kept = labels.as_object().is_some_and(|l| l.contains_key(bag[Label::NAME].as_str().unwrap_or("")));
-                        if !kept {
-                            out.push(json!({ "op": "link", "from": from, "to": to, "kind": Label::NAME }));
-                        }
+                let cell = op.remove("cell").and_then(|c| c.as_str().map(String::from)).ok_or("set needs a cell")?;
+                let mut what = Map::new();
+                for field in ["value", "formula", "labels"] {
+                    if let Some(v) = op.remove(field) {
+                        what.insert(field.to_string(), v);
                     }
-                    self.labels(&id, labels, out)?;
                 }
-                let to = if let Some(formula) = op.remove("formula") {
-                    json!({ "rule": { "rule": EXPR, "params": { "text": formula } } })
-                } else if let Some(v) = op.remove("value") {
-                    json!({ "value": v })
-                } else if let Some(rule) = op.remove("rule") {
-                    json!({ "rule": { "rule": rule, "params": op.remove("params").unwrap_or(Value::Null) } })
-                } else {
-                    Value::Null
-                };
-                op.insert("to".to_string(), to);
-                out.push(Value::Object(op));
+                op.remove("op");
+                self.set(op, &cell, what, out)?;
+            }
+            "link" => {
+                self.nodes_in(&mut op)?;
+                let (from, to) = (op.get("from").cloned().ok_or("link needs a from")?, op.get("to").cloned().ok_or("link needs a to")?);
+                let component = op.get("component").cloned().ok_or("link needs a component")?;
+                out.push(json!({ "op": "link", "from": from, "to": to, "component": component }));
+                if let Some(Value::Object(cells)) = op.remove("cells") {
+                    for (c, v) in cells {
+                        let mut on = Map::new();
+                        on.insert("from".to_string(), from.clone());
+                        on.insert("to".to_string(), to.clone());
+                        self.set(on, &c, written(v), out)?;
+                    }
+                }
+            }
+            "add" => {
+                self.nodes_in(&mut op)?;
+                let id = op.get("id").cloned().ok_or("add needs an id")?;
+                let component = op.get("component").and_then(Value::as_str).ok_or("add needs a component")?.to_string();
+                self.add(&id, &component, out);
             }
             _ => {
                 self.nodes_in(&mut op)?;
@@ -175,17 +253,35 @@ impl Resolver<'_> {
     }
 }
 
+fn on_node(id: &Value) -> Map<String, Value> {
+    let mut on = Map::new();
+    on.insert("id".to_string(), id.clone());
+    on
+}
+
+/// A cell as it's given: a value, or `{"formula": .., "labels": {..}}`.
+fn written(v: Value) -> Map<String, Value> {
+    match v {
+        Value::Object(f) if f.contains_key("formula") => f,
+        v => {
+            let mut m = Map::new();
+            m.insert("value".to_string(), v);
+            m
+        }
+    }
+}
+
 /// A cell as `set` writes it: a value, or a formula with what its names mean.
-fn set_cell(id: &str, component: &str, v: Value) -> Value {
+fn set_cell(id: &str, cell: &str, v: Value) -> Value {
     match v {
         Value::Object(mut f) if f.contains_key("formula") => {
-            let mut op = json!({ "op": "set", "id": id, "component": component, "formula": f.remove("formula") });
+            let mut op = json!({ "op": "set", "id": id, "cell": cell, "formula": f.remove("formula") });
             if let Some(labels) = f.remove("labels") {
                 op["labels"] = labels;
             }
             op
         }
-        v => json!({ "op": "set", "id": id, "component": component, "value": v }),
+        v => json!({ "op": "set", "id": id, "cell": cell, "value": v }),
     }
 }
 
@@ -212,13 +308,18 @@ fn table(mut op: Map<String, Value>, names: &BTreeMap<String, Vec<Entity>>) -> R
     };
     let at = node(&name, &mut out)?;
     if let Some(body) = op.remove("body") {
-        out.push(json!({ "op": "set", "id": at, "component": "body", "value": body }));
+        out.push(json!({ "op": "set", "id": at, "cell": Body::NAME, "value": body }));
     }
     if let Some(kind) = op.remove("is_a") {
         // Another table this batch makes is new too, so it's found the same way.
         let kind = kind.as_str().ok_or("is_a names a table")?;
         let to = if kind.starts_with("new:") || kind.parse::<Entity>().is_ok() { kind.to_string() } else { node(kind, &mut out)? };
-        out.push(json!({ "op": "link", "from": at, "to": to, "kind": "is_a", "value": null }));
+        out.push(json!({ "op": "link", "from": at, "to": to, "component": IS_A }));
+    }
+    if let Some(Value::Array(components)) = op.remove("components") {
+        for c in components {
+            out.push(json!({ "op": "add", "id": at, "component": c }));
+        }
     }
     if let Some(columns) = op.remove("columns") {
         let Value::Object(columns) = columns else { return Err("a table's columns are {cell: value or {formula, labels}}".to_string()) };
@@ -255,7 +356,7 @@ fn table(mut op: Map<String, Value>, names: &BTreeMap<String, Vec<Entity>>) -> R
             out.push(set_cell(&id, &c, v));
         }
         if let Some(d) = &decision {
-            out.push(json!({ "op": "link", "from": id, "to": d, "kind": "alternative", "value": {} }));
+            out.push(json!({ "op": "link", "from": id, "to": d, "component": ALTERNATIVE }));
         }
     }
     Ok(out)
@@ -275,7 +376,7 @@ pub fn resolve_ops(ops: Vec<Value>, g: &Graph) -> Result<Resolved, String> {
             names.entry(n.0).or_default().push(e);
         }
     }
-    let mut r = Resolver { g, created: BTreeMap::new(), names };
+    let mut r = Resolver { g, created: BTreeMap::new(), names, adding: BTreeMap::new(), spawned: BTreeSet::new() };
     let mut written = Vec::new();
     let mut expanded = Vec::new();
     for op in ops {

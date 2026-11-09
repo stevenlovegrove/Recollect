@@ -1,40 +1,13 @@
-//! The core: entities and links, each a bag of components. A cell is the data for one (entity,
-//! component) pair, and its storage is either a value or a rule that returns one.
+//! The core: entities, which are nodes and the edges between them, each with components, and the cells
+//! those components bring. A cell holds a value or a formula, or takes it from a kind, or from what its
+//! component says it is when nothing says otherwise. See `docs/components.md`.
 //!
-//! ```
-//! use recollect_graph::{Graph, component, rule};
+//! Computed cells run lazily, when they're read, and what they give is memoised across edits. What a
+//! computation actually read is recorded, and that's what invalidation runs on. This module knows
+//! nothing about worlds or formulas.
 //!
-//! #[component]
-//! struct Amount(f64);
-//!
-//! #[component]
-//! struct Addend;
-//!
-//! let sum = rule("sum").incoming::<Addend>().compute(|cx| {
-//!     let mut total = 0.0;
-//!     for from in cx.sources::<Addend>()? {
-//!         total += cx.value::<Amount>(from)?.0;
-//!     }
-//!     Ok(Amount(total))
-//! });
-//!
-//! let mut g = Graph::new();
-//! let (price, total) = (g.spawn(), g.spawn());
-//! g.set(price, Amount(10.0));              // a value
-//! g.set(total, sum);                       // a rule, recorded and not yet run
-//! g.link(price, total, Addend);            // the edge it follows
-//! assert_eq!(g.get(total), Ok(Some(Amount(10.0))));  // runs what's stale, and remembers
-//!
-//! g.set(price, Amount(12.0));              // runs nothing
-//! assert_eq!(g.get(total), Ok(Some(Amount(12.0))));
-//! ```
-//!
-//! Rules run lazily, when a cell is read, and results are memoised across edits. A rule declares
-//! the kinds of link it follows and may only read through them. What it actually read is
-//! recorded, and that's what invalidation runs on. This module knows nothing about worlds.
-//!
-//! A `Graph` is `Send + Sync`: reading takes `&self`, and writing takes `&mut self`, so shared use
-//! is an `RwLock<Graph>`. Reads currently take turns on one lock while rules run. That's an
+//! A `Graph` is `Send + Sync`: reading takes `&self`, and writing takes `&mut self`, so shared use is an
+//! `RwLock<Graph>`. Reads currently take turns on one lock while cells are worked out. That's an
 //! implementation detail the API doesn't expose.
 
 use std::any::{Any, TypeId};
@@ -52,29 +25,41 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::name::Name;
-use crate::registry::{Registry, SavedRule};
+use crate::registry::{Default as CellDefault, Place, Registry};
 use crate::table::{self, Row};
 
-/// A node. An opaque handle with no meaning of its own: a name is just a component. Time-ordered,
-/// so nodes sort in creation order, and files created on two machines never collide.
+/// A node or an edge. An opaque handle with no meaning of its own: a name is just a cell. A node's is
+/// time-ordered, so nodes sort in creation order, and files created on two machines never collide. An
+/// edge's is worked out from its ends, so it's the same whenever those two are linked.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
 pub struct Entity(Uuid);
+
+/// Two hashes of some text make up the 128 bits, so a handle worked out this way can't be mistaken for
+/// one that was made.
+fn hashed(text: &str) -> Entity {
+    let fnv = |seed: u64| text.bytes().fold(seed, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3));
+    Entity(Uuid::from_u128((u128::from(fnv(0xcbf29ce484222325)) << 64) | u128::from(fnv(0x84222325cbf29ce4))))
+}
 
 impl Entity {
     pub fn new() -> Self {
         Entity(Uuid::now_v7())
     }
 
-    /// Stands in for "no particular node", such as in an error about a whole column.
-    pub(crate) fn nil() -> Self {
+    /// Where cells about the graph as a whole live, so they're worked out once however many nodes read
+    /// them. It isn't a node: it has no edges and nothing can be written on it.
+    pub fn whole() -> Self {
         Entity(Uuid::nil())
     }
 
-    /// Where a cell about the graph as a whole lives, so it's worked out once however many nodes read
-    /// it. It isn't a node: it has no links and nothing can be stored on it, and only a component's
-    /// default can fill it.
-    pub fn whole() -> Self {
-        Self::nil()
+    /// The edge from one node to another.
+    pub fn edge(from: Entity, to: Entity) -> Self {
+        hashed(&format!("edge {from} {to}"))
+    }
+
+    /// A row nobody wrote: see `Graph::row_at`.
+    fn implicit(table: &str, n: i64) -> Self {
+        hashed(&format!("{table}[{n}]"))
     }
 }
 
@@ -103,230 +88,146 @@ impl FromStr for Entity {
     }
 }
 
+/// One cell: an entity and the cell's name.
 pub type Key = (Entity, String);
 
-/// A column. JSON under a name is what a component really is, and a Rust type is a typed way to
-/// look one up. Define one with `#[component]`.
-pub trait Component: Clone + PartialEq + Serialize + DeserializeOwned + Send + Sync + 'static {
+/// A cell's value as a Rust type. JSON under a name is what a cell really holds, and this is a typed
+/// way to read one. Define one with `#[cell]`.
+pub trait CellType: Clone + PartialEq + Serialize + DeserializeOwned + Send + Sync + 'static {
     const NAME: &'static str;
 }
 
-/// A component with no Rust type: its name, and its data.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Runtime {
-    pub name: String,
-    pub value: Value,
-}
-
-impl Runtime {
-    pub fn new(name: &str, value: Value) -> Self {
-        Runtime { name: name.to_string(), value }
-    }
-
-    /// The same data seen through a Rust type.
-    pub fn of<C: Component>(c: &C) -> Self {
-        Runtime::new(C::NAME, serde_json::to_value(c).expect("components serialise"))
-    }
-
-    pub fn decode<C: Component>(&self) -> Result<C, serde_json::Error> {
-        serde_json::from_value(self.value.clone())
-    }
+/// A component's name as a Rust type, for asking whether something has it. Define one with
+/// `#[component]`.
+pub trait ComponentType {
+    const NAME: &'static str;
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
     /// These cells depend on each other.
     Cycle(Vec<Key>),
-    /// A rule read something it didn't declare.
-    Undeclared { rule: String, read: String },
-    /// A rule required a cell that isn't there.
+    /// Something needed a cell that isn't there.
     Missing(Key),
     Malformed { cell: Key, detail: String },
-    /// A rule's own failure, like #DIV/0!.
+    /// A computation's own failure, like #DIV/0!, or a formula that can't be read.
     Failed(String),
-    /// This cell names a rule nothing has registered, such as one from a missing plugin.
-    UnknownRule(String),
-    /// This cell names a rule that provides a different component.
-    WrongRule { rule: String, component: String, provides: String },
 }
 
-/// What reading a cell gives. `None` means this node doesn't have the component.
+/// What reading a cell gives. `None` means the entity doesn't have it.
 pub type Cell<C> = Result<Option<C>, Error>;
 
-/// What backs a cell: a value kept at the node, or a rule that returns one. Either converts into
-/// this, so `set` takes both.
-pub enum Storage<C> {
-    Value(C),
-    Rule(Rule<C>),
-}
-
-impl<C: Component> From<C> for Storage<C> {
-    fn from(v: C) -> Self {
-        Storage::Value(v)
-    }
-}
-
-impl<C> From<Rule<C>> for Storage<C> {
-    fn from(r: Rule<C>) -> Self {
-        Storage::Rule(r)
-    }
-}
-
-impl From<Value> for Storage<Value> {
-    fn from(v: Value) -> Self {
-        Storage::Value(v)
-    }
-}
-
-/// What a rule may follow.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Inputs {
-    pub incoming: Vec<String>,
-    pub outgoing: Vec<String>,
-    pub scans: Vec<String>,
-    /// It may also read whatever the rule on this component of the same node may. It's for a rule
-    /// that's about another rule, such as working out what type a formula gives.
-    pub like: Option<String>,
-}
-
-pub struct Rule<C> {
-    pub name: String,
-    pub inputs: Inputs,
-    pub(crate) f: Arc<RuleFn<C>>,
-    /// How to write this rule down. A closure has none, so it can't be saved.
-    pub(crate) saved: Option<SavedRule>,
-}
-
-pub(crate) type RuleFn<C> = dyn Fn(&Cx) -> Cell<C> + Send + Sync;
-
-impl<C> Clone for Rule<C> {
-    fn clone(&self) -> Self {
-        Rule { name: self.name.clone(), inputs: self.inputs.clone(), f: self.f.clone(), saved: self.saved.clone() }
-    }
-}
-
-/// Starts a rule: `rule("sum").incoming::<Addend>().compute(|cx| ...)`.
-pub fn rule(name: &str) -> RuleSpec {
-    RuleSpec { name: name.into(), inputs: Inputs::default() }
-}
-
-pub struct RuleSpec {
-    pub(crate) name: String,
-    pub(crate) inputs: Inputs,
-}
-
-impl RuleSpec {
-    pub fn incoming<L: Component>(self) -> Self {
-        self.incoming_named(L::NAME)
-    }
-    pub fn outgoing<L: Component>(self) -> Self {
-        self.outgoing_named(L::NAME)
-    }
-    pub fn scans<C: Component>(self) -> Self {
-        self.scans_named(C::NAME)
-    }
-    pub fn incoming_named(mut self, kind: &str) -> Self {
-        self.inputs.incoming.push(kind.into());
-        self
-    }
-    pub fn outgoing_named(mut self, kind: &str) -> Self {
-        self.inputs.outgoing.push(kind.into());
-        self
-    }
-    pub fn scans_named(mut self, component: &str) -> Self {
-        self.inputs.scans.push(component.into());
-        self
-    }
-    /// What it may follow, all at once, for a rule where that depends on its parameters.
-    pub fn following(mut self, inputs: Inputs) -> Self {
-        self.inputs = inputs;
-        self
-    }
-    /// A rule that gives every node it's on a value.
-    pub fn compute<C: 'static>(self, f: impl Fn(&Cx) -> Result<C, Error> + Send + Sync + 'static) -> Rule<C> {
-        self.optional(move |cx| f(cx).map(Some))
-    }
-    /// A rule that may decide the node has no such component.
-    pub fn optional<C: 'static>(self, f: impl Fn(&Cx) -> Cell<C> + Send + Sync + 'static) -> Rule<C> {
-        Rule { name: self.name, inputs: self.inputs, f: Arc::new(f), saved: None }
-    }
-}
-
 type AnyValue = Arc<dyn Any + Send + Sync>;
-/// It runs for one node, and is written on another if that node takes it from its kind.
-type EvalFn = dyn Fn(Session, Entity, Entity, &Inputs, &str) -> AnyValue + Send + Sync;
-
-pub(crate) struct Erased {
-    pub(crate) name: String,
-    pub(crate) inputs: Inputs,
-    pub(crate) saved: Option<SavedRule>,
-    eval: Arc<EvalFn>,
-    same: fn(&AnyValue, &AnyValue) -> bool,
-    json: fn(&AnyValue) -> Result<Option<Value>, Error>,
-}
 
 fn panic_message(p: Box<dyn Any + Send>) -> String {
     p.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_else(|| "unknown".into())
 }
 
-fn erase<C: Clone + PartialEq + Send + Sync + 'static>(r: Rule<C>, json: fn(&AnyValue) -> Result<Option<Value>, Error>) -> Arc<Erased> {
-    let f = r.f;
-    Arc::new(Erased {
-        name: r.name,
-        inputs: r.inputs,
-        saved: r.saved,
-        eval: Arc::new(move |s, id, origin, inputs, name| {
-            let cx = Cx { s, id, origin, inputs, rule: name };
-            // A rule that panics fails its own cell, not the graph and every thread reading it.
-            let result = catch_unwind(AssertUnwindSafe(|| f(&cx))).unwrap_or_else(|p| Err(Error::Failed(format!("rule {name} panicked: {}", panic_message(p)))));
-            Arc::new(result) as AnyValue
-        }),
-        same: |a, b| a.downcast_ref::<Cell<C>>() == b.downcast_ref::<Cell<C>>(),
-        json,
-    })
+/// Something that works a cell out: a formula, compiled, or something built in. What it gives is kept
+/// as its own Rust type, so reading it typed needs no JSON.
+pub struct Computed {
+    pub name: String,
+    eval: Box<dyn Fn(&Cx) -> AnyValue + Send + Sync>,
+    same: fn(&AnyValue, &AnyValue) -> bool,
+    json: fn(&AnyValue) -> Result<Option<Value>, Error>,
 }
 
-pub(crate) fn erase_typed<C: Component>(r: Rule<C>) -> Arc<Erased> {
-    erase(r, |a| a.downcast_ref::<Cell<C>>().expect("one component, one type").clone().map(|v| v.map(|v| serde_json::to_value(&v).expect("components serialise"))))
+impl Computed {
+    fn erased<T: Clone + PartialEq + Send + Sync + 'static>(name: &str, f: impl Fn(&Cx) -> Result<Option<T>, Error> + Send + Sync + 'static, json: fn(&AnyValue) -> Result<Option<Value>, Error>) -> Arc<Computed> {
+        let label = name.to_string();
+        Arc::new(Computed {
+            name: name.to_string(),
+            eval: Box::new(move |cx| {
+                // A computation that panics fails its own cell, not the graph and every thread reading it.
+                let result = catch_unwind(AssertUnwindSafe(|| f(cx))).unwrap_or_else(|p| Err(Error::Failed(format!("{label} panicked: {}", panic_message(p)))));
+                Arc::new(result) as AnyValue
+            }),
+            same: |a, b| a.downcast_ref::<Result<Option<T>, Error>>() == b.downcast_ref::<Result<Option<T>, Error>>(),
+            json,
+        })
+    }
+
+    /// One that gives a typed cell.
+    pub fn typed<C: CellType>(name: &str, f: impl Fn(&Cx) -> Cell<C> + Send + Sync + 'static) -> Arc<Computed> {
+        Self::erased(name, f, |a| a.downcast_ref::<Cell<C>>().expect("one cell, one type").clone().map(|v| v.map(|v| serde_json::to_value(&v).expect("cells serialise"))))
+    }
+
+    /// One that gives JSON, for a cell with no Rust type.
+    pub fn json(name: &str, f: impl Fn(&Cx) -> Cell<Value> + Send + Sync + 'static) -> Arc<Computed> {
+        Self::erased(name, f, |a| a.downcast_ref::<Cell<Value>>().expect("one cell, one type").clone())
+    }
 }
 
-pub(crate) fn erase_runtime(r: Rule<Value>) -> Arc<Erased> {
-    erase(r, |a| a.downcast_ref::<Cell<Value>>().expect("one component, one type").clone())
-}
-
-/// `Storage`, once the type has been erased.
+/// What a cell holds where it's written.
 #[derive(Clone)]
 pub(crate) enum Backing {
-    Stored(Value),
-    Computed(Arc<Erased>),
-    /// A saved rule that can't run. It's kept exactly as written, so saving doesn't lose it.
-    Broken(SavedRule, Error),
+    Value(Value),
+    /// A formula, and what it compiled to, or why it couldn't.
+    Formula(String, Result<Arc<Computed>, Error>),
+    Builtin(Arc<Computed>),
 }
 
-/// How far past its last written row a table goes on by itself.
-pub const MOST_IMPLICIT: i64 = 100_000;
+impl Backing {
+    fn computed(&self) -> Option<&Arc<Computed>> {
+        match self {
+            Backing::Formula(_, Ok(c)) | Backing::Builtin(c) => Some(c),
+            _ => None,
+        }
+    }
 
-/// The handle of a row nobody wrote, which is the same whenever it's asked for. Two hashes of its name make
-/// up the 128 bits, so it can't be mistaken for a handle that was made.
-fn implicit_entity(table: &str, n: i64) -> Entity {
-    let name = format!("{table}[{n}]");
-    let fnv = |seed: u64| name.bytes().fold(seed, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3));
-    Entity(Uuid::from_u128((u128::from(fnv(0xcbf29ce484222325)) << 64) | u128::from(fnv(0x84222325cbf29ce4))))
-}
-
-/// The name a cell holds, if it's a name typed in.
-fn name_in(b: &Backing) -> Option<String> {
-    match b {
-        Backing::Stored(Value::String(s)) => Some(s.clone()),
-        _ => None,
+    fn same(&self, other: &Backing) -> bool {
+        match (self, other) {
+            (Backing::Value(a), Backing::Value(b)) => a == b,
+            (Backing::Formula(a, _), Backing::Formula(b, _)) => a == b,
+            (Backing::Builtin(a), Backing::Builtin(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
     }
 }
 
-pub(crate) fn typed_backing<C: Component>(s: Storage<C>) -> Backing {
-    match s {
-        Storage::Value(v) => Backing::Stored(serde_json::to_value(&v).expect("components serialise")),
-        Storage::Rule(r) => Backing::Computed(erase_typed(r)),
+/// How a cell is backed, as someone reading it would say it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Backed {
+    Value(Value),
+    Formula(String),
+    /// Worked out by something built in, which has no written form.
+    Builtin,
+}
+
+impl From<&Backing> for Backed {
+    fn from(b: &Backing) -> Self {
+        match b {
+            Backing::Value(v) => Backed::Value(v.clone()),
+            Backing::Formula(t, _) => Backed::Formula(t.clone()),
+            Backing::Builtin(_) => Backed::Builtin,
+        }
     }
+}
+
+/// Where a cell's backing comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// The entity says it itself.
+    Own,
+    /// It's taken from this kind, or table, or other part of the same row.
+    Kind(Entity),
+    /// It's what its component says it is when nothing else does.
+    Default,
+}
+
+/// Why an entity has a component.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Origin {
+    /// It was given it.
+    Given,
+    /// Every node has it.
+    Everywhere,
+    /// It takes it from this kind.
+    Kind(Entity),
+    /// Another component it has requires it.
+    Requires(String),
+    /// An edge to or from it brings it.
+    Edge(Entity),
 }
 
 /// One thing a computed cell read.
@@ -334,14 +235,18 @@ pub(crate) fn typed_backing<C: Component>(s: Storage<C>) -> Backing {
 pub enum Dep {
     /// Another cell's value.
     Cell(Key),
-    /// How this cell is backed: replacing a value or a rule changes this.
+    /// How this cell is backed, and whether it's there at all.
     Backing(Key),
-    /// Links of a kind arriving at a node.
+    /// Which components an entity has.
+    Has(Entity),
+    /// Edges with this component arriving at a node.
     Into(Entity, String),
-    /// Links of a kind leaving a node.
+    /// Edges with this component leaving a node.
     From(Entity, String),
-    /// Which nodes hold a component.
+    /// Which nodes have this component.
     Scan(String),
+    /// Every node's name, which says what's a row of what.
+    Names,
 }
 
 #[derive(Clone)]
@@ -390,38 +295,38 @@ impl Names {
     }
 }
 
-/// How a node takes the cells it doesn't have from its kind.
-pub(crate) struct Inheriting {
-    /// The kind of link from a node to its kind.
-    pub(crate) through: String,
-    /// What the systems say: a kind only says what the workspace's own cells are.
-    pub(crate) owned: HashSet<String>,
-    /// What the systems say that's still taken from a kind: see `Registry::passed_down`.
-    pub(crate) passed_down: HashSet<String>,
+/// What an entity's components and cells are, to compare before and after a change that can move them.
+#[derive(Default)]
+struct Shape {
+    components: BTreeSet<String>,
+    cells: BTreeMap<String, (Backing, Entity)>,
 }
 
-impl Inheriting {
-    /// Whether a node takes this cell from its kind when it doesn't say it.
-    pub(crate) fn takes(&self, component: &str) -> bool {
-        !self.owned.contains(component) || self.passed_down.contains(component)
-    }
-}
+/// How far past its last written row a table goes on by itself.
+pub const MOST_IMPLICIT: i64 = 100_000;
+
+type Components = Arc<BTreeMap<String, Origin>>;
 
 #[derive(Default)]
 pub struct Graph {
-    pub(crate) entities: BTreeSet<Entity>,
-    pub(crate) cells: HashMap<Entity, BTreeMap<String, Backing>>,
-    /// What backs a component on every node that doesn't say otherwise.
-    pub(crate) defaults: HashMap<String, Backing>,
-    inheriting: Option<Arc<Inheriting>>,
+    nodes: BTreeSet<Entity>,
+    /// Each edge, with its ends. An edge is there as long as it has a component.
+    edges: BTreeMap<Entity, (Entity, Entity)>,
+    out: HashMap<Entity, BTreeSet<Entity>>,
+    into: HashMap<Entity, BTreeSet<Entity>>,
+    /// The components each entity was given.
+    given: HashMap<Entity, BTreeSet<String>>,
+    /// What each entity says itself.
+    cells: HashMap<Entity, BTreeMap<String, Backing>>,
+    /// What each cell is when nothing says otherwise.
+    defaults: Arc<HashMap<String, Backing>>,
     /// Names, and the tables they make: see `table`.
     names: Names,
     /// Numbered rows nobody wrote that something has asked for: see `row_at`. They're only ever read, so
     /// they live here and in the memos, and never in a file.
     implicit: Mutex<HashMap<Entity, Row>>,
-    pub(crate) links: BTreeMap<(Entity, Entity), BTreeMap<String, Value>>,
-    into: HashMap<Entity, BTreeSet<Entity>>,
-    from: HashMap<Entity, BTreeSet<Entity>>,
+    /// Which components each entity has, as worked out since the last change that could move them.
+    components: Mutex<HashMap<Entity, Components>>,
     resources: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
     pub(crate) registry: Arc<Registry>,
     revision: u64,
@@ -429,18 +334,35 @@ pub struct Graph {
     engine: Mutex<RefCell<Engine>>,
 }
 
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 impl Graph {
-    /// A graph with no rules registered: closures still work, but nothing can be saved by key.
+    /// A graph with nothing registered.
     pub fn new() -> Self {
-        Self::default()
+        Self::with_registry(Arc::new(Registry::new()))
     }
 
-    /// A graph using these rules, and whatever defaults they set.
+    /// A graph of what these systems say there is.
     pub fn with_registry(registry: Arc<Registry>) -> Self {
-        let inheriting = registry.inherits_through.as_ref().map(|through| Arc::new(Inheriting { through: through.clone(), owned: registry.owned(), passed_down: registry.passed_down.clone() }));
-        let mut g = Graph { defaults: registry.defaults.clone(), inheriting, registry, ..Self::default() };
-        g.revision = 1;
-        g
+        let mut defaults = HashMap::new();
+        for c in registry.cells() {
+            let b = match &c.default {
+                None => continue,
+                Some(CellDefault::Value(v)) => Backing::Value(v.clone()),
+                Some(CellDefault::Builtin(f)) => Backing::Builtin(f.clone()),
+                Some(CellDefault::Formula(text)) => {
+                    let compiled = match &c.compile {
+                        Some(compile) => compile(text).map_err(Error::Failed),
+                        None => Err(Error::Failed(format!("{} has a formula for a default, and nothing to compile it", c.name))),
+                    };
+                    Backing::Formula(text.clone(), compiled)
+                }
+            };
+            defaults.insert(c.name.clone(), b);
+        }
+        Graph { defaults: Arc::new(defaults), registry, revision: 1, ..Self::default() }
     }
 
     pub fn registry(&self) -> &Registry {
@@ -462,258 +384,234 @@ impl Graph {
 
     /// A node that already has an identity, such as one loaded from a file.
     pub fn adopt(&mut self, e: Entity) -> &mut Self {
-        if self.entities.insert(e) {
-            self.revision += 1;
-            for c in self.defaults.keys().cloned().collect::<Vec<_>>() {
-                // It may have existed before, so anything that read it then has to look again.
-                self.touch(Dep::Backing((e, c.clone())));
-                self.touch(Dep::Scan(c));
-            }
+        if !self.nodes.contains(&e) {
+            self.change(&[e], |g| {
+                g.nodes.insert(e);
+            });
         }
         self
     }
 
-    /// Remove a node and every cell on it. Its links have to go first, because they say something
-    /// about other nodes too. Removing a node with links, or no such node, changes nothing and
-    /// returns false.
+    /// Remove a node, and everything it says. Its edges have to go first, because they say something
+    /// about other nodes too. Removing a node with edges, or no such node, changes nothing and returns
+    /// false.
     pub fn despawn(&mut self, e: Entity) -> bool {
-        let linked = self.into.get(&e).is_some_and(|s| !s.is_empty()) || self.from.get(&e).is_some_and(|s| !s.is_empty());
-        if linked || !self.entities.contains(&e) {
+        let linked = self.out.get(&e).is_some_and(|s| !s.is_empty()) || self.into.get(&e).is_some_and(|s| !s.is_empty());
+        if linked || !self.nodes.contains(&e) {
             return false;
         }
-        // Its name may have made it part of a row, or a table something's a row of.
-        let before = self.reach(&[e]);
-        self.entities.remove(&e);
-        self.names.set(e, None);
-        self.moved(before, &[e]);
-        self.revision += 1;
-        let own = self.cells.remove(&e).unwrap_or_default().into_keys();
-        let columns: BTreeSet<String> = own.chain(self.defaults.keys().cloned()).collect();
-        for c in columns {
-            self.forget(e, &c);
-            self.touch(Dep::Backing((e, c.clone())));
-            self.touch(Dep::Scan(c));
-        }
-        self.into.remove(&e);
-        self.from.remove(&e);
+        self.change(&[e], |g| {
+            g.nodes.remove(&e);
+            g.names.set(e, None);
+            g.given.remove(&e);
+            g.cells.remove(&e);
+            g.out.remove(&e);
+            g.into.remove(&e);
+        });
         true
     }
 
     fn known(&self, e: Entity) {
-        assert!(self.entities.contains(&e), "{e} isn't a node in this graph");
+        assert!(self.nodes.contains(&e) || self.edges.contains_key(&e), "{e} isn't a node or an edge in this graph");
     }
 
-    /// Back a cell with a value or a rule. Setting a value equal to the one there changes
-    /// nothing. A rule is only recorded here, and runs when the cell is read.
-    pub fn set<C: Component>(&mut self, e: Entity, storage: impl Into<Storage<C>>) -> &mut Self {
-        self.known(e);
-        self.back(e, C::NAME, typed_backing(storage.into()));
-        self
-    }
-
-    /// The same for a component with no Rust type, given by name.
-    pub fn set_runtime(&mut self, e: Entity, name: &str, storage: impl Into<Storage<Value>>) -> &mut Self {
-        self.known(e);
-        let backing = match storage.into() {
-            Storage::Value(v) => Backing::Stored(v),
-            Storage::Rule(r) => Backing::Computed(erase_runtime(r)),
-        };
-        self.back(e, name, backing);
-        self
-    }
-
-    /// Back a cell with a registered rule by its key, as a file or the LLM would. If it can't
-    /// run, the cell says why.
-    pub fn set_rule(&mut self, e: Entity, component: &str, rule: &str, params: Value) -> &mut Self {
-        self.known(e);
-        let saved = SavedRule { rule: rule.to_string(), params };
-        let backing = self.registry.clone().resolve(&(e, component.to_string()), &saved);
-        self.back(e, component, backing);
-        self
-    }
-
-    /// What backs this component on every node that doesn't say otherwise.
-    pub fn set_default<C: Component>(&mut self, storage: impl Into<Storage<C>>) -> &mut Self {
-        self.back_default(C::NAME, Some(typed_backing(storage.into())));
-        self
-    }
-
-    pub(crate) fn back_default(&mut self, component: &str, b: Option<Backing>) {
-        self.revision += 1;
-        let keeps_memo = matches!(b, Some(Backing::Computed(_)));
-        match b {
-            Some(b) => self.defaults.insert(component.to_string(), b),
-            None => self.defaults.remove(component),
-        };
-        for e in self.entities.iter().copied().collect::<Vec<_>>() {
-            if !keeps_memo {
-                self.forget(e, component);
-            }
-            self.touch(Dep::Backing((e, component.to_string())));
+    /// Give a node a component. Giving it one it has already changes nothing.
+    pub fn add(&mut self, e: Entity, component: &str) -> &mut Self {
+        assert!(self.nodes.contains(&e), "{e} isn't a node in this graph");
+        if !self.given.get(&e).is_some_and(|g| g.contains(component)) {
+            self.change(&[e], |g| {
+                g.given.entry(e).or_default().insert(component.to_string());
+            });
         }
-        self.touch(Dep::Scan(component.to_string()));
+        self
     }
 
-    pub(crate) fn back(&mut self, e: Entity, component: &str, b: Backing) {
-        let unchanged = match (&b, self.cells.get(&e).and_then(|c| c.get(component))) {
-            (Backing::Stored(new), Some(Backing::Stored(old))) => new == old,
-            (Backing::Computed(new), Some(Backing::Computed(old))) => new.saved.is_some() && new.saved == old.saved,
-            (Backing::Broken(new, _), Some(Backing::Broken(old, _))) => new == old,
+    /// Take a component away from a node. What it said in that component's cells is kept, though it
+    /// isn't there while the node doesn't have the component.
+    pub fn remove(&mut self, e: Entity, component: &str) -> &mut Self {
+        if self.given.get(&e).is_some_and(|g| g.contains(component)) {
+            self.change(&[e], |g| {
+                g.given.get_mut(&e).map(|s| s.remove(component));
+            });
+        }
+        self
+    }
+
+    /// Give the edge from one node to another a component, making the edge if it's new. Returns the edge.
+    pub fn link(&mut self, from: Entity, to: Entity, component: &str) -> Entity {
+        assert!(self.nodes.contains(&from) && self.nodes.contains(&to), "an edge needs both its ends");
+        let edge = Entity::edge(from, to);
+        if self.given.get(&edge).is_some_and(|g| g.contains(component)) {
+            return edge;
+        }
+        self.change(&[edge, from, to], |g| {
+            g.edges.insert(edge, (from, to));
+            g.out.entry(from).or_default().insert(edge);
+            g.into.entry(to).or_default().insert(edge);
+            g.given.entry(edge).or_default().insert(component.to_string());
+        });
+        self.touch(Dep::Into(to, component.to_string()));
+        self.touch(Dep::From(from, component.to_string()));
+        edge
+    }
+
+    /// Take a component off the edge from one node to another. An edge is its components, so taking the
+    /// last one takes the edge, and everything it says.
+    pub fn unlink(&mut self, from: Entity, to: Entity, component: &str) -> &mut Self {
+        let edge = Entity::edge(from, to);
+        if !self.given.get(&edge).is_some_and(|g| g.contains(component)) {
+            return self;
+        }
+        self.change(&[edge, from, to], |g| {
+            let left = g.given.get_mut(&edge).expect("checked above");
+            left.remove(component);
+            if left.is_empty() {
+                g.given.remove(&edge);
+                g.cells.remove(&edge);
+                g.edges.remove(&edge);
+                g.out.get_mut(&from).map(|s| s.remove(&edge));
+                g.into.get_mut(&to).map(|s| s.remove(&edge));
+            }
+        });
+        self.touch(Dep::Into(to, component.to_string()));
+        self.touch(Dep::From(from, component.to_string()));
+        self
+    }
+
+    /// Write a value in a cell. Writing the value already there changes nothing.
+    pub fn set<C: CellType>(&mut self, e: Entity, value: C) -> &mut Self {
+        self.set_value(e, C::NAME, serde_json::to_value(&value).expect("cells serialise"))
+    }
+
+    /// The same for a cell given by name.
+    pub fn set_value(&mut self, e: Entity, cell: &str, value: Value) -> &mut Self {
+        self.known(e);
+        self.back(e, cell, Some(Backing::Value(value)));
+        self
+    }
+
+    /// Write a formula in a cell. If it can't be compiled, the cell says why.
+    pub fn set_formula(&mut self, e: Entity, cell: &str, text: &str) -> &mut Self {
+        self.known(e);
+        let compiled = self.compile(cell, text);
+        self.back(e, cell, Some(Backing::Formula(text.to_string(), compiled)));
+        self
+    }
+
+    /// Take away what an entity says in a cell, so it takes it from its kind, or its default, again.
+    pub fn clear(&mut self, e: Entity, cell: &str) -> &mut Self {
+        if self.cells.get(&e).is_some_and(|c| c.contains_key(cell)) {
+            self.back(e, cell, None);
+        }
+        self
+    }
+
+    pub(crate) fn compile(&self, cell: &str, text: &str) -> Result<Arc<Computed>, Error> {
+        let compile = match self.registry.cell_def(cell) {
+            Some(def) => def.compile.as_ref().ok_or_else(|| Error::Failed(format!("{cell} can't hold a formula")))?,
+            None => self.registry.free().ok_or_else(|| Error::Failed("nothing here can read a formula".to_string()))?,
+        };
+        compile(text).map_err(Error::Failed)
+    }
+
+    fn back(&mut self, e: Entity, cell: &str, b: Option<Backing>) {
+        let old = self.cells.get(&e).and_then(|c| c.get(cell));
+        let unchanged = match (&b, old) {
+            (Some(new), Some(old)) => new.same(old),
+            (None, None) => true,
             _ => false,
         };
         if unchanged {
             return;
         }
-        self.revision += 1;
-        if matches!(b, Backing::Stored(_)) {
-            self.forget(e, component);
-        }
-        let renamed = (component == Name::NAME).then(|| (self.reach(&[e]), name_in(&b)));
-        let is_new = self.cells.entry(e).or_default().insert(component.to_string(), b).is_none();
-        if let Some((before, name)) = renamed {
-            self.renamed(e, name, before);
-        }
-        self.rebacked(e, component);
-        if is_new {
-            self.touch(Dep::Scan(component.to_string()));
+        self.change(&[e], |g| {
+            match b {
+                Some(b) => {
+                    g.cells.entry(e).or_default().insert(cell.to_string(), b);
+                }
+                None => {
+                    g.cells.get_mut(&e).map(|c| c.remove(cell));
+                }
+            }
+            if cell == Name::NAME {
+                let name = match g.cells.get(&e).and_then(|c| c.get(cell)) {
+                    Some(Backing::Value(Value::String(s))) => Some(s.clone()),
+                    _ => None,
+                };
+                g.names.set(e, name);
+            }
+        });
+        if cell == Name::NAME {
+            self.touch(Dep::Names);
         }
     }
 
-    /// What backs this cell changed, here and for whatever takes it from here.
-    fn rebacked(&mut self, e: Entity, component: &str) {
-        self.touch(Dep::Backing((e, component.to_string())));
-        if !self.inheriting.as_ref().is_some_and(|i| i.takes(component)) {
-            return;
-        }
-        let takers = self.takers_all(e);
-        if takers.is_empty() {
-            return;
-        }
-        for t in takers {
-            if !self.has_own(t, component) {
-                // Whether it's now a value or a rule, it isn't an unbroken run of the old one.
-                self.forget(t, component);
-                self.touch(Dep::Backing((t, component.to_string())));
+    /// Make a change that can move what entities around these have, and tell whatever read them.
+    fn change(&mut self, around: &[Entity], f: impl FnOnce(&mut Self)) {
+        let before: HashMap<Entity, Shape> = self.region(around).into_iter().map(|e| (e, self.shape(e))).collect();
+        f(self);
+        self.revision += 1;
+        lock(&self.components).clear();
+        let mut region = self.region(around);
+        region.extend(before.keys().copied());
+        let mut before = before;
+        for e in region {
+            let was = before.remove(&e).unwrap_or_default();
+            let is = self.shape(e);
+            if was.components != is.components {
+                self.touch(Dep::Has(e));
+                for c in was.components.symmetric_difference(&is.components) {
+                    self.touch(Dep::Scan(c.clone()));
+                }
+            }
+            let names: BTreeSet<&String> = was.cells.keys().chain(is.cells.keys()).collect();
+            for cell in names {
+                let (old, new) = (was.cells.get(cell), is.cells.get(cell));
+                let same = match (old, new) {
+                    (Some((a, at)), Some((b, bt))) => at == bt && a.same(b),
+                    (None, None) => true,
+                    _ => false,
+                };
+                if same {
+                    continue;
+                }
+                // A memo only stands for an unbroken run of being computed. If readers have seen a value
+                // written in, or nothing at all, since, the same answer coming back is still a change to them.
+                let both_computed = old.is_some_and(|(b, _)| b.computed().is_some()) && new.is_some_and(|(b, _)| b.computed().is_some());
+                if !both_computed {
+                    self.forget(e, cell);
+                }
+                self.touch(Dep::Backing((e, cell.clone())));
             }
         }
-        self.touch(Dep::Scan(component.to_string()));
     }
 
-    /// A node's name changed, so it may be a row somewhere else now, or a table with other rows.
-    fn renamed(&mut self, e: Entity, name: Option<String>, before: HashMap<Entity, BTreeSet<String>>) {
-        self.names.set(e, name);
-        self.moved(before, &[e]);
-        self.touch(Dep::Scan(Name::NAME.to_string()));
-    }
-
-    /// The nodes that might take a cell from around these, and the cells each could take: kept from
-    /// before a change that can move where cells come from, such as a new kind or a new name.
-    fn reach(&self, around: &[Entity]) -> HashMap<Entity, BTreeSet<String>> {
-        if self.inheriting.is_none() {
-            return HashMap::new();
-        }
-        let mut out = HashMap::new();
-        for a in around.iter().filter(|a| self.entities.contains(a)) {
-            for n in std::iter::once(*a).chain(self.takers_all(*a)) {
-                out.entry(n).or_insert_with(|| self.taken(n));
+    /// These entities, and everything that might take something from them.
+    fn region(&self, around: &[Entity]) -> BTreeSet<Entity> {
+        let mut out = BTreeSet::new();
+        for a in around {
+            out.insert(*a);
+            if self.nodes.contains(a) {
+                out.extend(self.takers_all(*a));
             }
         }
         out
     }
 
-    /// After such a change: anything that could take a cell from somewhere else, before or after it,
-    /// has to look again.
-    fn moved(&mut self, mut before: HashMap<Entity, BTreeSet<String>>, around: &[Entity]) {
-        for (n, cells) in self.reach(around) {
-            before.entry(n).or_default().extend(cells);
+    fn shape(&self, e: Entity) -> Shape {
+        if !self.exists(e) {
+            return Shape::default();
         }
-        for (n, cells) in before {
-            for c in cells {
-                if (self.entities.contains(&n) || self.is_implicit(n)) && !self.has_own(n, &c) {
-                    self.forget(n, &c);
-                    self.touch(Dep::Backing((n, c.clone())));
-                }
-                self.touch(Dep::Scan(c));
-            }
-        }
+        let components: BTreeSet<String> = self.components_of(e).keys().cloned().collect();
+        let cells = self.cell_names(e).into_iter().filter_map(|c| self.backing_at(e, &c).map(|b| (c, b))).collect();
+        Shape { components, cells }
     }
 
-    /// A memo only stands for an unbroken run of being computed. If readers have seen a typed-in
-    /// value since, a rule coming back with the old answer is still a change to them.
-    fn forget(&mut self, e: Entity, component: &str) {
-        self.engine.get_mut().unwrap_or_else(PoisonError::into_inner).get_mut().memo.remove(&(e, component.to_string()));
+    fn forget(&mut self, e: Entity, cell: &str) {
+        self.engine.get_mut().unwrap_or_else(PoisonError::into_inner).get_mut().memo.remove(&(e, cell.to_string()));
     }
 
-    pub fn remove<C: Component>(&mut self, e: Entity) -> &mut Self {
-        self.remove_named(e, C::NAME)
-    }
-
-    pub fn remove_named(&mut self, e: Entity, component: &str) -> &mut Self {
-        let before = (component == Name::NAME).then(|| self.reach(&[e]));
-        if self.cells.get_mut(&e).and_then(|c| c.remove(component)).is_some() {
-            self.revision += 1;
-            if let Some(before) = before {
-                self.renamed(e, None, before);
-            }
-            self.forget(e, component);
-            self.rebacked(e, component);
-            self.touch(Dep::Scan(component.to_string()));
-        }
-        self
-    }
-
-    pub fn link<L: Component>(&mut self, from: Entity, to: Entity, value: L) -> &mut Self {
-        self.link_runtime(from, to, Runtime::of(&value))
-    }
-
-    pub fn link_runtime(&mut self, from: Entity, to: Entity, c: Runtime) -> &mut Self {
-        self.known(from);
-        self.known(to);
-        if self.link_value(from, to, &c.name) == Some(&c.value) {
-            return self;
-        }
-        let kinded = self.inheriting.as_ref().is_some_and(|i| i.through == c.name);
-        let before = if kinded { self.reach(&[from, to]) } else { HashMap::new() };
-        let bag = self.links.entry((from, to)).or_default();
-        bag.insert(c.name.clone(), c.value);
-        self.into.entry(to).or_default().insert(from);
-        self.from.entry(from).or_default().insert(to);
-        self.revision += 1;
-        self.touch(Dep::Into(to, c.name.clone()));
-        if kinded {
-            self.moved(before, &[from, to]);
-        }
-        self.touch(Dep::From(from, c.name));
-        self
-    }
-
-    pub fn unlink<L: Component>(&mut self, from: Entity, to: Entity) -> &mut Self {
-        self.unlink_named(from, to, L::NAME)
-    }
-
-    /// A link is its kinds, so removing the last kind removes the link.
-    pub fn unlink_named(&mut self, from: Entity, to: Entity, kind: &str) -> &mut Self {
-        let key = (from, to);
-        let kinded = self.inheriting.as_ref().is_some_and(|i| i.through == kind) && self.has_link(from, to, kind);
-        let before = if kinded { self.reach(&[from, to]) } else { HashMap::new() };
-        let removed = self.links.get_mut(&key).and_then(|b| b.remove(kind)).is_some();
-        if removed {
-            if self.links[&key].is_empty() {
-                self.links.remove(&key);
-                self.into.get_mut(&to).map(|s| s.remove(&from));
-                self.from.get_mut(&from).map(|s| s.remove(&to));
-            }
-            self.revision += 1;
-            self.touch(Dep::Into(to, kind.to_string()));
-            self.touch(Dep::From(from, kind.to_string()));
-            if kinded {
-                self.moved(before, &[from, to]);
-            }
-        }
-        self
-    }
-
-    /// Something shared by rules that isn't part of the graph.
+    /// Something shared by computations that isn't part of the graph.
     pub fn insert_resource<R: Send + Sync + 'static>(&mut self, r: R) -> &mut Self {
         self.resources.insert(TypeId::of::<R>(), Arc::new(r));
         self
@@ -724,20 +622,20 @@ impl Graph {
         r.downcast::<R>().expect("keyed by type")
     }
 
-    /// An independent copy to try things on. It keeps the memos, so it only reruns what the
-    /// changes reach.
+    /// An independent copy to try things on. It keeps the memos, so it only reruns what the changes reach.
     pub fn fork(&self) -> Graph {
         let memo = self.session(|s| s.engine.borrow().memo.clone());
         Graph {
-            entities: self.entities.clone(),
+            nodes: self.nodes.clone(),
+            edges: self.edges.clone(),
+            out: self.out.clone(),
+            into: self.into.clone(),
+            given: self.given.clone(),
             cells: self.cells.clone(),
             defaults: self.defaults.clone(),
-            inheriting: self.inheriting.clone(),
             names: self.names.clone(),
-            implicit: Mutex::new(self.implicit.lock().unwrap_or_else(PoisonError::into_inner).clone()),
-            links: self.links.clone(),
-            into: self.into.clone(),
-            from: self.from.clone(),
+            implicit: Mutex::new(lock(&self.implicit).clone()),
+            components: Mutex::new(lock(&self.components).clone()),
             resources: self.resources.clone(),
             registry: self.registry.clone(),
             revision: self.revision,
@@ -749,117 +647,295 @@ impl Graph {
     // ---------- reading ----------
 
     fn session<R>(&self, f: impl FnOnce(Session) -> R) -> R {
-        let guard = self.engine.lock().unwrap_or_else(PoisonError::into_inner);
+        let guard = lock(&self.engine);
         f(Session { g: self, engine: &guard })
     }
 
+    /// Every node, in the order they were made.
     pub fn entities(&self) -> impl Iterator<Item = Entity> + '_ {
-        self.entities.iter().copied()
+        self.nodes.iter().copied()
     }
 
-    /// Every link, with what it holds.
-    pub fn links(&self) -> impl Iterator<Item = (Entity, Entity, &BTreeMap<String, Value>)> + '_ {
-        self.links.iter().map(|((from, to), bag)| (*from, *to, bag))
+    /// Every edge, with its ends, in the order of their sources and then their targets.
+    pub fn edges(&self) -> impl Iterator<Item = (Entity, Entity, Entity)> + '_ {
+        let mut all: Vec<(Entity, Entity, Entity)> = self.edges.iter().map(|(e, (f, t))| (*f, *t, *e)).collect();
+        all.sort();
+        all.into_iter().map(|(f, t, e)| (e, f, t))
     }
 
-    /// The nodes linking to this one by this kind of link.
-    pub fn sources_of(&self, e: Entity, kind: &str) -> Vec<Entity> {
-        self.into.get(&e).into_iter().flatten().copied().filter(|f| self.has_link(*f, e, kind)).collect()
+    /// Whether this is a node of the graph, rather than an edge, a row nobody wrote or a handle from nowhere.
+    pub fn contains(&self, e: Entity) -> bool {
+        self.nodes.contains(&e)
     }
 
-    /// The typed way to look a component up.
-    pub fn get<C: Component>(&self, e: Entity) -> Cell<C> {
-        self.session(|s| s.read(e))
+    pub fn is_edge(&self, e: Entity) -> bool {
+        self.edges.contains_key(&e)
     }
 
-    /// Any component by its name, whether or not Rust has a type for it.
-    pub fn get_runtime(&self, e: Entity, component: &str) -> Cell<Runtime> {
-        self.session(|s| s.read_runtime(e, component))
+    /// An edge's source and target.
+    pub fn ends(&self, edge: Entity) -> Option<(Entity, Entity)> {
+        self.edges.get(&edge).copied()
     }
 
-    /// The value stored on this very node, if that's what backs this cell.
-    pub fn stored(&self, e: Entity, component: &str) -> Option<&Value> {
-        match self.cells.get(&e)?.get(component)? {
-            Backing::Stored(v) => Some(v),
+    fn exists(&self, e: Entity) -> bool {
+        e == Entity::whole() || self.nodes.contains(&e) || self.edges.contains_key(&e) || self.is_implicit(e)
+    }
+
+    /// The components an entity was given itself.
+    pub fn given(&self, e: Entity) -> BTreeSet<String> {
+        self.given.get(&e).cloned().unwrap_or_default()
+    }
+
+    /// The edges with this component arriving at a node, each with its source, in the order those were
+    /// made.
+    pub fn edges_into(&self, e: Entity, component: &str) -> Vec<(Entity, Entity)> {
+        let edges = self.into.get(&e).into_iter().flatten();
+        let mut out: Vec<(Entity, Entity)> = edges.filter(|x| self.given.get(x).is_some_and(|g| g.contains(component))).map(|x| (self.edges[x].0, *x)).collect();
+        out.sort();
+        out
+    }
+
+    /// The edges with this component leaving a node, each with its target, in the order those were made.
+    pub fn edges_from(&self, e: Entity, component: &str) -> Vec<(Entity, Entity)> {
+        let edges = self.out.get(&e).into_iter().flatten();
+        let mut out: Vec<(Entity, Entity)> = edges.filter(|x| self.given.get(x).is_some_and(|g| g.contains(component))).map(|x| (self.edges[x].1, *x)).collect();
+        out.sort();
+        out
+    }
+
+    /// The nodes linking to this one by an edge with this component.
+    pub fn sources_of(&self, e: Entity, component: &str) -> Vec<Entity> {
+        self.edges_into(e, component).into_iter().map(|(n, _)| n).collect()
+    }
+
+    /// The nodes this one links to by an edge with this component.
+    pub fn targets_of(&self, e: Entity, component: &str) -> Vec<Entity> {
+        self.edges_from(e, component).into_iter().map(|(n, _)| n).collect()
+    }
+
+    /// Whether the edge from one node to another has this component.
+    pub fn linked(&self, from: Entity, to: Entity, component: &str) -> bool {
+        self.given.get(&Entity::edge(from, to)).is_some_and(|g| g.contains(component))
+    }
+
+    /// The components an entity has, each with why.
+    pub fn components_of(&self, e: Entity) -> Components {
+        if let Some(c) = lock(&self.components).get(&e) {
+            return c.clone();
+        }
+        let worked_out = Arc::new(self.work_out_components(e));
+        lock(&self.components).insert(e, worked_out.clone());
+        worked_out
+    }
+
+    fn work_out_components(&self, e: Entity) -> BTreeMap<String, Origin> {
+        let reg = &self.registry;
+        let mut out: BTreeMap<String, Origin> = BTreeMap::new();
+        if e == Entity::whole() {
+            for c in reg.components().filter(|c| c.place == Place::Whole) {
+                out.insert(c.name.clone(), Origin::Everywhere);
+            }
+        } else if self.edges.contains_key(&e) {
+            for c in self.given.get(&e).into_iter().flatten() {
+                out.insert(c.clone(), Origin::Given);
+            }
+        } else if self.nodes.contains(&e) || self.is_implicit(e) {
+            if self.nodes.contains(&e) {
+                for c in reg.components().filter(|c| c.everywhere && c.place == Place::Node) {
+                    out.insert(c.name.clone(), Origin::Everywhere);
+                }
+                for c in self.given.get(&e).into_iter().flatten() {
+                    out.insert(c.clone(), Origin::Given);
+                }
+            }
+            for k in self.lookup(e) {
+                for c in self.given.get(&k).into_iter().flatten().filter(|c| reg.inheritable(c)) {
+                    out.entry(c.clone()).or_insert(Origin::Kind(k));
+                }
+            }
+            for edge in self.out.get(&e).into_iter().flatten() {
+                for c in self.given.get(edge).into_iter().flatten().filter_map(|c| reg.component_def(c)) {
+                    for s in &c.source {
+                        out.entry(s.clone()).or_insert(Origin::Edge(*edge));
+                    }
+                }
+            }
+            for edge in self.into.get(&e).into_iter().flatten() {
+                for c in self.given.get(edge).into_iter().flatten().filter_map(|c| reg.component_def(c)) {
+                    for t in &c.target {
+                        out.entry(t.clone()).or_insert(Origin::Edge(*edge));
+                    }
+                }
+            }
+        }
+        let mut todo: Vec<String> = out.keys().cloned().collect();
+        while let Some(c) = todo.pop() {
+            for r in reg.component_def(&c).map(|d| d.requires.clone()).unwrap_or_default() {
+                if !out.contains_key(&r) {
+                    out.insert(r.clone(), Origin::Requires(c.clone()));
+                    todo.push(r);
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether an entity has a component, however it came to.
+    pub fn has(&self, e: Entity, component: &str) -> bool {
+        self.components_of(e).contains_key(component)
+    }
+
+    /// The nodes with a component.
+    pub fn having(&self, component: &str) -> Vec<Entity> {
+        self.nodes.iter().copied().filter(|e| self.has(*e, component)).collect()
+    }
+
+    /// The cells an entity could have: what it says itself, what its kinds say, and every cell of its
+    /// components. Some of these may turn out to have nothing in them.
+    fn cell_names(&self, e: Entity) -> BTreeSet<String> {
+        let mut out: BTreeSet<String> = self.cells.get(&e).into_iter().flat_map(|c| c.keys().cloned()).collect();
+        for k in self.lookup(e) {
+            out.extend(self.cells.get(&k).into_iter().flat_map(|c| c.keys().filter(|c| self.registry.cell_inheritable(c)).cloned()));
+        }
+        for c in self.components_of(e).keys() {
+            if let Some(def) = self.registry.component_def(c) {
+                out.extend(def.cells.iter().cloned());
+                out.extend(def.checks.iter().map(|k| k.cell()));
+            }
+        }
+        out
+    }
+
+    /// The cells an entity has: there's something in each, whichever way it comes.
+    pub fn cells_of(&self, e: Entity) -> BTreeSet<String> {
+        self.cell_names(e).into_iter().filter(|c| self.backing_at(e, c).is_some()).collect()
+    }
+
+    /// What backs a cell, and the entity it's written on: this one, unless it's taken from a kind, or
+    /// the graph as a whole for a default.
+    fn backing_at(&self, e: Entity, cell: &str) -> Option<(Backing, Entity)> {
+        if !self.exists(e) {
+            return None;
+        }
+        let owner = self.registry.owner(cell);
+        if let Some(o) = owner
+            && !self.has(e, o)
+        {
+            return None;
+        }
+        if let Some(b) = self.cells.get(&e).and_then(|c| c.get(cell)) {
+            return Some((b.clone(), e));
+        }
+        if self.registry.cell_inheritable(cell)
+            && let Some(found) = self.from_kind(e, cell)
+        {
+            return Some(found);
+        }
+        owner.and_then(|_| self.defaults.get(cell)).map(|b| (b.clone(), Entity::whole()))
+    }
+
+    /// The nearest of its kinds that says what this cell is: see `lookup`.
+    fn from_kind(&self, e: Entity, cell: &str) -> Option<(Backing, Entity)> {
+        self.lookup(e).into_iter().find_map(|k| self.cells.get(&k).and_then(|c| c.get(cell)).map(|b| (b.clone(), k)))
+    }
+
+    /// How a cell is backed, if it's there, and where that comes from.
+    pub fn backed(&self, e: Entity, cell: &str) -> Option<(Backed, Source)> {
+        let (b, at) = self.backing_at(e, cell)?;
+        let source = if at == e {
+            Source::Own
+        } else if at == Entity::whole() {
+            Source::Default
+        } else {
+            Source::Kind(at)
+        };
+        Some(((&b).into(), source))
+    }
+
+    /// The value written on this very entity, if that's what's there.
+    pub fn stored(&self, e: Entity, cell: &str) -> Option<&Value> {
+        match self.cells.get(&e)?.get(cell)? {
+            Backing::Value(v) => Some(v),
             _ => None,
         }
     }
 
-    /// Whether this node says for itself what backs a cell, rather than taking the default.
-    pub fn has_own(&self, e: Entity, component: &str) -> bool {
-        self.cells.get(&e).is_some_and(|c| c.contains_key(component))
+    /// What this entity says itself in each of its cells, whether or not it has their components now.
+    pub fn written(&self, e: Entity) -> BTreeMap<String, Backed> {
+        self.cells.get(&e).into_iter().flatten().map(|(c, b)| (c.clone(), b.into())).collect()
     }
 
-    /// What a link holds under this kind, if it has that kind.
-    pub fn link_value(&self, from: Entity, to: Entity, kind: &str) -> Option<&Value> {
-        self.links.get(&(from, to))?.get(kind)
-    }
-
-    /// The nodes this one links to by this kind of link.
-    pub fn targets_of(&self, e: Entity, kind: &str) -> Vec<Entity> {
-        self.from.get(&e).into_iter().flatten().copied().filter(|t| self.has_link(e, *t, kind)).collect()
-    }
-
-    /// Which rule backs a cell, and what it may follow.
-    pub fn rule_of(&self, e: Entity, component: &str) -> Option<(String, Inputs)> {
-        self.computed_by(e, component).map(|r| (r.name.clone(), r.inputs.clone()))
-    }
-
-    /// How a cell's rule is written down, if a rule backs it and it can be written down.
-    pub fn saved_rule(&self, e: Entity, component: &str) -> Option<SavedRule> {
-        match self.backing(e, component)? {
-            Backing::Computed(r) => r.saved.clone(),
-            Backing::Broken(saved, _) => Some(saved),
-            Backing::Stored(_) => None,
+    /// Why a formula this entity says itself can't be read, if it can't.
+    pub fn formula_error(&self, e: Entity, cell: &str) -> Option<Error> {
+        match self.cells.get(&e)?.get(cell)? {
+            Backing::Formula(_, Err(error)) => Some(error.clone()),
+            _ => None,
         }
     }
 
-    /// What a computed cell read last time it ran.
-    pub fn reads_of(&self, e: Entity, component: &str) -> Vec<Dep> {
-        self.session(|s| s.engine.borrow().memo.get(&(e, component.to_string())).map(|m| m.deps.clone()).unwrap_or_default())
+    /// Every formula written anywhere that can't be read, and why.
+    pub fn broken(&self) -> Vec<(Key, Error)> {
+        let mut out = Vec::new();
+        for (e, cells) in &self.cells {
+            for (cell, b) in cells {
+                if let Backing::Formula(_, Err(error)) = b {
+                    out.push(((*e, cell.clone()), error.clone()));
+                }
+            }
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
     }
 
-    /// The cells whose rules have actually run since this was last called.
+    /// Whether this entity says what's in a cell itself, rather than taking it from elsewhere.
+    pub fn has_own(&self, e: Entity, cell: &str) -> bool {
+        self.cells.get(&e).is_some_and(|c| c.contains_key(cell))
+    }
+
+    /// The kind that says what this cell is, whether or not the entity says otherwise.
+    pub fn kind_beneath(&self, e: Entity, cell: &str) -> Option<Entity> {
+        self.registry.cell_inheritable(cell).then(|| self.from_kind(e, cell).map(|(_, k)| k)).flatten()
+    }
+
+    /// The typed way to read a cell.
+    pub fn get<C: CellType>(&self, e: Entity) -> Cell<C> {
+        self.session(|s| s.read(e))
+    }
+
+    /// Any cell by its name, whether or not Rust has a type for it.
+    pub fn get_value(&self, e: Entity, cell: &str) -> Cell<Value> {
+        self.session(|s| s.read_value(e, cell))
+    }
+
+    /// Run something with what a computed cell on this entity could see, as one would, without keeping
+    /// anything: to try out a formula, say.
+    pub fn run<R>(&self, e: Entity, f: impl FnOnce(&Cx) -> R) -> R {
+        self.session(|s| {
+            s.engine.borrow_mut().reads.push(Vec::new());
+            let out = f(&Cx { s, id: e, origin: e });
+            s.engine.borrow_mut().reads.pop();
+            out
+        })
+    }
+
+    /// What a computed cell read last time it ran.
+    pub fn reads_of(&self, e: Entity, cell: &str) -> Vec<Dep> {
+        self.session(|s| s.engine.borrow().memo.get(&(e, cell.to_string())).map(|m| m.deps.clone()).unwrap_or_default())
+    }
+
+    /// The cells that have actually been worked out since this was last called.
     pub fn take_ran(&self) -> Vec<Key> {
         self.session(|s| std::mem::take(&mut s.engine.borrow_mut().ran))
     }
 
-    fn backing(&self, e: Entity, component: &str) -> Option<Backing> {
-        self.backing_at(e, component).map(|(b, _)| b)
-    }
+    // ---------- kinds ----------
 
-    /// What backs a cell, and the node it's written on: this one, unless it's taken from a kind.
-    fn backing_at(&self, e: Entity, component: &str) -> Option<(Backing, Entity)> {
-        if e == Entity::whole() {
-            return self.defaults.get(component).map(|b| (b.clone(), e));
-        }
-        let node = self.entities.contains(&e);
-        if !node && !self.is_implicit(e) {
-            return None;
-        }
-        if let Some(b) = self.cells.get(&e).and_then(|c| c.get(component)) {
-            return Some((b.clone(), e));
-        }
-        // A row nobody wrote isn't a node, so what every node has by default isn't its: it has its table's.
-        self.from_kind(e, component).or_else(|| self.defaults.get(component).filter(|_| node).map(|b| (b.clone(), e)))
-    }
-
-    /// The nearest that says what this cell is, of the other parts of the same row and then the kinds:
-    /// see `lookup`.
-    fn from_kind(&self, e: Entity, component: &str) -> Option<(Backing, Entity)> {
-        self.inheriting.as_ref().filter(|i| i.takes(component))?;
-        self.lookup(e).into_iter().find_map(|k| self.cells.get(&k).and_then(|c| c.get(component)).map(|b| (b.clone(), k)))
-    }
-
-    /// Where a node looks for a cell it doesn't say itself, in order. First the other parts of the
-    /// same thing, such as `Car[Hatchback]` for `Petrol car[Hatchback]`. Then the kinds of all of them:
-    /// what they link to by `is_a`, and their tables, then those kinds' kinds. Something more specific
-    /// always comes first, so Petrol car comes before Car. Otherwise it's nearest first, and in the
-    /// order nodes were made.
+    /// Where a node looks for a cell or component it doesn't say itself, in order. First the other parts
+    /// of the same thing, such as `Car[Hatchback]` for `Petrol car[Hatchback]`. Then the kinds of all of
+    /// them: what they link to by `is_a`, and their tables, then those kinds' kinds. Something more
+    /// specific always comes first, so Petrol car comes before Car. Otherwise it's nearest first, and in
+    /// the order nodes were made.
     fn lookup(&self, e: Entity) -> Vec<Entity> {
-        if self.inheriting.is_none() {
-            return Vec::new();
-        }
         let mut parts = self.parts(e);
         let mut seen: HashSet<Entity> = parts.iter().copied().chain([e]).collect();
         let mut kinds = Vec::new();
@@ -883,16 +959,17 @@ impl Graph {
 
     /// What a node is directly a kind of: what it links to by `is_a`, and the table it's a row of.
     fn kinds_of(&self, n: Entity) -> Vec<Entity> {
-        let Some(inh) = &self.inheriting else { return Vec::new() };
-        let mut out = self.targets_of(n, &inh.through);
+        let mut out = match &self.registry.inherits_through {
+            Some(through) => self.targets_of(n, through),
+            None => Vec::new(),
+        };
         if let Some(row) = self.row_of(n) {
             out.extend(self.names.named.get(&row.table).into_iter().flatten().copied().filter(|t| *t != n));
         }
         out
     }
 
-    /// How many kinds are above a node, all the way up. Something is always above fewer than what's
-    /// of its kind, unless they're in a loop.
+    /// How many kinds are above a node, all the way up.
     fn above(&self, n: Entity) -> usize {
         let mut seen = HashSet::from([n]);
         let mut todo = vec![n];
@@ -920,8 +997,8 @@ impl Graph {
         names
     }
 
-    /// The other rows with the same key, in tables related to this one's: one is a kind of the other,
-    /// or they're kinds of the same thing. Together they're one thing, each saying some of its cells.
+    /// The other rows with the same key, in tables related to this one's: one is a kind of the other, or
+    /// they're kinds of the same thing. Together they're one thing, each saying some of its cells.
     fn parts(&self, e: Entity) -> Vec<Entity> {
         let Some(row) = self.row_of(e) else { return Vec::new() };
         let mine = self.lineage(&row.table);
@@ -936,20 +1013,22 @@ impl Graph {
         out
     }
 
-    /// The nodes that look straight at this one for cells they don't say: what's of its kind, the rows
-    /// of the table it is, and the other parts of the same row.
+    /// The nodes that look straight at this one for what they don't say: what's of its kind, the rows of
+    /// the table it is, and the other parts of the same row.
     fn takers(&self, k: Entity) -> Vec<Entity> {
-        let Some(inh) = &self.inheriting else { return Vec::new() };
-        let mut out = self.sources_of(k, &inh.through);
+        let mut out = match &self.registry.inherits_through {
+            Some(through) => self.sources_of(k, through),
+            None => Vec::new(),
+        };
         if let Some(name) = self.names.of.get(&k) {
             out.extend(self.rows(name).into_iter().filter(|r| *r != k));
-            out.extend(self.implicit.lock().unwrap_or_else(PoisonError::into_inner).iter().filter(|(_, r)| r.table == *name).map(|(e, _)| *e));
+            out.extend(lock(&self.implicit).iter().filter(|(_, r)| r.table == *name).map(|(e, _)| *e));
         }
         out.extend(self.parts(k));
         out
     }
 
-    /// Everything that might take a cell from this node, however indirectly.
+    /// Everything that might take something from this node, however indirectly.
     fn takers_all(&self, e: Entity) -> Vec<Entity> {
         let (mut out, mut seen, mut todo) = (Vec::new(), HashSet::from([e]), vec![e]);
         while let Some(k) = todo.pop() {
@@ -963,43 +1042,32 @@ impl Graph {
         out
     }
 
-    /// The cells a node could take from elsewhere.
-    fn taken(&self, n: Entity) -> BTreeSet<String> {
-        let Some(inh) = &self.inheriting else { return BTreeSet::new() };
-        self.lookup(n).iter().flat_map(|k| self.cells.get(k).into_iter().flat_map(|c| c.keys())).filter(|c| inh.takes(c)).cloned().collect()
-    }
-
     // ---------- tables ----------
 
     /// The other parts of the same thing as this row: see `parts`.
     pub fn parts_of(&self, e: Entity) -> Vec<Entity> {
-        if self.inheriting.is_none() { Vec::new() } else { self.parts(e) }
+        self.parts(e)
     }
 
     /// Which row of which table a node is, if its name says, or if it's a row nobody wrote: see `table`.
     pub fn row_of(&self, e: Entity) -> Option<Row> {
-        self.names.rows.get(&e).cloned().or_else(|| self.implicit.lock().unwrap_or_else(PoisonError::into_inner).get(&e).cloned())
-    }
-
-    /// Whether this is a node of the graph, rather than a row nobody wrote or a handle from nowhere.
-    pub fn contains(&self, e: Entity) -> bool {
-        self.entities.contains(&e)
+        self.names.rows.get(&e).cloned().or_else(|| lock(&self.implicit).get(&e).cloned())
     }
 
     /// The rows nobody wrote that something has asked for, with what they'd be called.
     pub fn implicit_rows(&self) -> Vec<(Entity, String)> {
-        self.implicit.lock().unwrap_or_else(PoisonError::into_inner).iter().map(|(e, r)| (*e, format!("{}[{}]", r.table, r.key))).collect()
+        lock(&self.implicit).iter().map(|(e, r)| (*e, format!("{}[{}]", r.table, r.key))).collect()
     }
 
     fn is_implicit(&self, e: Entity) -> bool {
-        self.implicit.lock().unwrap_or_else(PoisonError::into_inner).contains_key(&e)
+        lock(&self.implicit).contains_key(&e)
     }
 
     /// The row of a table with this key. That's the node with that name, if there is one. Otherwise, a
     /// numbered table goes on past its first written row as far as it's asked, with rows nobody wrote
-    /// filling any gap: each takes all its cells from the table, and reading a cell the table doesn't say
-    /// is an error. Such a row only exists to be read, so it's never saved, and it's the same handle each
-    /// time, so what's worked out on it stays in the memos.
+    /// filling any gap: each takes everything from the table, and reading one of the workspace's own cells
+    /// the table doesn't say is an error. Such a row only exists to be read, so it's never saved, and it's
+    /// the same handle each time, so what's worked out on it stays in the memos.
     pub fn row_at(&self, table: &str, key: &table::Key) -> Option<Entity> {
         let rows = self.names.tables.get(table)?;
         if let Some(e) = rows.get(key).and_then(|s| s.first()) {
@@ -1011,8 +1079,12 @@ impl Graph {
         if *n < first || *n > last.saturating_add(MOST_IMPLICIT) {
             return None;
         }
-        let e = implicit_entity(table, *n);
-        self.implicit.lock().unwrap_or_else(PoisonError::into_inner).entry(e).or_insert_with(|| Row { table: table.to_string(), key: key.clone() });
+        let e = Entity::implicit(table, *n);
+        let mut implicit = lock(&self.implicit);
+        if !implicit.contains_key(&e) {
+            implicit.insert(e, Row { table: table.to_string(), key: key.clone() });
+            lock(&self.components).remove(&e);
+        }
         Some(e)
     }
 
@@ -1046,35 +1118,8 @@ impl Graph {
         self.row_at(&row.table, &table::Key::Num(n.checked_add(by)?))
     }
 
-    /// The node a node takes this cell from, if it takes it from a kind.
-    pub fn kind_of(&self, e: Entity, component: &str) -> Option<Entity> {
-        self.backing_at(e, component).map(|(_, at)| at).filter(|at| *at != e)
-    }
-
-    /// The kind that says what this cell is, whether or not the node says otherwise: what it would
-    /// take it from without its own.
-    pub fn kind_beneath(&self, e: Entity, component: &str) -> Option<Entity> {
-        self.from_kind(e, component).map(|(_, k)| k)
-    }
-
-    /// The components a node has a cell for, whichever way each is backed.
-    pub fn components_of(&self, e: Entity) -> BTreeSet<String> {
-        let own = self.cells.get(&e).into_iter().flat_map(|c| c.keys());
-        let defaults = self.defaults.keys().filter(|_| self.entities.contains(&e));
-        let mut out: BTreeSet<String> = own.chain(defaults).cloned().collect();
-        out.extend(self.taken(e));
-        out
-    }
-
-    fn computed_by(&self, e: Entity, component: &str) -> Option<Arc<Erased>> {
-        match self.backing(e, component) {
-            Some(Backing::Computed(r)) => Some(r),
-            _ => None,
-        }
-    }
-
-    fn has_link(&self, from: Entity, to: Entity, kind: &str) -> bool {
-        self.links.get(&(from, to)).is_some_and(|b| b.contains_key(kind))
+    fn computed_by(&self, key: &Key) -> Option<Arc<Computed>> {
+        self.backing_at(key.0, &key.1).and_then(|(b, _)| b.computed().cloned())
     }
 }
 
@@ -1092,22 +1137,23 @@ impl Session<'_> {
         }
     }
 
-    fn read<C: Component>(&self, e: Entity) -> Cell<C> {
+    fn read<C: CellType>(&self, e: Entity) -> Cell<C> {
         let key: Key = (e, C::NAME.to_string());
         self.note(Dep::Cell(key.clone()));
-        match self.g.backing(e, C::NAME) {
+        match self.g.backing_at(e, C::NAME) {
             None => self.missing(key),
-            Some(Backing::Stored(v)) => decode(&key, &v).map(Some),
-            Some(Backing::Broken(_, error)) => Err(error),
-            Some(Backing::Computed(r)) => {
-                self.settle(&key, &r)?;
+            Some((Backing::Value(v), _)) => decode(&key, &v).map(Some),
+            Some((Backing::Formula(_, Err(error)), _)) => Err(error),
+            Some((b, _)) => {
+                let c = b.computed().expect("the rest are computed").clone();
+                self.settle(&key, &c)?;
                 let engine = self.engine.borrow();
                 let value = &engine.memo[&key].value;
                 if let Some(typed) = value.downcast_ref::<Cell<C>>() {
                     return typed.clone();
                 }
-                // Computed by a rule with no Rust type: JSON is the common form.
-                match (r.json)(value)? {
+                // Worked out with no Rust type: JSON is the common form.
+                match (c.json)(value)? {
                     Some(v) => decode(&key, &v).map(Some),
                     None => Ok(None),
                 }
@@ -1115,29 +1161,29 @@ impl Session<'_> {
         }
     }
 
-    fn read_runtime(&self, e: Entity, component: &str) -> Cell<Runtime> {
-        let key: Key = (e, component.to_string());
+    fn read_value(&self, e: Entity, cell: &str) -> Cell<Value> {
+        let key: Key = (e, cell.to_string());
         self.note(Dep::Cell(key.clone()));
-        let value = match self.g.backing(e, component) {
-            None => return self.missing(key),
-            Some(Backing::Stored(v)) => Some(v),
-            Some(Backing::Broken(_, error)) => return Err(error),
-            Some(Backing::Computed(r)) => {
-                self.settle(&key, &r)?;
-                (r.json)(&self.engine.borrow().memo[&key].value)?
+        match self.g.backing_at(e, cell) {
+            None => self.missing(key),
+            Some((Backing::Value(v), _)) => Ok(Some(v)),
+            Some((Backing::Formula(_, Err(error)), _)) => Err(error),
+            Some((b, _)) => {
+                let c = b.computed().expect("the rest are computed").clone();
+                self.settle(&key, &c)?;
+                (c.json)(&self.engine.borrow().memo[&key].value)
             }
-        };
-        Ok(value.map(|value| Runtime { name: component.to_string(), value }))
+        }
     }
 
-    /// Nothing backs this cell. On a node, that's just a cell it doesn't have. On a row nobody wrote, it's
-    /// a cell its table doesn't say, which nothing could ever fill.
+    /// Nothing backs this cell. On a node, that's just a cell it doesn't have. On a row nobody wrote, one
+    /// of the workspace's own cells its table doesn't say is one nothing could ever fill.
     fn missing<T>(&self, key: Key) -> Cell<T> {
-        if self.g.is_implicit(key.0) { Err(Error::Missing(key)) } else { Ok(None) }
+        if self.g.is_implicit(key.0) && self.g.registry.owner(&key.1).is_none() { Err(Error::Missing(key)) } else { Ok(None) }
     }
 
     /// Make sure the memo for a cell about to be read is current.
-    fn settle(&self, key: &Key, r: &Arc<Erased>) -> Result<(), Error> {
+    fn settle(&self, key: &Key, c: &Arc<Computed>) -> Result<(), Error> {
         let evaluating = self.engine.borrow().evaluating.iter().position(|k| k == key);
         if let Some(at) = evaluating {
             let mut members = self.engine.borrow().evaluating[at..].to_vec();
@@ -1147,7 +1193,7 @@ impl Session<'_> {
         let verifying = self.engine.borrow().verifying.contains(key);
         if verifying {
             // Something checking this cell turned out to need its value, so stop checking.
-            self.evaluate(key, r);
+            self.evaluate(key, c);
         } else {
             self.freshen(key);
         }
@@ -1157,7 +1203,7 @@ impl Session<'_> {
     /// Bring a cell up to date if it's out of date, returning when its value last changed.
     fn freshen(&self, key: &Key) -> u64 {
         let revision = self.g.revision;
-        let Some(r) = self.g.computed_by(key.0, &key.1) else {
+        let Some(c) = self.g.computed_by(key) else {
             return self.g.last_change.get(&Dep::Backing(key.clone())).copied().unwrap_or(0);
         };
         let known = {
@@ -1168,7 +1214,7 @@ impl Session<'_> {
             engine.memo.get(key).map(|m| (m.verified, m.changed, m.deps.clone()))
         };
         let Some((verified, changed, deps)) = known else {
-            return self.evaluate(key, &r);
+            return self.evaluate(key, &c);
         };
         if verified == revision {
             return changed;
@@ -1177,7 +1223,7 @@ impl Session<'_> {
         let same = deps.iter().all(|d| stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || self.last_changed(d)) <= verified);
         self.engine.borrow_mut().verifying.remove(key);
         if !same {
-            return self.evaluate(key, &r);
+            return self.evaluate(key, &c);
         }
         if let Some(m) = self.engine.borrow_mut().memo.get_mut(key) {
             m.verified = revision;
@@ -1192,27 +1238,28 @@ impl Session<'_> {
         }
     }
 
-    fn evaluate(&self, key: &Key, r: &Arc<Erased>) -> u64 {
+    fn evaluate(&self, key: &Key, c: &Arc<Computed>) -> u64 {
         {
             let mut engine = self.engine.borrow_mut();
             engine.evaluating.push(key.clone());
             engine.reads.push(vec![Dep::Backing(key.clone())]);
             engine.ran.push(key.clone());
         }
-        let origin = self.g.backing_at(key.0, &key.1).map_or(key.0, |(_, at)| at);
-        let value = stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || (r.eval)(*self, key.0, origin, &r.inputs, &r.name));
+        // Written on a kind, it reads what the kind's formula names from there. A default is about the
+        // entity it's for.
+        let origin = self.g.backing_at(key.0, &key.1).map_or(key.0, |(_, at)| if at == Entity::whole() { key.0 } else { at });
+        let value = stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || (c.eval)(&Cx { s: *self, id: key.0, origin }));
         let mut engine = self.engine.borrow_mut();
         let mut deps = engine.reads.pop().expect("pushed above");
         engine.evaluating.pop();
-        // In the order they were made, which `freshen` relies on. A rule is deterministic, so if
-        // its first reads are unchanged then so is its next. Checked in that order, a rule's old
-        // reads never lead anywhere it wouldn't go again, so they can't report a loop that isn't
-        // there.
+        // In the order they were made, which `freshen` relies on. A computation is deterministic, so if
+        // its first reads are unchanged then so is its next. Checked in that order, its old reads never
+        // lead anywhere it wouldn't go again, so they can't report a loop that isn't there.
         let mut seen = HashSet::new();
         deps.retain(|d| seen.insert(d.clone()));
         let revision = self.g.revision;
         let changed = match engine.memo.get(key) {
-            Some(old) if (r.same)(&old.value, &value) => old.changed,
+            Some(old) if (c.same)(&old.value, &value) => old.changed,
             _ => revision,
         };
         engine.memo.insert(key.clone(), Memo { value, deps, verified: revision, changed });
@@ -1220,200 +1267,160 @@ impl Session<'_> {
     }
 }
 
-/// All a rule can see.
+/// All a computation can see: the entity it's working a cell out for, and anything it can reach from
+/// there. What it reads is recorded, so it's worked out again only when that changes.
 pub struct Cx<'a> {
     s: Session<'a>,
     id: Entity,
     origin: Entity,
-    inputs: &'a Inputs,
-    rule: &'a str,
 }
 
 impl Cx<'_> {
-    /// The node this rule is running for.
+    /// The entity this is working a cell out for.
     pub fn id(&self) -> Entity {
         self.id
     }
 
-    /// The node this rule is written on: the same node, or the kind it takes it from. What it may
-    /// follow, it may follow from either.
+    /// Where what's being worked out is written: the same entity, or the kind it takes it from.
     pub fn origin(&self) -> Entity {
         self.origin
+    }
+
+    /// If this is an edge, its source and target.
+    pub fn ends(&self) -> Option<(Entity, Entity)> {
+        self.s.g.ends(self.id)
     }
 
     pub fn resource<R: Send + Sync + 'static>(&self) -> Arc<R> {
         self.s.g.resource()
     }
 
-    fn undeclared(&self, read: String) -> Error {
-        Error::Undeclared { rule: self.rule.to_string(), read }
+    pub fn registry(&self) -> &Registry {
+        &self.s.g.registry
     }
 
-    fn may_read(&self, other: Entity) -> Result<(), Error> {
-        let g = self.s.g;
-        let from = |at: Entity, i: &Inputs| i.incoming.iter().any(|k| g.has_link(other, at, k)) || i.outgoing.iter().any(|k| g.has_link(at, other, k));
-        let reaches = |i: &Inputs| from(self.id, i) || (self.origin != self.id && from(self.origin, i)) || i.scans.iter().any(|c| g.backing(other, c).is_some());
-        // Rows of the same table can always read each other, as `prev` does.
-        // A row can be read by its address, as `prev` and `Year[3]` do.
-        let addressed = g.row_of(other).is_some();
-        let reached = other == self.id || other == self.origin || other == Entity::whole() || addressed || reaches(self.inputs) || self.like().is_some_and(|r| reaches(&r.inputs));
-        if reached { Ok(()) } else { Err(self.undeclared(format!("{other}, which no declared link reaches"))) }
+    /// Whether an entity has a component.
+    pub fn has(&self, e: Entity, component: &str) -> bool {
+        self.s.note(Dep::Has(e));
+        self.s.g.has(e, component)
     }
 
-    /// The rule whose inputs this one may also use.
-    fn like(&self) -> Option<Arc<Erased>> {
-        self.inputs.like.as_ref().and_then(|c| self.s.g.computed_by(self.id, c))
+    /// Whether this entity has a component.
+    pub fn own_has(&self, component: &str) -> bool {
+        self.has(self.id, component)
     }
 
-    /// How a cell on this node is written down, if a rule backs it. Replacing that rule reruns this.
-    pub fn own_rule(&self, component: &str) -> Option<SavedRule> {
-        self.s.note(Dep::Backing((self.id, component.to_string())));
-        self.s.g.saved_rule(self.id, component)
+    /// How one of this entity's cells is backed, if it's there.
+    pub fn backed(&self, cell: &str) -> Option<Backed> {
+        self.s.note(Dep::Backing((self.id, cell.to_string())));
+        self.s.g.backing_at(self.id, cell).map(|(b, _)| (&b).into())
     }
 
-    /// Whether this node has this component stored on it, rather than worked out.
-    pub fn own_is_stored(&self, component: &str) -> bool {
-        self.s.note(Dep::Backing((self.id, component.to_string())));
-        self.s.g.stored(self.id, component).is_some()
+    /// Whether this entity has a value written in this cell itself.
+    pub fn own_is_stored(&self, cell: &str) -> bool {
+        self.s.note(Dep::Backing((self.id, cell.to_string())));
+        self.s.g.stored(self.id, cell).is_some()
     }
 
-    // ---------- typed: shortcuts over the runtime primitives below ----------
-
-    /// A component on this node, if it has one.
-    pub fn own<C: Component>(&self) -> Cell<C> {
+    /// A cell on this entity, if it has it.
+    pub fn own<C: CellType>(&self) -> Cell<C> {
         self.s.read(self.id)
     }
 
-    /// A component this node must have.
-    pub fn own_value<C: Component>(&self) -> Result<C, Error> {
+    /// A cell this entity must have.
+    pub fn own_value<C: CellType>(&self) -> Result<C, Error> {
         self.value(self.id)
     }
 
-    /// A component on a node this rule's links reach, if it has one.
-    pub fn get<C: Component>(&self, e: Entity) -> Cell<C> {
-        self.may_read(e)?;
+    /// A cell on another entity, if it has it.
+    pub fn get<C: CellType>(&self, e: Entity) -> Cell<C> {
         self.s.read(e)
     }
 
-    /// A component that node must have.
-    pub fn value<C: Component>(&self, e: Entity) -> Result<C, Error> {
+    /// A cell that entity must have.
+    pub fn value<C: CellType>(&self, e: Entity) -> Result<C, Error> {
         self.get(e)?.ok_or_else(|| Error::Missing((e, C::NAME.to_string())))
     }
 
-    /// The nodes linking here by `L`.
-    pub fn sources<L: Component>(&self) -> Result<Vec<Entity>, Error> {
-        Ok(self.incoming_runtime(L::NAME)?.into_iter().map(|(e, _)| e).collect())
+    /// Any cell, by its name.
+    pub fn get_value(&self, e: Entity, cell: &str) -> Cell<Value> {
+        self.s.read_value(e, cell)
     }
 
-    /// The nodes this links to by `L`.
-    pub fn targets<L: Component>(&self) -> Result<Vec<Entity>, Error> {
-        Ok(self.outgoing_runtime(L::NAME)?.into_iter().map(|(e, _)| e).collect())
+    /// The edges with this component arriving here, each with its source.
+    pub fn incoming(&self, component: &str) -> Vec<(Entity, Entity)> {
+        self.s.note(Dep::Into(self.id, component.to_string()));
+        self.s.g.edges_into(self.id, component)
     }
 
-    /// As `sources`, with what each link holds.
-    pub fn incoming<L: Component>(&self) -> Result<Vec<(Entity, L)>, Error> {
-        self.incoming_runtime(L::NAME)?.into_iter().map(|(e, c)| decode(&(e, L::NAME.to_string()), &c.value).map(|l| (e, l))).collect()
+    /// The edges with this component leaving here, each with its target.
+    pub fn outgoing(&self, component: &str) -> Vec<(Entity, Entity)> {
+        self.outgoing_at(self.id, component)
     }
 
-    /// As `targets`, with what each link holds.
-    pub fn outgoing<L: Component>(&self) -> Result<Vec<(Entity, L)>, Error> {
-        self.outgoing_runtime(L::NAME)?.into_iter().map(|(e, c)| decode(&(e, L::NAME.to_string()), &c.value).map(|l| (e, l))).collect()
+    /// The same, from where what's being worked out is written: see `origin`.
+    pub fn outgoing_from_origin(&self, component: &str) -> Vec<(Entity, Entity)> {
+        self.outgoing_at(self.origin, component)
     }
 
-    /// Every node with `C` in a declared scan, with its value. Enumerating by type guarantees
-    /// each has it.
-    pub fn with<C: Component>(&self) -> Result<Vec<(Entity, C)>, Error> {
-        let mut out = Vec::new();
-        for e in self.scan(C::NAME)? {
-            if let Some(v) = self.s.read::<C>(e)? {
-                out.push((e, v));
-            }
-        }
-        Ok(out)
+    fn outgoing_at(&self, at: Entity, component: &str) -> Vec<(Entity, Entity)> {
+        self.s.note(Dep::From(at, component.to_string()));
+        self.s.g.edges_from(at, component)
     }
 
-    // ---------- runtime: everything, for components Rust has no type for ----------
-
-    pub fn get_runtime(&self, e: Entity, component: &str) -> Cell<Runtime> {
-        self.may_read(e)?;
-        self.s.read_runtime(e, component)
+    /// The nodes linking here by an edge with this component.
+    pub fn sources(&self, component: &str) -> Vec<Entity> {
+        self.incoming(component).into_iter().map(|(n, _)| n).collect()
     }
 
-    pub fn incoming_runtime(&self, kind: &str) -> Result<Vec<(Entity, Runtime)>, Error> {
-        if !self.inputs.incoming.iter().any(|k| k == kind) && !self.like().is_some_and(|r| r.inputs.incoming.iter().any(|k| k == kind)) {
-            return Err(self.undeclared(format!("incoming {kind} links")));
-        }
-        self.s.note(Dep::Into(self.id, kind.to_string()));
-        let g = self.s.g;
-        let sources = g.into.get(&self.id).into_iter().flatten();
-        Ok(sources.filter_map(|f| Some((*f, Runtime::new(kind, g.links.get(&(*f, self.id))?.get(kind)?.clone())))).collect())
+    /// The nodes this links to by an edge with this component.
+    pub fn targets(&self, component: &str) -> Vec<Entity> {
+        self.outgoing(component).into_iter().map(|(n, _)| n).collect()
     }
 
-    pub fn outgoing_runtime(&self, kind: &str) -> Result<Vec<(Entity, Runtime)>, Error> {
-        self.outgoing_from(self.id, kind)
-    }
-
-    /// The same, from where this rule is written: see `origin`.
-    pub fn outgoing_from_origin(&self, kind: &str) -> Result<Vec<(Entity, Runtime)>, Error> {
-        self.outgoing_from(self.origin, kind)
-    }
-
-    fn outgoing_from(&self, at: Entity, kind: &str) -> Result<Vec<(Entity, Runtime)>, Error> {
-        if !self.inputs.outgoing.iter().any(|k| k == kind) && !self.like().is_some_and(|r| r.inputs.outgoing.iter().any(|k| k == kind)) {
-            return Err(self.undeclared(format!("outgoing {kind} links")));
-        }
-        self.s.note(Dep::From(at, kind.to_string()));
-        let g = self.s.g;
-        let targets = g.from.get(&at).into_iter().flatten();
-        Ok(targets.filter_map(|t| Some((*t, Runtime::new(kind, g.links.get(&(at, *t))?.get(kind)?.clone())))).collect())
+    /// Every node with this component.
+    pub fn scan(&self, component: &str) -> Vec<Entity> {
+        self.s.note(Dep::Scan(component.to_string()));
+        self.s.g.having(component)
     }
 
     // ---------- tables: see `table` ----------
 
-    /// The rows of the table this rule's node is, or is a row of. These depend on names, so renaming
-    /// anything reruns what read them.
+    /// The rows of the table this entity is, or is a row of. These depend on names, so renaming anything
+    /// reruns what read them.
     pub fn rows(&self) -> Vec<Entity> {
-        self.s.note(Dep::Scan(Name::NAME.to_string()));
+        self.s.note(Dep::Names);
         self.s.g.table_here(self.id).map(|t| self.s.g.rows(&t)).unwrap_or_default()
     }
 
     /// The rows of the table with this name, as `Arrived.rows` reads them from anywhere.
     pub fn rows_of(&self, table: &str) -> Vec<Entity> {
-        self.s.note(Dep::Scan(Name::NAME.to_string()));
+        self.s.note(Dep::Names);
         self.s.g.rows(table)
     }
 
-    /// The row this many along from this rule's node, if it's a numbered row and there's one there:
-    /// the one before is -1.
+    /// The row this many along from this entity, if it's a numbered row and there's one there: the one
+    /// before is -1.
     pub fn row_along(&self, by: i64) -> Option<Entity> {
-        self.s.note(Dep::Scan(Name::NAME.to_string()));
+        self.s.note(Dep::Names);
         self.s.g.row_along(self.id, by)
     }
 
     /// The row of a table with this key, as `Year[3]` addresses it: see `Graph::row_at`.
     pub fn row_at(&self, table: &str, key: &table::Key) -> Option<Entity> {
-        self.s.note(Dep::Scan(Name::NAME.to_string()));
+        self.s.note(Dep::Names);
         self.s.g.row_at(table, key)
     }
 
-    /// Which row this rule's node is in its table.
+    /// Which row this entity is in its table.
     pub fn row_key(&self) -> Option<table::Key> {
         self.row_key_of(self.id)
     }
 
     /// Which row that node is in its table, as `q.row` reads it.
     pub fn row_key_of(&self, e: Entity) -> Option<table::Key> {
-        self.s.note(Dep::Scan(Name::NAME.to_string()));
+        self.s.note(Dep::Names);
         self.s.g.row_of(e).map(|r| r.key)
-    }
-
-    pub fn scan(&self, component: &str) -> Result<Vec<Entity>, Error> {
-        if !self.inputs.scans.iter().any(|c| c == component) && !self.like().is_some_and(|r| r.inputs.scans.iter().any(|c| c == component)) {
-            return Err(self.undeclared(format!("a scan of {component}")));
-        }
-        self.s.note(Dep::Scan(component.to_string()));
-        let g = self.s.g;
-        Ok(g.entities.iter().filter(|e| g.backing(**e, component).is_some()).copied().collect())
     }
 }
 

@@ -17,9 +17,9 @@ pub struct ViewNode {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ViewEdge {
-    /// The kinds of the links this edge stands for.
+    /// The components of the edges this stands for.
     pub kinds: BTreeSet<String>,
-    /// How many links it stands for.
+    /// How many edges it stands for.
     pub links: usize,
 }
 
@@ -49,7 +49,7 @@ impl ViewGraph {
     pub fn of(g: &Graph) -> Self {
         ViewGraph {
             nodes: g.entities().map(|e| (e, ViewNode { hidden: 0, external: false })).collect(),
-            edges: g.links().map(|(f, t, bag)| ((f, t), ViewEdge { kinds: bag.keys().cloned().collect(), links: 1 })).collect(),
+            edges: g.edges().map(|(e, f, t)| ((f, t), ViewEdge { kinds: g.given(e), links: 1 })).collect(),
         }
     }
 

@@ -1,8 +1,0 @@
-id: 01a1b9a6-9081-76c8-be09-f968670a3239
-components:
-  name: The Lucky Strike smoker drinks juice
-rules:
-  value:
-    rule: expr@1
-    params:
-      text: Smoke["Lucky Strike"] = Drink[Juice]

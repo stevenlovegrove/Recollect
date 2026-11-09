@@ -1,0 +1,18 @@
+id: 01a1bfe8-b556-7321-9598-8581fda465ea
+components:
+- value
+cells:
+  name: Gets to Edinburgh without stopping
+formulas:
+  value: car.range >= miles
+links:
+- to: 01a1bfe8-b556-7321-9598-85750cbab1ef
+  components:
+  - label
+  cells:
+    called: car
+- to: 01a1bfe8-b556-7321-9598-858091d9ae2b
+  components:
+  - label
+  cells:
+    called: miles

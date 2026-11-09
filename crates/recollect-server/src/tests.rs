@@ -101,7 +101,7 @@ async fn opening_a_sample_never_touches_the_original() {
     c.open("invoice").await;
     let before = std::fs::read_to_string(source_tree("examples/invoice/log.jsonl")).unwrap();
     let v = c.view(json!({})).await;
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": id(&v, "Tax rate"), "component": "value", "value": 0.5 }] })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": id(&v, "Tax rate"), "cell": "value", "value": 0.5 }] })).await;
     assert_eq!(std::fs::read_to_string(source_tree("examples/invoice/log.jsonl")).unwrap(), before);
     assert_eq!(cell(&c.view(json!({})).await, "Tax", "value")["value"], 40.0);
 
@@ -116,11 +116,10 @@ async fn an_edit_says_what_it_reran() {
     c.open("invoice").await;
     let v = c.view(json!({})).await;
     assert_eq!(cell(&v, "Total", "value")["value"], 96.0);
-    assert_eq!(cell(&v, "Total", "value")["rule"], "expr@1");
     assert_eq!(cell(&v, "Total", "value")["formula"], "subtotal + tax");
-    assert_eq!(cell(&v, "Tax rate", "value")["source"], "stored");
+    assert_eq!(cell(&v, "Tax rate", "value")["source"], "own");
 
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Widgets: price", "component": "value", "value": 11.0 }], "why": "dearer" })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Widgets: price", "cell": "value", "value": 11.0 }], "why": "dearer" })).await;
     let v = c.view(json!({})).await;
     assert_eq!(cell(&v, "Total", "value")["value"], 99.6);
     let ran: Vec<String> = v["ran"].as_array().unwrap().iter().map(|r| r["node"].as_str().unwrap().to_string()).collect();
@@ -133,11 +132,11 @@ async fn an_edit_says_what_it_reran() {
 async fn a_circular_reference_is_an_error_in_those_cells_and_heals() {
     let c = Client::new();
     c.open("invoice").await;
-    c.post("/api/ops", json!({ "ops": [{ "op": "link", "from": "Subtotal", "to": "Total", "kind": "label", "value": "line" }] })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "link", "from": "Subtotal", "to": "Total", "component": "label", "cells": { "called": "line" } }] })).await;
     let v = c.view(json!({})).await;
     assert!(cell(&v, "Total", "value")["error"].as_str().unwrap().contains("depends on itself"), "{}", cell(&v, "Total", "value"));
     assert_eq!(cell(&v, "Gears", "value")["value"], 50.0);
-    c.post("/api/ops", json!({ "ops": [{ "op": "link", "from": "Subtotal", "to": "Total", "kind": "label" }] })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "unlink", "from": "Subtotal", "to": "Total", "component": "label" }] })).await;
     assert_eq!(cell(&c.view(json!({})).await, "Total", "value")["value"], 96.0);
 }
 
@@ -171,7 +170,7 @@ async fn deciding_commits_and_reopening_brings_it_all_back() {
     c.open("calibration").await;
     let open = c.view(json!({})).await;
     let cad = id(&open, "From the CAD model");
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Which approach?", "component": "decision", "value": { "chosen": cad } }], "why": "it's accurate enough" })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Which approach?", "cell": "chosen", "value": cad }], "why": "it's accurate enough" })).await;
     let v = c.view(json!({})).await;
     assert!(cell(&v, "Export extrinsics from CAD", "need")["shown"]["always"].as_bool().unwrap());
     assert!(v["worlds"]["vars"].as_array().unwrap().is_empty(), "no open choices now");
@@ -190,7 +189,7 @@ async fn a_change_that_breaks_a_rule_is_refused_and_says_why() {
     c.open("calibration").await;
     let v = c.view(json!({})).await;
     let imu = id(&v, "Fit the IMU time offset");
-    let (status, body) = c.call("POST", "/api/ops", Some(json!({ "ops": [{ "op": "set", "id": "Which approach?", "component": "decision", "value": { "chosen": imu } }] }))).await;
+    let (status, body) = c.call("POST", "/api/ops", Some(json!({ "ops": [{ "op": "set", "id": "Which approach?", "cell": "chosen", "value": imu }] }))).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body["error"].as_str().unwrap().contains("chosen_must_be_a_live_option"), "{body}");
     assert_eq!(c.view(json!({})).await["last_seq"], v["last_seq"], "and nothing changed");
@@ -203,8 +202,8 @@ async fn adding_a_node_and_linking_it_is_one_event_and_says_what_it_made() {
     let before = c.view(json!({})).await;
     let done = c
         .post("/api/ops", json!({ "ops": [
-            { "op": "add_node", "id": "new:a", "name": "Held-out scenes", "components": { "task": {}, "estimate": 2.0 }, "links": [{ "to": "Which approach?", "kind": "part_of" }] },
-            { "op": "add_node", "id": "new:b", "name": "Check them", "components": { "task": {} }, "links": [{ "to": "new:a", "kind": "depends_on", "value": {} }] },
+            { "op": "add_node", "id": "new:a", "name": "Held-out scenes", "components": ["task"], "cells": { "estimate": 2.0 }, "links": [{ "to": "Which approach?", "component": "part_of" }] },
+            { "op": "add_node", "id": "new:b", "name": "Check them", "components": ["task"], "links": [{ "to": "new:a", "component": "depends_on" }] },
         ], "why": "we'll need these whichever way it goes" }))
         .await;
     let a = done["created"]["new:a"].as_str().unwrap().to_string();
@@ -212,7 +211,7 @@ async fn adding_a_node_and_linking_it_is_one_event_and_says_what_it_made() {
     assert_eq!(id(&v, "Held-out scenes"), a);
     assert_eq!(v["last_seq"].as_u64().unwrap(), before["last_seq"].as_u64().unwrap() + 1);
     assert!(cell(&v, "Held-out scenes", "need")["shown"]["always"].as_bool().unwrap());
-    assert_eq!(cell(&v, "Check them", "blockers")["shown"]["items"][0]["node"], a.as_str());
+    assert_eq!(cell(&v, "Check them", "blocked")["shown"]["always"], true, "it waits for what it depends on");
 
     c.post("/api/ops", json!({ "ops": [{ "op": "delete_node", "id": "Check them" }] })).await;
     assert!(c.view(json!({})).await["nodes"].as_array().unwrap().iter().all(|n| n["name"] != "Check them"));
@@ -331,10 +330,10 @@ async fn proposals_wait_for_review_and_can_be_taken_in_part() {
     let (_, list) = c.call("GET", "/api/proposals", None).await;
     assert_eq!(list[0]["id"], p.id.as_str());
     assert_eq!(list[0]["error"], Value::Null);
-    assert_eq!(list[0]["ops"].as_array().unwrap().len(), 2);
+    assert_eq!(list[0]["ops"].as_array().unwrap().len(), 4, "each node is made, then named");
 
     // Only the first.
-    c.post(&format!("/api/proposals/{}/accept", p.id), json!({ "ops": [0] })).await;
+    c.post(&format!("/api/proposals/{}/accept", p.id), json!({ "ops": [0, 1] })).await;
     let v = c.view(json!({})).await;
     assert!(v["nodes"].as_array().unwrap().iter().any(|n| n["name"] == "One"));
     assert!(!v["nodes"].as_array().unwrap().iter().any(|n| n["name"] == "Two"));
@@ -345,7 +344,7 @@ async fn proposals_wait_for_review_and_can_be_taken_in_part() {
 
     // One that wouldn't apply is refused before it gets to anyone.
     let v = c.view(json!({})).await;
-    let refused = c.app.propose("Bad".to_string(), String::new(), vec![json!({ "op": "set", "id": "Which approach?", "component": "decision", "value": { "chosen": id(&v, "One") } })], "claude");
+    let refused = c.app.propose("Bad".to_string(), String::new(), vec![json!({ "op": "set", "id": "Which approach?", "cell": "chosen", "value": id(&v, "One") })], "claude");
     assert!(refused.is_err());
 }
 
@@ -379,7 +378,7 @@ async fn a_hand_edit_on_disk_is_recorded_as_an_event() {
 async fn going_back_and_changing_something_starts_a_branch_and_loses_nothing() {
     let c = Client::new();
     c.open("invoice").await;
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Tax rate", "component": "value", "value": 0.5 }], "why": "raised" })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Tax rate", "cell": "value", "value": 0.5 }], "why": "raised" })).await;
     let dir = c.view(json!({})).await["workspace"]["dir"].as_str().unwrap().to_string();
     let rate = id(&c.view(json!({})).await, "Tax rate");
     let file = format!("{dir}/nodes/{rate}.yaml");
@@ -393,7 +392,7 @@ async fn going_back_and_changing_something_starts_a_branch_and_loses_nothing() {
     assert!(std::fs::read_to_string(&file).unwrap().contains("value: 0.2"));
 
     // A change from here is a fork.
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Tax rate", "component": "value", "value": 0.1 }], "why": "cut instead" })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Tax rate", "cell": "value", "value": 0.1 }], "why": "cut instead" })).await;
     let v = c.view(json!({})).await;
     assert_eq!(cell(&v, "Tax", "value")["value"], 8.0);
     assert_eq!(v["latest"], Value::Null, "this is the end of a branch");
@@ -429,26 +428,26 @@ async fn going_back_and_changing_something_starts_a_branch_and_loses_nothing() {
 async fn a_worked_out_cell_can_be_typed_over_and_comes_back() {
     let c = Client::new();
     c.open("calibration").await;
-    let done = c.post("/api/ops", json!({ "ops": [{ "op": "add_node", "id": "new:t", "name": "Mine", "components": { "task": {} } }] })).await;
+    let done = c.post("/api/ops", json!({ "ops": [{ "op": "add_node", "id": "new:t", "name": "Mine", "components": ["task"] }] })).await;
     let t = done["created"]["new:t"].as_str().unwrap().to_string();
     let cell = |v: &Value| v["nodes"].as_array().unwrap().iter().find(|n| n["id"] == t.as_str()).unwrap()["cells"]["done"].clone();
 
     let shown = cell(&c.view(json!({})).await);
-    assert_eq!((&shown["own"], shown["value"].is_null()), (&json!(false), false), "a task says it's owed before anyone has said anything: {shown}");
+    assert_eq!((&shown["source"], shown["value"].is_null()), (&json!("default"), false), "a task says it's owed before anyone has said anything: {shown}");
     assert_eq!(shown["value"], json!(false));
     assert!(shown["formula"].as_str().unwrap().contains("is_leaf"), "and what it's worked out by: {shown}");
 
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": t, "component": "done", "value": true }] })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": t, "cell": "done", "value": true }] })).await;
     let shown = cell(&c.view(json!({})).await);
-    assert_eq!((&shown["own"], &shown["value"]), (&json!(true), &json!(true)));
+    assert_eq!((&shown["source"], &shown["value"]), (&json!("own"), &json!(true)));
 
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": t, "component": "done", "formula": "1 < 2" }] })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": t, "cell": "done", "formula": "1 < 2" }] })).await;
     let shown = cell(&c.view(json!({})).await);
-    assert_eq!((&shown["own"], &shown["formula"], &shown["value"]), (&json!(true), &json!("1 < 2"), &json!(true)));
+    assert_eq!((&shown["source"], &shown["formula"], &shown["value"]), (&json!("own"), &json!("1 < 2"), &json!(true)));
 
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": t, "component": "done" }] })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": t, "cell": "done" }] })).await;
     let shown = cell(&c.view(json!({})).await);
-    assert_eq!((&shown["own"], &shown["value"]), (&json!(false), &json!(false)), "and without it, it's worked out again");
+    assert_eq!((&shown["source"], &shown["value"]), (&json!("default"), &json!(false)), "and without it, it's worked out again");
 }
 
 #[tokio::test]
@@ -543,38 +542,38 @@ async fn a_formula_and_its_labels_are_one_change_and_a_bad_one_is_refused() {
     c.open("invoice").await;
     let before = c.view(json!({})).await;
 
-    let done = c.post("/api/ops", json!({ "ops": [{ "op": "add_node", "id": "new:x", "name": "Doubled", "formula": "total * 2", "labels": { "total": "Total" } }] })).await;
+    let done = c.post("/api/ops", json!({ "ops": [{ "op": "add_node", "id": "new:x", "name": "Doubled", "cells": { "value": { "formula": "total * 2", "labels": { "total": "Total" } } } }] })).await;
     let x = done["created"]["new:x"].as_str().unwrap().to_string();
     let v = c.view(json!({})).await;
     assert_eq!(cell(&v, "Doubled", "value")["value"], 192.0);
     assert_eq!(v["last_seq"].as_u64().unwrap(), before["last_seq"].as_u64().unwrap() + 1, "one event");
 
     // Changing it says what its names now mean, and a name it no longer has goes.
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": x, "component": "value", "formula": "tax + 1", "labels": { "tax": "Tax" } }] })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": x, "cell": "value", "formula": "tax + 1", "labels": { "tax": "Tax" } }] })).await;
     let v = c.view(json!({})).await;
     assert_eq!(cell(&v, "Doubled", "value")["value"], 17.0);
-    let labels: Vec<&Value> = v["links"].as_array().unwrap().iter().filter(|l| l["from"] == x.as_str()).collect();
+    let labels: Vec<&Value> = v["edges"].as_array().unwrap().iter().filter(|l| l["from"] == x.as_str() && l["components"] == json!(["label"])).collect();
     assert_eq!(labels.len(), 1, "{labels:?}");
-    assert_eq!(labels[0]["value"], "tax");
+    assert_eq!(labels[0]["cells"]["called"]["value"], "tax");
 
     // Several nodes under one name are a group.
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": x, "component": "value", "formula": "sum(n)", "labels": { "n": ["Tax", "Total"] } }] })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": x, "cell": "value", "formula": "sum(n)", "labels": { "n": ["Tax", "Total"] } }] })).await;
     assert_eq!(cell(&c.view(json!({})).await, "Doubled", "value")["value"], 112.0);
 
     // What's wrong with one is said before anything lands.
     let seq = c.view(json!({})).await["last_seq"].clone();
-    let why = refused(&c, json!([{ "op": "set", "id": x, "component": "value", "formula": "nope + 1" }])).await;
+    let why = refused(&c, json!([{ "op": "set", "id": x, "cell": "value", "formula": "nope + 1" }])).await;
     assert!(why.contains("no input called nope"), "{why}");
-    let why = refused(&c, json!([{ "op": "set", "id": x, "component": "value", "formula": "1 +" }])).await;
+    let why = refused(&c, json!([{ "op": "set", "id": x, "cell": "value", "formula": "1 +" }])).await;
     assert!(why.contains("stops short"), "{why}");
-    let why = refused(&c, json!([{ "op": "set", "id": x, "component": "value", "formula": "\"a\" + 1" }])).await;
+    let why = refused(&c, json!([{ "op": "set", "id": x, "cell": "value", "formula": "\"a\" + 1" }])).await;
     assert!(why.contains("+ needs numbers"), "{why}");
-    let why = refused(&c, json!([{ "op": "link", "from": x, "to": "Tax", "kind": "label", "value": "two words" }])).await;
+    let why = refused(&c, json!([{ "op": "link", "from": x, "to": "Tax", "component": "label", "cells": { "called": "two words" } }])).await;
     assert!(why.contains("a label has to be a name"), "{why}");
     assert_eq!(c.view(json!({})).await["last_seq"], seq, "and nothing changed");
 
     // A proposal is held to the same, before anyone is asked to look at it.
-    assert!(c.app.propose("Bad".to_string(), String::new(), vec![json!({ "op": "add_node", "id": "new:y", "name": "Y", "formula": "nope" })], "claude").is_err());
+    assert!(c.app.propose("Bad".to_string(), String::new(), vec![json!({ "op": "add_node", "id": "new:y", "name": "Y", "cells": { "value": { "formula": "nope" } } })], "claude").is_err());
 }
 
 #[tokio::test]
@@ -629,9 +628,9 @@ async fn held_out_a_budget_cap_on_a_plan() {
 
     // Free-form needs a second pass of captures, so what's shared costs more on that path.
     let p = c.app.propose("Cap the effort at six days".to_string(), "the review is in a week".to_string(), vec![
-        json!({ "op": "set", "id": "Static captures", "component": "estimate", "formula": "if(chose(approach, free), 3, 2)", "labels": { "approach": approach, "free": free } }),
-        json!({ "op": "add_node", "id": "new:effort", "name": "Effort", "formula": "effort()" }),
-        json!({ "op": "add_node", "id": "new:cap", "name": "Within six days", "formula": "effort <= 6", "labels": { "effort": "new:effort" }, "components": { "requires": null } }),
+        json!({ "op": "set", "id": "Static captures", "cell": "estimate", "formula": "if(chose(approach, free), 3, 2)", "labels": { "approach": approach, "free": free } }),
+        json!({ "op": "add_node", "id": "new:effort", "name": "Effort", "cells": { "value": { "formula": "effort()" } } }),
+        json!({ "op": "add_node", "id": "new:cap", "name": "Within six days", "components": ["requires"], "cells": { "value": { "formula": "effort <= 6", "labels": { "effort": "new:effort" } } } }),
     ], "claude").unwrap();
     let (_, list) = c.call("GET", "/api/proposals", None).await;
     assert!(list[0]["ops"].as_array().unwrap().iter().any(|o| o["value"] == "effort <= 6"), "the formula is what gets reviewed: {list}");
@@ -667,11 +666,11 @@ async fn held_out_a_clause_that_isnt_a_pair() {
     let c = Client::new();
     let dir = tempfile::tempdir().unwrap();
     c.post("/api/workspaces/new", json!({ "path": dir.path().join("logic"), "name": "Logic", "systems": [] })).await;
-    let person = |id: &str, name: &str| json!({ "op": "add_node", "id": id, "name": name, "components": { "domain": ["truth", "lie"] } });
+    let person = |id: &str, name: &str| json!({ "op": "add_node", "id": id, "name": name, "cells": { "options": ["truth", "lie"] } });
     c.post("/api/ops", json!({ "ops": [
         person("new:a", "Alice"), person("new:b", "Bob"), person("new:c", "Carol"),
-        { "op": "add_node", "id": "new:most", "name": "At most one lies", "formula": "count(x in people: x = \"lie\") <= 1", "labels": { "people": ["new:a", "new:b", "new:c"] }, "components": { "requires": null } },
-        { "op": "add_node", "id": "new:clue", "name": "Alice and Bob differ", "formula": "a != b", "labels": { "a": "new:a", "b": "new:b" }, "components": { "requires": null } },
+        { "op": "add_node", "id": "new:most", "name": "At most one lies", "components": ["requires"], "cells": { "value": { "formula": "count(x in people: x = \"lie\") <= 1", "labels": { "people": ["new:a", "new:b", "new:c"] } } } },
+        { "op": "add_node", "id": "new:clue", "name": "Alice and Bob differ", "components": ["requires"], "cells": { "value": { "formula": "a != b", "labels": { "a": "new:a", "b": "new:b" } } } },
     ] })).await;
     let v = c.view(json!({})).await;
     assert_eq!(v["worlds"]["count"], "2", "either Alice or Bob lies, and Carol tells the truth");
@@ -688,19 +687,19 @@ async fn held_out_tiers_and_a_loan_with_a_macro() {
     let dir = tempfile::tempdir().unwrap();
     c.post("/api/workspaces/new", json!({ "path": dir.path().join("money"), "name": "Money", "systems": [] })).await;
     c.post("/api/ops", json!({ "ops": [
-        { "op": "add_node", "id": "new:tier", "name": "Tier", "components": { "macro": { "params": ["units", "from", "to", "price"], "body": "max(0, min(units, to) - from) * price" } } },
-        { "op": "add_node", "id": "new:units", "name": "Units", "components": { "value": 250 } },
-        { "op": "add_node", "id": "new:bill", "name": "Bill", "formula": "tier(units, 0, 100, 10) + tier(units, 100, 200, 8) + tier(units, 200, 1000, 5)", "labels": { "tier": "new:tier", "units": "new:units" } },
+        { "op": "add_node", "id": "new:tier", "name": "Tier", "cells": { "macro": { "params": ["units", "from", "to", "price"], "body": "max(0, min(units, to) - from) * price" } } },
+        { "op": "add_node", "id": "new:units", "name": "Units", "cells": { "value": 250 } },
+        { "op": "add_node", "id": "new:bill", "name": "Bill", "cells": { "value": { "formula": "tier(units, 0, 100, 10) + tier(units, 100, 200, 8) + tier(units, 200, 1000, 5)", "labels": { "tier": "new:tier", "units": "new:units" } } } },
     ] })).await;
     assert_eq!(cell(&c.view(json!({})).await, "Bill", "value")["value"], 2050.0, "1000 + 800 + 250");
 
     // Monthly repayment on 10000 at 1% a month over 12 months, from the standard formula, with the
     // power written out by chaining a macro that squares.
     c.post("/api/ops", json!({ "ops": [
-        { "op": "add_node", "id": "new:sq", "name": "Squared", "components": { "macro": { "params": ["x"], "body": "x * x" } } },
-        { "op": "add_node", "id": "new:rate", "name": "Rate", "components": { "value": 0.01 } },
-        { "op": "add_node", "id": "new:g", "name": "Growth", "formula": "sq(sq(1 + r)) * sq(sq(1 + r)) * sq(sq(1 + r))", "labels": { "sq": "new:sq", "r": "new:rate" } },
-        { "op": "add_node", "id": "new:pay", "name": "Payment", "formula": "round(10000 * r * g / (g - 1), 2)", "labels": { "r": "new:rate", "g": "new:g" } },
+        { "op": "add_node", "id": "new:sq", "name": "Squared", "cells": { "macro": { "params": ["x"], "body": "x * x" } } },
+        { "op": "add_node", "id": "new:rate", "name": "Rate", "cells": { "value": 0.01 } },
+        { "op": "add_node", "id": "new:g", "name": "Growth", "cells": { "value": { "formula": "sq(sq(1 + r)) * sq(sq(1 + r)) * sq(sq(1 + r))", "labels": { "sq": "new:sq", "r": "new:rate" } } } },
+        { "op": "add_node", "id": "new:pay", "name": "Payment", "cells": { "value": { "formula": "round(10000 * r * g / (g - 1), 2)", "labels": { "r": "new:rate", "g": "new:g" } } } },
     ] })).await;
     assert_eq!(cell(&c.view(json!({})).await, "Payment", "value")["value"], 888.49);
 }
@@ -713,35 +712,35 @@ async fn held_out_choosing_a_car() {
     let c = Client::new();
     let dir = tempfile::tempdir().unwrap();
     c.post("/api/workspaces/new", json!({ "path": dir.path().join("car"), "name": "Car", "systems": ["plan"] })).await;
-    let option = |id: &str, name: &str, of: &str, value: f64, weight: f64| json!({ "op": "add_node", "id": id, "name": name, "components": { "value": value }, "links": [{ "to": of, "kind": "alternative", "value": { "weight": weight } }] });
+    let option = |id: &str, name: &str, of: &str, value: f64, weight: f64| json!({ "op": "add_node", "id": id, "name": name, "cells": { "value": value }, "links": [{ "to": of, "component": "alternative", "cells": { "weight": weight } }] });
     // A car says what it is, and its kind says what follows from that.
     let car = |id: &str, name: &str, kind: &str, cell: &str, v: f64, price: f64, insurance: f64, range: f64| {
-        json!({ "op": "add_node", "id": id, "name": name, "components": { cell: v, "price": price, "insurance": insurance, "range": range },
-            "links": [{ "to": "new:which", "kind": "alternative", "value": {} }, { "to": kind, "kind": "is_a" }] })
+        json!({ "op": "add_node", "id": id, "name": name, "cells": { cell: v, "price": price, "insurance": insurance, "range": range },
+            "links": [{ "to": "new:which", "component": "alternative" }, { "to": kind, "component": "is_a" }] })
     };
-    let pick = |cell: &str| json!({ "op": "set", "id": "new:which", "component": cell, "formula": format!("pick(o in in.alternative: o.{cell})") });
+    let pick = |cell: &str| json!({ "op": "set", "id": "new:which", "cell": cell, "formula": format!("pick(o in in.alternative: o.{cell})") });
     let petrol = "fuel * 4.546 / self.mpg";
     let done = c.post("/api/ops", json!({ "ops": [
-        { "op": "add_node", "id": "new:years", "name": "Years kept", "components": { "value": 5 } },
-        { "op": "add_node", "id": "new:miles", "name": "Miles a year", "components": { "decision": {}, "uncertain": null }, "formula": "pick(in.alternative)" },
+        { "op": "add_node", "id": "new:years", "name": "Years kept", "cells": { "value": 5 } },
+        { "op": "add_node", "id": "new:miles", "name": "Miles a year", "components": ["decision", "uncertain"], "cells": { "value": { "formula": "pick(in.alternative)" } } },
         option("new:light", "Light use", "new:miles", 6000.0, 1.0), option("new:typical", "Typical", "new:miles", 10000.0, 2.0), option("new:heavy", "Heavy", "new:miles", 16000.0, 1.0),
-        { "op": "add_node", "id": "new:fuel", "name": "Fuel price", "components": { "value": 1.45 } },
-        { "op": "add_node", "id": "new:power", "name": "Electricity price", "components": { "value": 0.28 } },
-        { "op": "add_node", "id": "new:petrol", "name": "Petrol car", "components": { "value": 1, "task": {} }, "links": [{ "to": "new:fuel", "kind": "label", "value": "fuel" }] },
-        { "op": "set", "id": "new:petrol", "component": "cost_per_mile", "formula": petrol },
-        { "op": "add_node", "id": "new:electric", "name": "Electric car", "links": [{ "to": "new:power", "kind": "label", "value": "power" }] },
-        { "op": "set", "id": "new:electric", "component": "cost_per_mile", "formula": "power * self.kwh_per_mile" },
-        { "op": "add_node", "id": "new:which", "name": "Which car?", "components": { "decision": {} } },
+        { "op": "add_node", "id": "new:fuel", "name": "Fuel price", "cells": { "value": 1.45 } },
+        { "op": "add_node", "id": "new:power", "name": "Electricity price", "cells": { "value": 0.28 } },
+        { "op": "add_node", "id": "new:petrol", "name": "Petrol car", "components": ["task"], "cells": { "value": 1 }, "links": [{ "to": "new:fuel", "component": "label", "cells": { "called": "fuel" } }] },
+        { "op": "set", "id": "new:petrol", "cell": "cost_per_mile", "formula": petrol },
+        { "op": "add_node", "id": "new:electric", "name": "Electric car", "links": [{ "to": "new:power", "component": "label", "cells": { "called": "power" } }] },
+        { "op": "set", "id": "new:electric", "cell": "cost_per_mile", "formula": "power * self.kwh_per_mile" },
+        { "op": "add_node", "id": "new:which", "name": "Which car?", "components": ["decision"] },
         pick("price"), pick("cost_per_mile"), pick("insurance"), pick("range"),
         car("new:hatch", "Hatchback", "new:petrol", "mpg", 52.0, 18000.0, 500.0, 550.0),
         car("new:estate", "Estate", "new:petrol", "mpg", 44.0, 24000.0, 550.0, 600.0),
         car("new:ev", "Electric", "new:electric", "kwh_per_mile", 0.28, 32000.0, 600.0, 250.0),
         // Its maker gives its cost a mile, so it says that for itself rather than an mpg.
         car("new:hybrid", "Hybrid", "new:petrol", "cost_per_mile", 0.09, 26000.0, 550.0, 650.0),
-        { "op": "add_node", "id": "new:cost", "name": "Yearly cost", "formula": "car.price * (1 - 0.85 ^ years) / years + miles * car.cost_per_mile + car.insurance",
-            "labels": { "car": "new:which", "years": "new:years", "miles": "new:miles" } },
-        { "op": "add_node", "id": "new:trip", "name": "To Edinburgh", "components": { "value": 400 } },
-        { "op": "add_node", "id": "new:reaches", "name": "Gets to Edinburgh without stopping", "formula": "car.range >= trip", "labels": { "car": "new:which", "trip": "new:trip" } },
+        { "op": "add_node", "id": "new:cost", "name": "Yearly cost", "cells": { "value": { "formula": "car.price * (1 - 0.85 ^ years) / years + miles * car.cost_per_mile + car.insurance",
+            "labels": { "car": "new:which", "years": "new:years", "miles": "new:miles" } } } },
+        { "op": "add_node", "id": "new:trip", "name": "To Edinburgh", "cells": { "value": 400 } },
+        { "op": "add_node", "id": "new:reaches", "name": "Gets to Edinburgh without stopping", "cells": { "value": { "formula": "car.range >= trip", "labels": { "car": "new:which", "trip": "new:trip" } } } },
     ] })).await;
     let ids = |k: &str| done["created"][k].as_str().unwrap().to_string();
     let v = c.view(json!({})).await;
@@ -757,10 +756,13 @@ async fn held_out_choosing_a_car() {
     assert!((per_mile(&v, "Hatchback") - by_mpg(1.45, 52.0)).abs() < 1e-9 && (per_mile(&v, "Estate") - by_mpg(1.45, 44.0)).abs() < 1e-9);
     assert!((per_mile(&v, "Electric") - 0.28 * 0.28).abs() < 1e-9 && per_mile(&v, "Hybrid") == 0.09);
     let hatch = cell(&v, "Hatchback", "cost_per_mile");
-    assert_eq!((&hatch["own"], &hatch["kind"], &hatch["formula"]), (&json!(false), &json!(ids("new:petrol")), &json!(petrol)), "it's the kind's, and says so: {hatch}");
-    assert_eq!((&cell(&v, "Hybrid", "cost_per_mile")["own"], &cell(&v, "Hybrid", "cost_per_mile")["kind"]), (&json!(true), &json!(ids("new:petrol"))), "and one of its own says which kind it'd go back to");
-    let cells = node(&v, "Hatchback")["cells"].as_object().unwrap();
-    assert!(!cells.contains_key("value") && !cells.contains_key("task"), "and what a system says is the system's, not the kind's: {cells:?}");
+    assert_eq!((&hatch["source"], &hatch["kind"], &hatch["formula"]), (&json!("kind"), &json!(ids("new:petrol")), &json!(petrol)), "it's the kind's, and says so: {hatch}");
+    assert_eq!((&cell(&v, "Hybrid", "cost_per_mile")["source"], &cell(&v, "Hybrid", "cost_per_mile")["beneath"]), (&json!("own"), &json!(ids("new:petrol"))), "and one of its own says which kind it'd go back to");
+    // A kind's components are its instances': a petrol car is a task because Petrol car is. Its value
+    // is its own, though: a kind's answer isn't each instance's.
+    let hatchback = node(&v, "Hatchback");
+    assert!(hatchback["components"].as_array().unwrap().iter().any(|c| c["name"] == "task" && c["why"] == "kind"), "{hatchback}");
+    assert!(!hatchback["cells"].as_object().unwrap().contains_key("value"), "{hatchback}");
 
     // What each car would cost a year, over the mileage you might do.
     let which = ids("new:which");
@@ -792,25 +794,25 @@ async fn held_out_choosing_a_car() {
 
     // What the hatchback and the electric car cost as fuel gets dearer, which is the same as typing each
     // price in, with nothing changed. Every petrol car reads the one price through its kind.
-    let read = json!([{ "node": ids("new:hatch"), "component": "cost_per_mile" }, { "node": ids("new:ev"), "component": "cost_per_mile" }]);
-    let swept = c.post("/api/sweep", json!({ "set": { "node": ids("new:fuel"), "component": "value" }, "values": [1.45, 3.0], "read": read })).await;
+    let read = json!([{ "node": ids("new:hatch"), "cell": "cost_per_mile" }, { "node": ids("new:ev"), "cell": "cost_per_mile" }]);
+    let swept = c.post("/api/sweep", json!({ "set": { "node": ids("new:fuel"), "cell": "value" }, "values": [1.45, 3.0], "read": read })).await;
     let at = |i: usize, j: usize| swept[i]["cells"][j]["value"].as_f64().unwrap_or_else(|| panic!("{swept}"));
     for (i, fuel) in [1.45, 3.0].into_iter().enumerate() {
         assert!((at(i, 0) - by_mpg(fuel, 52.0)).abs() < 1e-9 && (at(i, 1) - 0.28 * 0.28).abs() < 1e-9, "{swept}");
     }
-    let pinned = c.post("/api/sweep", json!({ "set": { "node": ids("new:miles"), "component": "value" }, "values": [20000], "read": [{ "node": ids("new:cost"), "component": "value" }], "world": { &which: ids("new:ev") } })).await;
+    let pinned = c.post("/api/sweep", json!({ "set": { "node": ids("new:miles"), "cell": "value" }, "values": [20000], "read": [{ "node": ids("new:cost"), "cell": "value" }], "world": { &which: ids("new:ev") } })).await;
     assert!((pinned[0]["cells"][0]["value"].as_f64().unwrap() - by_hand(32000.0, 0.28 * 0.28, 600.0, 20_000.0)).abs() < 1e-6, "{pinned}");
     assert!((per_mile(&c.view(json!({})).await, "Hatchback") - by_mpg(1.45, 52.0)).abs() < 1e-9, "and nothing was changed");
 
     // A car can say otherwise for itself, and goes back to its kind's when that's taken away.
     let hatch = ids("new:hatch");
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": hatch, "component": "cost_per_mile", "value": 0.2 }] })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": hatch, "cell": "cost_per_mile", "value": 0.2 }] })).await;
     assert_eq!(per_mile(&c.view(json!({})).await, "Hatchback"), 0.2);
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": hatch, "component": "cost_per_mile", "labels": {} }] })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": hatch, "cell": "cost_per_mile", "labels": {} }] })).await;
     assert!((per_mile(&c.view(json!({})).await, "Hatchback") - by_mpg(1.45, 52.0)).abs() < 1e-9);
 
     // And the kind changes every car of that kind at once, but not one that says its own.
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": ids("new:petrol"), "component": "cost_per_mile", "formula": "fuel * 4.5 / self.mpg" }] })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": ids("new:petrol"), "cell": "cost_per_mile", "formula": "fuel * 4.5 / self.mpg" }] })).await;
     let v = c.view(json!({})).await;
     assert!((per_mile(&v, "Hatchback") - 1.45 * 4.5 / 52.0).abs() < 1e-9 && (per_mile(&v, "Estate") - 1.45 * 4.5 / 44.0).abs() < 1e-9);
     assert_eq!(per_mile(&v, "Hybrid"), 0.09);
@@ -824,9 +826,9 @@ async fn held_out_tables_of_cars_and_years() {
     let dir = tempfile::tempdir().unwrap();
     c.post("/api/workspaces/new", json!({ "path": dir.path().join("tables"), "name": "Tables", "systems": ["plan"] })).await;
     c.post("/api/ops", json!({ "ops": [
-        { "op": "add_node", "id": "new:fuel", "name": "Fuel price", "components": { "value": 1.45 } },
-        { "op": "add_node", "id": "new:which", "name": "Which car?", "components": { "decision": {} } },
-        { "op": "set", "id": "new:which", "component": "cost_per_mile", "formula": "pick(o in in.alternative: o.cost_per_mile)" },
+        { "op": "add_node", "id": "new:fuel", "name": "Fuel price", "cells": { "value": 1.45 } },
+        { "op": "add_node", "id": "new:which", "name": "Which car?", "components": ["decision"] },
+        { "op": "set", "id": "new:which", "cell": "cost_per_mile", "formula": "pick(o in in.alternative: o.cost_per_mile)" },
         { "op": "table", "name": "Car", "alternative_of": "new:which", "rows": [
             { "key": "Hatchback", "price": 18000 }, { "key": "Electric", "price": 32000 }, { "key": "Hybrid", "price": 26000 },
         ] },
@@ -859,10 +861,10 @@ async fn held_out_tables_of_cars_and_years() {
 
     // Years, with a top-up chosen at year 5 that only the years after it see.
     let done = c.post("/api/ops", json!({ "ops": [
-        { "op": "add_node", "id": "new:rate", "name": "Rate", "components": { "value": 0.05 } },
-        { "op": "add_node", "id": "new:top", "name": "Top up?", "components": { "decision": {} }, "formula": "pick(in.alternative)" },
-        { "op": "add_node", "name": "No", "id": "new:no", "components": { "value": 0 }, "links": [{ "to": "new:top", "kind": "alternative", "value": {} }] },
-        { "op": "add_node", "name": "Yes", "id": "new:yes", "components": { "value": 500 }, "links": [{ "to": "new:top", "kind": "alternative", "value": {} }] },
+        { "op": "add_node", "id": "new:rate", "name": "Rate", "cells": { "value": 0.05 } },
+        { "op": "add_node", "id": "new:top", "name": "Top up?", "components": ["decision"], "cells": { "value": { "formula": "pick(in.alternative)" } } },
+        { "op": "add_node", "name": "No", "id": "new:no", "cells": { "value": 0 }, "links": [{ "to": "new:top", "component": "alternative" }] },
+        { "op": "add_node", "name": "Yes", "id": "new:yes", "cells": { "value": 500 }, "links": [{ "to": "new:top", "component": "alternative" }] },
         { "op": "table", "name": "Year", "columns": { "balance": { "formula": "prev.balance * (1 + rate)", "labels": { "rate": "new:rate" } } }, "range": [0, 10], "rows": [
             { "key": 0, "balance": 1000 },
             { "key": 5, "balance": { "formula": "prev.balance * (1 + rate) + top_up", "labels": { "rate": "new:rate", "top_up": "new:top" } } },
@@ -899,7 +901,7 @@ async fn rows_nobody_wrote_can_be_looked_at() {
     assert_eq!(cells, vec!["balance"], "its cells are its table's, not every node's");
 
     // A formula reading a cell the table doesn't say is refused, naming the row it's on.
-    let why = refused(&c, json!([{ "op": "add_node", "id": "new:x", "name": "Far", "formula": "Year[40].colour" }])).await;
+    let why = refused(&c, json!([{ "op": "add_node", "id": "new:x", "name": "Far", "cells": { "value": { "formula": "Year[40].colour" } } }])).await;
     assert!(why.contains("colour on Year[40]"), "{why}");
 }
 
@@ -944,15 +946,15 @@ async fn part_of_a_formula_can_be_tried_with_nothing_changed() {
 async fn a_drawing_is_added_undone_and_refused_like_anything_else() {
     let c = Client::new();
     c.open("australia").await;
-    let done = c.post("/api/ops", json!({ "ops": [{ "op": "add_node", "id": "new:d", "name": "Mine", "components": { "drawing": "export function draw() { return \"\"; }" } }], "why": "a second way to see it" })).await;
+    let done = c.post("/api/ops", json!({ "ops": [{ "op": "add_node", "id": "new:d", "name": "Mine", "cells": { "drawing": "export function draw() { return \"\"; }" } }], "why": "a second way to see it" })).await;
     let d = done["created"]["new:d"].as_str().unwrap().to_string();
     let v = c.view(json!({})).await;
     assert_eq!(cell(&v, "Mine", "drawing")["value"], "export function draw() { return \"\"; }");
-    assert_eq!(cell(&v, "Map of Australia", "drawing")["source"], "stored", "and there can be several");
+    assert_eq!(cell(&v, "Map of Australia", "drawing")["source"], "own", "and there can be several");
     assert_eq!(v["worlds"]["count"], "18");
 
-    let why = refused(&c, json!([{ "op": "set", "id": d, "component": "drawing", "value": 3 }])).await;
-    assert!(why.contains("malformed_component"), "a drawing is text: {why}");
+    let why = refused(&c, json!([{ "op": "set", "id": d, "cell": "drawing", "value": 3 }])).await;
+    assert!(why.contains("malformed_cell"), "a drawing is text: {why}");
 
     let (_, history) = c.call("GET", "/api/history", None).await;
     c.post("/api/undo", json!({ "seq": history[0]["seq"] })).await;
@@ -963,7 +965,7 @@ async fn a_drawing_is_added_undone_and_refused_like_anything_else() {
 async fn a_hand_edit_nobody_has_noticed_yet_stays_on_the_branch_it_was_made_on() {
     let c = Client::new();
     c.open("invoice").await;
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Tax rate", "component": "value", "value": 0.5 }] })).await;
+    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Tax rate", "cell": "value", "value": 0.5 }] })).await;
     let v = c.view(json!({})).await;
     let path = format!("{}/nodes/{}.yaml", v["workspace"]["dir"].as_str().unwrap(), id(&v, "Tax rate"));
     let text = std::fs::read_to_string(&path).unwrap();

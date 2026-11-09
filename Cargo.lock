@@ -1036,7 +1036,6 @@ name = "recollect-graph"
 version = "0.1.0"
 dependencies = [
  "recollect-graph-macros",
- "recollect-kernel",
  "recollect-systems",
  "schemars",
  "serde",
@@ -1054,16 +1053,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "recollect-kernel"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "stacker",
 ]
 
 [[package]]
@@ -1095,7 +1084,6 @@ name = "recollect-systems"
 version = "0.1.0"
 dependencies = [
  "recollect-graph",
- "recollect-kernel",
  "serde",
  "serde_json",
  "stacker",

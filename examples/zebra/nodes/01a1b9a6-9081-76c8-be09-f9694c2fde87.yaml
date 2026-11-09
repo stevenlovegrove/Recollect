@@ -1,8 +1,0 @@
-id: 01a1b9a6-9081-76c8-be09-f9694c2fde87
-components:
-  name: The Japanese smokes Parliament
-rules:
-  value:
-    rule: expr@1
-    params:
-      text: Nationality[Japanese] = Smoke[Parliament]

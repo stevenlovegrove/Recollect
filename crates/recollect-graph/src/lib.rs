@@ -1,5 +1,6 @@
-//! A general compute core over a graph, and worlds as a value type on top. See
-//! `docs/graph-core.md`, and the toys in `tests/` for what it's meant to express.
+//! A general compute core over a graph of nodes and edges, each with components and the cells they
+//! bring, and worlds as a value type on top. See `docs/components.md`, and the toys in `tests/` for
+//! what it's meant to express.
 
 // So the attribute macros can name this crate from inside it too.
 extern crate self as recollect_graph;
@@ -9,14 +10,15 @@ pub mod log;
 pub mod name;
 pub mod registry;
 pub mod saved;
+pub mod shown;
 pub mod table;
 pub mod worlds;
 
-pub use graph::{Cell, Component, Cx, Dep, Entity, Error, Graph, Inputs, Rule, Runtime, Storage, rule};
-pub use log::{CommitError, Drift, Event, Log, Op, OpenError, Seen, Stored, Target, Violation, Witness};
-pub use name::Name;
-pub use recollect_graph_macros::{component, rule};
-pub use registry::{CellResult, Code, Compute, OutputOf, Place, Registry, RuleInfo, RuleMeta, RuntimeRule, SavedRule, Severity, into_rule};
-pub use schemars;
+pub use graph::{Backed, Cell, CellType, ComponentType, Computed, Cx, Dep, Entity, Error, Graph, Key, Origin, Source};
+pub use log::{CommitError, Event, Log, On, Op, OpenError, Stored, Target, Violation};
+pub use name::{Name, Named};
+pub use recollect_graph_macros::{cell, component};
+pub use registry::{Advice, CellBuilder, CellDef, Compile, ComponentDef, Place, Registry, Severity};
+pub use saved::{DirError, LoadProblem, SavedEdge, SavedGraph, SavedNode};
 pub use serde;
-pub use saved::{DirError, LoadProblem, SaveError, SavedDefaults, SavedGraph, SavedLink, SavedNode};
+pub use shown::Shown;
