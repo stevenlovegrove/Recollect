@@ -69,7 +69,8 @@ This removes:
 
 - the `Compute` rule types and `#[rule]`, which become built-in functions;
 - `SavedRule`, `Stored::Rule`, `Storage::Rule`, `set_rule` ops, `RuleInfo` in the API, and `Cell.source: "rule"`;
-- `defaults_to` and `fills`, which are just a component's cell defaults now.
+- `defaults_to` and `fills`, which are just a component's cell defaults now;
+- `RuntimeRule`, a rule with no Rust type meant for plugins, which becomes a function a plugin gives formulas.
 
 **Checks** keep their own name and their own registration. An invariant refuses an edit, and a notice reports. They're about whole entities, not cells, so they stay a separate thing.
 
