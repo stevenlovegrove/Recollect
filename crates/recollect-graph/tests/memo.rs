@@ -5,33 +5,29 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod support;
 
-use recollect_graph::{Compute, Cx, Error, Graph, Registry, component, rule};
+use recollect_graph::{Cell, CellType, Cx, Error, Graph, Registry, cell};
 use support::N;
 
 #[derive(Copy)]
-#[component]
+#[cell]
 struct Amount(i64);
 
-#[component]
-struct Addend;
+const SHEET: &str = "sheet";
+const ADDEND: &str = "addend";
 
 /// Clamped, so different inputs often give the same answer and early cut-off gets exercised.
-#[rule("memo/sum", incoming(Addend))]
-struct Sum;
-
-impl Compute for Sum {
-    type Output = Amount;
-    fn compute(&self, cx: &Cx) -> Result<Amount, Error> {
-        let mut total = 0;
-        for from in cx.sources::<Addend>()? {
-            total += cx.get::<Amount>(from)?.map_or(0, |a| a.0);
-        }
-        Ok(Amount(total.clamp(-3, 3)))
+fn sum(cx: &Cx) -> Cell<Amount> {
+    let mut total = 0;
+    for from in cx.sources(ADDEND) {
+        total += cx.get::<Amount>(from)?.map_or(0, |a| a.0);
     }
+    Ok(Some(Amount(total.clamp(-3, 3))))
 }
 
 fn install(reg: &mut Registry) {
-    reg.rule::<Sum>();
+    reg.component(SHEET, "A cell of a sheet: what's added to it, unless a value is typed in.");
+    reg.cell::<Amount>(SHEET, "The sum of what's added to it.").builtin(sum);
+    reg.edge(ADDEND, "Added to that.");
 }
 
 struct Rng(u64);
@@ -59,13 +55,13 @@ struct State {
 fn fresh(s: &State) -> N {
     let mut g = N::with(install);
     for (id, k) in &s.cells {
-        match k {
-            Kind::Literal(v) => g.set(id, Amount(*v)),
-            Kind::Formula => g.set(id, Sum),
-        };
+        g.add(id, SHEET);
+        if let Kind::Literal(v) = k {
+            g.set(id, Amount(*v));
+        }
     }
     for (a, b) in &s.links {
-        g.link(a, b, Addend);
+        g.link(a, b, ADDEND);
     }
     g
 }
@@ -103,18 +99,18 @@ fn a_long_lived_graph_always_agrees_with_a_new_one() {
                 }
                 1 => {
                     state.cells.insert(a.clone(), Kind::Formula);
-                    g.set(&a, Sum);
+                    g.clear(&a, Amount::NAME);
                 }
                 2 | 3 if a != b => {
                     // Mostly forward links, with the odd cycle.
                     let (x, y) = if a < b || rng.next(10) == 0 { (a, b) } else { (b, a) };
                     state.links.insert((x.clone(), y.clone()));
-                    g.link(&x, &y, Addend);
+                    g.link(&x, &y, ADDEND);
                 }
                 4 => {
                     if let Some(l) = state.links.iter().nth(rng.next(state.links.len().max(1))).cloned() {
                         state.links.remove(&l);
-                        g.unlink::<Addend>(&l.0, &l.1);
+                        g.unlink(&l.0, &l.1, ADDEND);
                     }
                 }
                 _ => continue,
@@ -136,7 +132,7 @@ fn a_long_lived_graph_always_agrees_with_a_new_one() {
             }
             // And what it would save reads back the same as a graph that was never saved.
             if edits % 10 == 0 {
-                let (reloaded, problems) = Graph::load(g.g.save().unwrap(), g.registry.clone());
+                let (reloaded, problems) = Graph::load(g.g.save(), g.registry.clone());
                 assert_eq!(problems, vec![]);
                 for id in &ids {
                     let got = match reloaded.get::<Amount>(g.id(id)) {
@@ -154,115 +150,118 @@ fn a_long_lived_graph_always_agrees_with_a_new_one() {
             reused += total.saturating_sub(ran);
         }
     }
-    println!("{edits} edits: reran {reran} rules where a new graph needs {}, {cycles} cycle answers checked, {reloads} cells checked after a reload", reran + reused);
+    println!("{edits} edits: reran {reran} cells where a new graph needs {}, {cycles} cycle answers checked, {reloads} cells checked after a reload", reran + reused);
     assert!(reused > reran, "memoisation should actually be saving work");
     assert!(cycles > 100, "the edits should actually exercise cycles");
 }
 
 /// y used to read z. Now y reads nothing, and z reads x, which reads y: no loop, but one if y's old
-/// read is followed. So a rule's old reads have to be checked in the order it made them: if its
-/// first reads are unchanged then so is its next one, and checking them in any other order can run
-/// something it no longer reads, in the middle of evaluating something else.
+/// read is followed. So a computation's old reads have to be checked in the order it made them: if
+/// its first reads are unchanged then so is its next one, and checking them in any other order can
+/// run something it no longer reads, in the middle of evaluating something else.
 #[test]
-fn checking_a_memo_doesnt_follow_a_read_that_rule_no_longer_makes() {
+fn checking_a_memo_doesnt_follow_a_read_that_is_no_longer_made() {
     let mut g = N::with(install);
     for id in ["x", "y", "z"] {
-        g.set(id, Sum);
+        g.add(id, SHEET);
     }
-    g.set("w", Amount(2));
-    g.link("z", "y", Addend);
-    g.link("w", "z", Addend);
+    g.add("w", SHEET).set("w", Amount(2));
+    g.link("z", "y", ADDEND);
+    g.link("w", "z", ADDEND);
     assert_eq!(g.get::<Amount>("y"), Ok(Some(Amount(2))));
     assert_eq!(g.get::<Amount>("x"), Ok(Some(Amount(0))));
 
-    g.unlink::<Addend>("z", "y");
-    g.link("y", "x", Addend);
-    g.link("x", "z", Addend);
+    g.unlink("z", "y", ADDEND);
+    g.link("y", "x", ADDEND);
+    g.link("x", "z", ADDEND);
 
     assert_eq!(g.get::<Amount>("x"), Ok(Some(Amount(0))));
     assert_eq!(g.get::<Amount>("z"), Ok(Some(Amount(2))));
     assert_eq!(g.get::<Amount>("y"), Ok(Some(Amount(0))));
 }
 
-/// A column that reads the amount column, so it isn't itself touched when that one's default is.
+/// A cell that reads the amounts added to it.
 #[derive(Copy)]
-#[component]
+#[cell]
 struct Seen(i64);
 
-#[rule("memo/seen", incoming(Addend))]
-struct SeenRule;
+/// Every amount there is.
+#[derive(Copy)]
+#[cell]
+struct Everything(i64);
 
-impl Compute for SeenRule {
-    type Output = Seen;
-    fn compute(&self, cx: &Cx) -> Result<Seen, Error> {
-        let mut total = 0;
-        for from in cx.sources::<Addend>()? {
-            total += cx.get::<Amount>(from)?.map_or(0, |a| a.0);
-        }
-        Ok(Seen(total))
+const SEER: &str = "seer";
+const SCANNER: &str = "scanner";
+
+fn seen(cx: &Cx) -> Cell<Seen> {
+    let mut total = 0;
+    for from in cx.sources(ADDEND) {
+        total += cx.get::<Amount>(from)?.map_or(0, |a| a.0);
     }
+    Ok(Some(Seen(total)))
 }
 
-#[rule("memo/everything", scans(Amount))]
-struct Everything;
-
-impl Compute for Everything {
-    type Output = Seen;
-    fn compute(&self, cx: &Cx) -> Result<Seen, Error> {
-        Ok(Seen(cx.with::<Amount>()?.iter().map(|(_, a)| a.0).sum()))
+fn everything(cx: &Cx) -> Cell<Everything> {
+    let mut total = 0;
+    for e in cx.scan(SHEET) {
+        total += cx.get::<Amount>(e)?.map_or(0, |a| a.0);
     }
+    Ok(Some(Everything(total)))
 }
 
 fn install_seen(reg: &mut Registry) {
     install(reg);
-    reg.rule::<SeenRule>().rule::<Everything>();
+    reg.component(SEER, "Sees what's added to it.");
+    reg.cell::<Seen>(SEER, "The amounts added to it.").builtin(seen);
+    reg.component(SCANNER, "Sees every amount.");
+    reg.cell::<Everything>(SCANNER, "Every amount there is.").builtin(everything);
 }
 
-/// The same as for a single cell: a memo only stands for an unbroken run of being computed, so a
-/// column swapped to a value and back has to count as changed for whatever read the value.
+/// The same as for a single cell: a memo only stands for an unbroken run of being computed, so a cell
+/// swapped from its builtin to a value and back has to count as changed for whatever read the value.
 #[test]
-fn a_default_swapped_for_a_value_and_back_is_a_change_to_its_readers() {
+fn a_builtin_swapped_for_a_value_and_back_is_a_change_to_its_readers() {
     let mut g = N::with(install_seen);
-    g.g.set_default(Sum);
-    g.set("reader", SeenRule);
-    g.e("source");
-    g.link("source", "reader", Addend);
+    g.add("reader", SEER);
+    g.add("source", SHEET);
+    g.link("source", "reader", ADDEND);
     assert_eq!(g.get::<Seen>("reader"), Ok(Some(Seen(0))));
 
-    g.g.set_default(Amount(2));
+    g.set("source", Amount(2));
     assert_eq!(g.get::<Seen>("reader"), Ok(Some(Seen(2))));
 
-    g.g.set_default(Sum);
-    assert_eq!(g.get::<Seen>("reader"), Ok(Some(Seen(0))), "the rule is back, with the answer it had before");
+    g.clear("source", Amount::NAME);
+    assert_eq!(g.get::<Seen>("reader"), Ok(Some(Seen(0))), "the builtin is back, with the answer it had before");
 }
 
 #[test]
 fn removing_a_node_and_bringing_it_back_is_a_change_to_what_scans_it() {
     let mut g = N::with(install_seen);
     let (a, b) = (g.g.spawn(), g.g.spawn());
+    g.g.add(a, SHEET).add(b, SHEET);
     g.g.set(a, Amount(1)).set(b, Amount(2));
     let total = g.g.spawn();
-    g.g.set(total, Everything);
-    assert_eq!(g.g.get::<Seen>(total), Ok(Some(Seen(3))));
+    g.g.add(total, SCANNER);
+    assert_eq!(g.g.get::<Everything>(total), Ok(Some(Everything(3))));
 
     assert!(g.g.despawn(b));
-    assert_eq!(g.g.get::<Seen>(total), Ok(Some(Seen(1))));
+    assert_eq!(g.g.get::<Everything>(total), Ok(Some(Everything(1))));
     assert_eq!(g.g.get::<Amount>(b), Ok(None));
 
     g.g.adopt(b);
-    assert_eq!(g.g.get::<Seen>(total), Ok(Some(Seen(1))), "back, but with nothing on it");
-    g.g.set(b, Amount(2));
-    assert_eq!(g.g.get::<Seen>(total), Ok(Some(Seen(3))));
+    assert_eq!(g.g.get::<Everything>(total), Ok(Some(Everything(1))), "back, but with nothing on it");
+    g.g.add(b, SHEET).set(b, Amount(2));
+    assert_eq!(g.g.get::<Everything>(total), Ok(Some(Everything(3))));
 }
 
 /// A node with a link can't go: the link says something about the other end too.
 #[test]
 fn a_node_with_links_cant_be_removed() {
     let mut g = N::with(install);
-    g.link("a", "b", Addend);
+    g.link("a", "b", ADDEND);
     let (a, b) = (g.id("a"), g.id("b"));
     assert!(!g.g.despawn(a) && !g.g.despawn(b));
-    g.unlink::<Addend>("a", "b");
+    g.unlink("a", "b", ADDEND);
     assert!(g.g.despawn(a));
     assert!(!g.g.despawn(a), "and it's gone");
 }

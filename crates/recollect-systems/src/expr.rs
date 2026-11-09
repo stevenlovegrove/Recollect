@@ -578,14 +578,6 @@ mod tests {
     }
 
     #[test]
-    fn what_a_formula_follows_comes_from_what_it_says() {
-        let i = inputs_of(&parse("sum(in.part_of.days) + count(out.depends_on) + all(with.task)").unwrap());
-        assert_eq!((i.incoming, i.outgoing, i.scans), (vec!["part_of".to_string()], vec!["label".to_string(), "depends_on".to_string()], vec!["task".to_string()]));
-        let i = inputs_of(&parse("effort()").unwrap());
-        assert_eq!(i.scans, vec!["unknown".to_string(), "task".to_string()], "and whatever the library says for it");
-    }
-
-    #[test]
     fn labels_have_to_read_as_names() {
         assert!(is_name("rate") && is_name("rate_2"));
         assert!(!is_name("2rate") && !is_name("a b") && !is_name("") && !is_name("self") && !is_name("whole") && !is_name("in") && !is_name("true"));

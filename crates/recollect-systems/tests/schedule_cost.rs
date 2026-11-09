@@ -18,9 +18,16 @@ fn registry() -> Arc<Registry> {
 fn read_dates(g: &Graph) {
     for e in g.entities() {
         for c in ["start", "finish", "slack"] {
-            g.get_runtime(e, c).unwrap();
+            g.get_value(e, c).unwrap();
         }
     }
+}
+
+/// A new node with a name.
+fn named(ops: &mut Vec<Op>, name: &str) -> Entity {
+    let e = Entity::new();
+    ops.extend([Op::Spawn { id: e }, Op::set(e, Name(name.to_string()))]);
+    e
 }
 
 /// Phases in a chain of ten tasks each. `open` of them hold a decision between two approaches, whose
@@ -31,16 +38,16 @@ fn plan(tasks: usize, open: usize, differ: bool) -> (Vec<Op>, Vec<Entity>) {
     let mut leaves = Vec::new();
     let mut last = None;
     for p in 0..phases {
-        let phase = Entity::new();
-        ops.push(Op::set(phase, Name(format!("phase {p}"))));
+        let phase = named(&mut ops, &format!("phase {p}"));
         if let Some(last) = last {
-            ops.push(Op::link(phase, last, DependsOn::default()));
+            ops.push(Op::link(phase, last, DEPENDS_ON));
         }
         last = Some(phase);
         let (a, b) = if p < open {
-            let (dec, a, b) = (Entity::new(), Entity::new(), Entity::new());
-            ops.extend([Op::set(dec, Decision::default()), Op::set(a, Name("a".into())), Op::set(b, Name("b".into()))]);
-            ops.extend([Op::link(dec, phase, PartOf), Op::link(a, dec, Alternative::default()), Op::link(b, dec, Alternative::default())]);
+            let dec = Entity::new();
+            ops.extend([Op::Spawn { id: dec }, Op::add(dec, DECISION)]);
+            let (a, b) = (named(&mut ops, "a"), named(&mut ops, "b"));
+            ops.extend([Op::link(dec, phase, PART_OF), Op::link(a, dec, ALTERNATIVE), Op::link(b, dec, ALTERNATIVE)]);
             (a, b)
         } else {
             (phase, phase)
@@ -49,7 +56,7 @@ fn plan(tasks: usize, open: usize, differ: bool) -> (Vec<Op>, Vec<Entity>) {
             let leaf = Entity::new();
             let under_a = t % 2 == 0;
             let days = if differ && under_a { 2.0 + p as f64 } else { 1.0 };
-            ops.extend([Op::set(leaf, Task {}), Op::set(leaf, Estimate::days(days)), Op::link(leaf, if under_a { a } else { b }, PartOf)]);
+            ops.extend([Op::Spawn { id: leaf }, Op::add(leaf, TASK), Op::set(leaf, Estimate::days(days)), Op::link(leaf, if under_a { a } else { b }, PART_OF)]);
             leaves.push(leaf);
         }
     }

@@ -5,27 +5,48 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
+use recollect_graph::worlds::{Bool, Cond, Space, Worldly};
+use recollect_graph::{Cell, CellType, Cx, Dep, Entity, Error, Graph, Log, Name, On, Op, Registry, Stored, Target, Violation, cell};
+use recollect_systems::expr::Val;
+use recollect_systems::formulas::{Called, LABEL};
+use recollect_systems::notes;
 use recollect_systems::plan::{self, *};
 use recollect_systems::view::ViewGraph;
-use recollect_graph::worlds::{Bool, Cond, Space};
-use recollect_graph::{Component, Compute, Cx, Dep, Entity, Error, Graph, Log, Name, Op, Registry, Runtime, RuntimeRule, Target, Violation, component, rule};
-use serde_json::{Value, json};
+use serde_json::json;
+
+/// What a workspace with a plan has: notes, so ideas can relate, and the plan.
+fn install(reg: &mut Registry) {
+    notes::install(reg);
+    plan::install(reg);
+}
+
+/// Write a value in a cell of the edge from one node to another.
+fn on_edge<C: CellType>(from: Entity, to: Entity, value: C) -> Op {
+    Op::Set { on: On::Edge { from, to }, cell: C::NAME.to_string(), to: Some(Stored::Value(serde_json::to_value(value).expect("cells serialise"))) }
+}
+
+/// Take away what a node says in a cell.
+fn clear(id: Entity, cell: &str) -> Op {
+    Op::Set { on: On::Node { id }, cell: cell.to_string(), to: None }
+}
 
 struct G {
     log: Log,
     ids: BTreeMap<String, Entity>,
     names: HashMap<String, String>,
+    /// The nodes something has committed.
+    made: BTreeSet<Entity>,
 }
 
 impl G {
     fn new() -> Self {
-        Self::with(plan::install)
+        Self::with(install)
     }
 
     fn with(install: impl FnOnce(&mut Registry)) -> Self {
         let mut reg = Registry::new();
         install(&mut reg);
-        G { log: Log::new(Arc::new(reg)), ids: BTreeMap::new(), names: HashMap::new() }
+        G { log: Log::new(Arc::new(reg)), ids: BTreeMap::new(), names: HashMap::new(), made: BTreeSet::new() }
     }
 
     /// The handle for this name. It's only a node once something commits it.
@@ -39,6 +60,15 @@ impl G {
         e
     }
 
+    /// What makes this node, with its name, if nothing has yet.
+    fn make(&mut self, name: &str) -> Vec<Op> {
+        let e = self.e(name);
+        if !self.made.insert(e) {
+            return vec![];
+        }
+        vec![Op::Spawn { id: e }, Op::set(e, Name(name.to_string()))]
+    }
+
     fn g(&self) -> &Graph {
         self.log.graph()
     }
@@ -48,57 +78,77 @@ impl G {
     }
 
     fn node(&mut self, name: &str) -> &mut Self {
-        let e = self.e(name);
-        self.commit(vec![Op::set(e, Name(name.to_string()))]);
+        let ops = self.make(name);
+        if !ops.is_empty() {
+            self.commit(ops);
+        }
+        self
+    }
+
+    fn add(&mut self, name: &str, component: &str) -> &mut Self {
+        let mut ops = self.make(name);
+        ops.push(Op::add(self.id(name), component));
+        self.commit(ops);
         self
     }
 
     fn task(&mut self, name: &str) -> &mut Self {
-        let e = self.e(name);
-        self.commit(vec![Op::set(e, Name(name.to_string())), Op::set(e, Task {})]);
-        self
+        self.add(name, TASK)
     }
 
     fn decision(&mut self, name: &str) -> &mut Self {
-        let e = self.e(name);
-        self.commit(vec![Op::set(e, Name(name.to_string())), Op::set(e, Decision::default())]);
-        self
+        self.add(name, DECISION)
     }
 
     /// A decision with a gap for the options nobody has named yet.
     fn open_decision(&mut self, name: &str) -> &mut Self {
-        let (e, gap) = (self.e(name), self.e(&format!("{name}.unknown")));
-        self.commit(new_decision(e, gap));
+        let gap = format!("{name}.unknown");
+        let mut ops = self.make(name);
+        ops.extend(self.make(&gap));
+        ops.extend(new_decision(self.id(name), self.id(&gap)));
+        self.commit(ops);
+        self
+    }
+
+    /// Say a node isn't fully specified yet, with a gap of this name.
+    fn incomplete(&mut self, name: &str, gap: &str) -> &mut Self {
+        let mut ops = self.make(gap);
+        ops.extend(mark_incomplete(self.id(name), self.id(gap)));
+        self.commit(ops);
+        self
+    }
+
+    fn link(&mut self, from: &str, to: &str, component: &str) -> &mut Self {
+        let mut ops = self.make(from);
+        ops.extend(self.make(to));
+        ops.push(Op::link(self.id(from), self.id(to), component));
+        self.commit(ops);
         self
     }
 
     fn part_of(&mut self, from: &str, to: &str) -> &mut Self {
-        let (a, b) = (self.e(from), self.e(to));
-        self.commit(vec![Op::link(a, b, PartOf)]);
-        self
+        self.link(from, to, PART_OF)
     }
 
     fn option(&mut self, from: &str, to: &str) -> &mut Self {
-        let (a, b) = (self.e(from), self.e(to));
-        self.commit(vec![Op::link(a, b, Alternative::default())]);
-        self
+        self.link(from, to, ALTERNATIVE)
     }
 
     fn rule_out(&mut self, from: &str, to: &str) -> &mut Self {
-        let (a, b) = (self.e(from), self.e(to));
-        self.commit(vec![Op::link(a, b, Alternative { ruled_out: Some(json!({})), weight: None })]);
+        self.option(from, to);
+        let (a, b) = (self.id(from), self.id(to));
+        self.commit(vec![on_edge(a, b, RuledOut(json!({})))]);
         self
     }
 
     fn depends(&mut self, from: &str, to: &str) -> &mut Self {
-        let (a, b) = (self.e(from), self.e(to));
-        self.commit(vec![Op::link(a, b, DependsOn::default())]);
-        self
+        self.link(from, to, DEPENDS_ON)
     }
 
     fn waits_for_answer(&mut self, from: &str, to: &str) -> &mut Self {
-        let (a, b) = (self.e(from), self.e(to));
-        self.commit(vec![Op::link(a, b, DependsOn { on: Some(WaitFor::Decided) })]);
+        self.depends(from, to);
+        let (a, b) = (self.id(from), self.id(to));
+        self.commit(vec![on_edge(a, b, WaitFor::Decided)]);
         self
     }
 
@@ -269,9 +319,9 @@ fn ruling_out_narrows_the_worlds() {
 fn weights_are_on_the_link_and_a_gap_has_none_unless_given_one() {
     let mut g = G::new();
     g.open_decision("d");
-    g.node("a").node("b");
+    g.option("a", "d").option("b", "d");
     let (a, b, d) = (g.id("a"), g.id("b"), g.id("d"));
-    g.commit(vec![Op::link(a, d, Alternative { ruled_out: None, weight: Some(3.0) }), Op::link(b, d, Alternative { ruled_out: None, weight: Some(1.0) })]);
+    g.commit(vec![on_edge(a, d, Weight(Worldly::plain(Some(3.0)))), on_edge(b, d, Weight(Worldly::plain(Some(1.0))))]);
     assert!((g.need_of("a").prob() - 0.75).abs() < 1e-9);
     assert!((g.need_of("d.unknown").prob()).abs() < 1e-9);
 }
@@ -281,7 +331,7 @@ fn weights_are_on_the_link_and_a_gap_has_none_unless_given_one() {
 #[test]
 fn deciding_and_reopening_never_touch_the_work() {
     let mut g = calibration();
-    let saved = g.g().save().unwrap();
+    let saved = g.g().save();
     let before = g.need("detector");
 
     g.choose("calib", "cad");
@@ -290,7 +340,7 @@ fn deciding_and_reopening_never_touch_the_work() {
 
     g.reopen("calib");
     assert_eq!(g.need("detector"), before, "everything comes back on its own");
-    assert_eq!(g.g().save().unwrap(), saved, "and no fact changed at any point");
+    assert_eq!(g.g().save(), saved, "and no fact changed at any point");
 
     g.choose("calib", "board");
     assert!(g.need_of("detector").is_always());
@@ -314,7 +364,7 @@ fn completion_knows_about_choices() {
     g.done("detector").done("search");
     assert_eq!(g.finished("board"), "always");
     assert_eq!(g.finished("calib"), "always", "complete whichever way it goes");
-    assert_eq!(g.g().get::<Decision>(g.id("calib")).unwrap().unwrap().chosen, None);
+    assert_eq!(g.g().get::<Chosen>(g.id("calib")).unwrap(), None);
 }
 
 #[test]
@@ -325,10 +375,10 @@ fn a_node_with_nothing_to_finish_is_not_in_the_completion_system() {
     assert_eq!(c.0.0, Space::global().pure(None));
     assert_eq!(g.blocked("t"), "never", "a note requires nothing");
 
-    let (note, gap) = (g.id("note"), g.e("note.gap"));
-    g.commit(mark_incomplete(note, gap));
+    g.incomplete("note", "note.gap");
     assert_eq!(g.blocked("t"), "always", "until it says there's more to come");
-    g.commit(close_gap::<PartOf>(gap, note));
+    let (note, gap) = (g.id("note"), g.id("note.gap"));
+    g.commit(close_gap(gap, note, PART_OF));
     assert_eq!(g.blocked("t"), "never");
 }
 
@@ -383,7 +433,7 @@ fn a_decision_that_is_only_a_decision() {
     // Closing the gap says these are all the options. Nothing's owed, and only a dependent that
     // waits for the answer still waits.
     let (colour, gap) = (g.id("colour"), g.id("colour.unknown"));
-    g.commit(close_gap::<Alternative>(gap, colour));
+    g.commit(close_gap(gap, colour, ALTERNATIVE));
     assert_eq!(g.open("colour"), "never");
     assert_eq!(g.blocked("paint"), "never");
     assert_eq!(g.blocked("mix"), "always");
@@ -396,8 +446,7 @@ fn a_decision_that_is_only_a_decision() {
 #[test]
 fn what_a_node_says_for_itself_replaces_what_is_beneath_it() {
     let mut g = G::new();
-    let goal = g.e("goal");
-    g.commit(vec![Op::set(goal, Goal)]);
+    g.add("goal", GOAL);
     g.task("t").part_of("t", "goal").task("after").depends("after", "goal");
     assert_eq!(g.open("goal"), "always", "it's worked out from t");
     assert_eq!(g.blocked("after"), "always");
@@ -412,8 +461,8 @@ fn what_a_node_says_for_itself_replaces_what_is_beneath_it() {
     assert_eq!(g.notices(), vec![("dropped_part_of_live_work".to_string(), "t".to_string())]);
 
     // And without the statement, it's worked out again.
-    let t = g.id("t");
-    g.commit(vec![Op::remove::<Dropped>(t), Op::remove::<Done>(goal)]);
+    let (t, goal) = (g.id("t"), g.id("goal"));
+    g.commit(vec![clear(t, Dropped::NAME), clear(goal, Done::NAME)]);
     assert_eq!(g.open("goal"), "always");
 }
 
@@ -449,15 +498,13 @@ fn a_stated_done_decision_is_noted() {
 #[test]
 fn a_goal_with_nothing_under_it_is_worth_a_look() {
     let mut g = G::new();
-    let goal = g.e("goal");
-    g.commit(vec![Op::set(goal, Goal)]);
+    g.add("goal", GOAL);
     assert_eq!(g.notices(), vec![("undeveloped_goal".to_string(), "goal".to_string())]);
     g.task("t").part_of("t", "goal");
     assert_eq!(g.notices(), vec![]);
 
     let mut g = G::new();
-    let (goal, helper) = (g.e("goal"), g.e("helper"));
-    g.commit(vec![Op::set(goal, Goal), Op::set(helper, Name("helper".into())), Op::link_runtime(helper, goal, Runtime::new("serves", Value::Null))]);
+    g.add("goal", GOAL).link("helper", "goal", "serves");
     assert_eq!(g.notices(), vec![], "something serving it counts too");
 }
 
@@ -480,24 +527,24 @@ fn a_gap_isnt_an_option_you_could_be_told_to_take() {
     g.node("a").option("a", "d");
     assert_eq!(g.notices(), vec![], "one named option, and there may be more to come");
     let (d, gap) = (g.id("d"), g.id("d.unknown"));
-    g.commit(close_gap::<Alternative>(gap, d));
+    g.commit(close_gap(gap, d, ALTERNATIVE));
     assert_eq!(g.notices(), vec![("one_option_left".to_string(), "d".to_string())], "these are all there are, so it isn't a choice");
 }
 
 #[test]
 fn a_risk_threatening_nothing_is_worth_a_look() {
     let mut g = G::new();
-    let (r, t) = (g.e("risk"), g.e("t"));
-    g.commit(vec![Op::set(r, Risk), Op::set(t, Task {})]);
+    g.add("risk", RISK).task("t");
     assert_eq!(g.notices(), vec![("risk_without_target".to_string(), "risk".to_string())]);
-    g.commit(vec![Op::link_runtime(r, t, Runtime::new("contradicts", Value::Null))]);
+    g.link("risk", "t", "contradicts");
     assert_eq!(g.notices(), vec![]);
 }
 
 #[test]
 fn a_big_task_with_no_breakdown_is_worth_a_look() {
     let mut g = G::new();
-    let t = g.e("t");
+    g.task("t");
+    let t = g.id("t");
     g.commit(vec![Op::set(t, Estimate::days(6.0))]);
     assert_eq!(g.notices(), vec![("oversized_task".to_string(), "t".to_string())]);
     g.task("part").part_of("part", "t");
@@ -506,19 +553,15 @@ fn a_big_task_with_no_breakdown_is_worth_a_look() {
 
 #[test]
 fn an_estimate_that_varies_is_too_big_if_it_could_be_and_reads_as_a_range() {
-    use recollect_systems::formulas::{EXPR, Label};
     let mut g = G::new();
-    let (d, a, b, t) = (g.e("d"), g.e("a"), g.e("b"), g.e("t"));
+    g.decision("d").option("a", "d").option("b", "d").task("t");
+    let (d, a, t) = (g.id("d"), g.id("a"), g.id("t"));
     g.commit(vec![
-        Op::set(d, Decision::default()),
-        Op::Spawn { id: a },
-        Op::Spawn { id: b },
-        Op::link(a, d, Alternative::default()),
-        Op::link(b, d, Alternative::default()),
-        Op::set(t, Task {}),
-        Op::set_rule(t, Estimate::NAME, EXPR, json!({ "text": "if(chose(d, a), 9, 1)" })),
-        Op::link(t, d, Label("d".to_string())),
-        Op::link(t, a, Label("a".to_string())),
+        Op::set_formula(t, Estimate::NAME, "if(chose(d, a), 9, 1)"),
+        Op::link(t, d, LABEL),
+        on_edge(t, d, Called("d".to_string())),
+        Op::link(t, a, LABEL),
+        on_edge(t, a, Called("a".to_string())),
     ]);
     assert_eq!(g.notices(), vec![("oversized_task".to_string(), "t".to_string())], "it's too big in one of the worlds");
     let read = |picks: &BTreeMap<String, String>| plan::work(g.g(), picks).unwrap().into_iter().find(|w| w.id == t).unwrap().estimate;
@@ -586,7 +629,7 @@ fn a_gap_keeps_a_decision_open_until_someone_closes_it() {
     assert_eq!(g.finished("calib"), "calib∈{cad,free}", "all known work finished, and it might not be all");
 
     let (calib, gap) = (g.id("calib"), g.id("calib.unknown"));
-    let seq = g.log.commit("steven", "these are the only two approaches", close_gap::<Alternative>(gap, calib)).unwrap();
+    let seq = g.log.commit("steven", "these are the only two approaches", close_gap(gap, calib, ALTERNATIVE)).unwrap();
     assert_eq!(g.finished("calib"), "always");
     let ev = &g.log.events()[seq as usize];
     assert_eq!((ev.author.as_str(), ev.why.as_str()), ("steven", "these are the only two approaches"), "closing it is an audited claim");
@@ -601,12 +644,12 @@ fn an_option_with_no_work_next_to_a_finished_one() {
     g.decision("d").node("a").option("a", "d").task("b").option("b", "d").done("b");
     assert_eq!(g.open("d"), "never");
     // An option that isn't thought through yet says so.
-    let (a, gap) = (g.id("a"), g.e("a.gap"));
-    g.commit(mark_incomplete(a, gap));
+    g.incomplete("a", "a.gap");
     assert_eq!(g.open("d"), "d=a");
     g.choose("d", "a");
     assert_eq!(g.open("d"), "always", "choosing it doesn't specify it");
-    g.commit(close_gap::<PartOf>(gap, a));
+    let (a, gap) = (g.id("a"), g.id("a.gap"));
+    g.commit(close_gap(gap, a, PART_OF));
     assert_eq!(g.open("d"), "never");
 }
 
@@ -638,9 +681,10 @@ fn shared_work_survives_any_path_that_still_wants_it() {
     assert_eq!(g.need("static"), "never");
     // Only board left: it's forced in every remaining world, though nobody has chosen it.
     assert!(g.need_of("detector").is_always());
-    assert_eq!(g.g().get::<Decision>(g.id("calib")).unwrap().unwrap().chosen, None);
+    assert_eq!(g.g().get::<Chosen>(g.id("calib")).unwrap(), None);
     // And it all reverses.
-    g.option("cad", "calib");
+    let (cad, calib) = (g.id("cad"), g.id("calib"));
+    g.commit(vec![Op::Set { on: On::Edge { from: cad, to: calib }, cell: RuledOut::NAME.to_string(), to: None }]);
     assert_eq!(g.need("static"), "calib=cad");
 }
 
@@ -662,7 +706,7 @@ fn dropping_is_explicit_and_reversible() {
     assert_eq!(g.notices(), vec![("dropped_part_of_live_work".to_string(), "b".to_string())], "so that isn't silent");
     assert_eq!(g.g().get::<Done>(g.id("b")).unwrap().unwrap().0.0, Space::global().pure(None), "dropped is neither done nor owed");
     let b = g.id("b");
-    g.commit(vec![Op::remove::<Dropped>(b)]);
+    g.commit(vec![clear(b, Dropped::NAME)]);
     assert_eq!(g.open("phase"), "always");
     assert_eq!(g.notices(), vec![]);
 }
@@ -769,7 +813,7 @@ fn a_past_state_derives_what_it_derived_then() {
 #[test]
 fn what_if_and_commit_share_one_code_path() {
     let mut g = calibration();
-    let saved = g.g().save().unwrap();
+    let saved = g.g().save();
     let events = g.log.events().len();
     let (calib, cad, board) = (g.id("calib"), g.id("cad"), g.id("board"));
 
@@ -779,7 +823,7 @@ fn what_if_and_commit_share_one_code_path() {
     let need = |h: &Graph, n: &str| h.get::<Need>(g.id(n)).unwrap().unwrap().0;
     assert!(need(&if_cad, "export").is_always() && need(&if_cad, "detector").is_never());
     assert!(need(&if_board, "detector").is_always() && need(&if_board, "export").is_never());
-    assert_eq!(g.g().save().unwrap(), saved, "previewing writes nothing");
+    assert_eq!(g.g().save(), saved, "previewing writes nothing");
     assert_eq!(g.log.events().len(), events, "and logs nothing");
 
     // What a confirm step would show is a comparison of two derivations.
@@ -794,7 +838,7 @@ fn what_if_and_commit_share_one_code_path() {
     assert_eq!(ids.iter().map(|e| g.g().get::<Actionable>(*e).unwrap()).collect::<Vec<_>>(), preview);
 
     // An impossible hypothetical is refused the same way a real change would be.
-    let Err(refused) = g.log.what_if(&[Op::set(calib, Decision { chosen: Some(imu) })]) else { panic!("it isn't one of its options") };
+    let Err(refused) = g.log.what_if(&[choose(calib, imu)]) else { panic!("it isn't one of its options") };
     assert_eq!(refused[0].rule, "chosen_must_be_a_live_option");
 }
 
@@ -847,13 +891,15 @@ fn pressure_only_applies_to_an_open_decision() {
 #[test]
 fn a_loop_from_a_hand_edit_is_reported_and_the_rest_still_works() {
     let mut reg = Registry::new();
-    plan::install(&mut reg);
+    install(&mut reg);
     let reg = Arc::new(reg);
     let mut plain = Graph::with_registry(reg.clone());
     let (a, b, c) = (plain.spawn(), plain.spawn(), plain.spawn());
-    plain.set(c, Task {}).link(a, b, PartOf).link(b, a, PartOf);
+    plain.add(c, TASK);
+    plain.link(a, b, PART_OF);
+    plain.link(b, a, PART_OF);
     let mut log = Log::new(reg);
-    let broken = log.reconcile(&plain.save().unwrap(), "hand").unwrap();
+    let broken = log.reconcile(&plain.save(), "hand").unwrap();
     assert!(broken.iter().any(|v| v.rule == "no_deadlock"), "{broken:?}");
     assert!(matches!(log.graph().get::<Need>(a), Err(Error::Cycle(_))), "reported in the cell");
     assert!(log.graph().get::<Need>(c).unwrap().unwrap().0.is_always(), "and the rest of the graph is fine");
@@ -870,9 +916,9 @@ fn a_hand_edit_choosing_a_ruled_out_option_lands_on_nothing() {
     assert_eq!(g.finished("d"), "always");
 
     let (a, d) = (g.id("a"), g.id("d"));
-    let mut files = g.g().save().unwrap();
+    let mut files = g.g().save();
     let link = files.nodes.iter_mut().find(|n| n.id == a).unwrap().links.iter_mut().find(|l| l.to == d).unwrap();
-    link.components.insert(Alternative::NAME.to_string(), json!({ "ruled_out": {} }));
+    link.cells.insert(RuledOut::NAME.to_string(), json!({}));
     let broken = g.log.reconcile(&files, "hand").unwrap();
     assert_eq!(broken[0].rule, "chosen_must_be_a_live_option");
 
@@ -881,14 +927,16 @@ fn a_hand_edit_choosing_a_ruled_out_option_lands_on_nothing() {
     assert_eq!(g.open("d"), "always", "and its finished work doesn't complete the decision");
 }
 
+/// What `done` says is written by hand here, so it's the value that's malformed now, where it was
+/// the task component before.
 #[test]
 fn a_malformed_value_is_an_error_in_what_reads_it_not_everywhere() {
     let mut g = estimated();
     let imu = g.id("imu");
-    let mut files = g.g().save().unwrap();
-    files.nodes.iter_mut().find(|n| n.id == imu).unwrap().components.insert(Task::NAME.to_string(), json!("soon"));
+    let mut files = g.g().save();
+    files.nodes.iter_mut().find(|n| n.id == imu).unwrap().cells.insert(Done::NAME.to_string(), json!("soon"));
     let broken = g.log.reconcile(&files, "hand").unwrap();
-    assert_eq!(broken[0].rule, "malformed_component");
+    assert_eq!(broken[0].rule, "malformed_cell");
     assert!(matches!(g.g().get::<Actionable>(imu), Err(Error::Malformed { .. })));
     assert!(g.need_of("static").holds_among_known(), "need doesn't read it");
     assert_eq!(g.actionable("export").unwrap(), "calib=cad", "and other work carries on");
@@ -897,103 +945,88 @@ fn a_malformed_value_is_an_error_in_what_reads_it_not_everywhere() {
 // ---------- plugins: new uses without touching the planning system ----------
 
 /// A use the system knows nothing about: which work is exposed to a risk that's still open.
-#[component]
-struct Threatens;
+const THREATENS: &str = "threatens";
+const EXPOSURE: &str = "exposure";
 
-#[component]
+#[cell]
 struct Exposed(Bool);
 
-#[rule("test/exposed", incoming(Threatens))]
-struct ExposedRule;
-
-impl Compute for ExposedRule {
-    type Output = Exposed;
-    fn compute(&self, cx: &Cx) -> Result<Exposed, Error> {
-        let mut any_open = false;
-        for risk in cx.sources::<Threatens>()? {
-            any_open |= !cx.get::<Done>(risk)?.is_some_and(|d| d.finished().is_always()) && !cx.get::<Dropped>(risk)?.is_some_and(|d| d.0.0.holds(|v| *v == Some(true)).is_always());
-        }
-        Ok(Exposed(if any_open { cx.own_value::<Need>()?.0 } else { Space::global().never() }))
+fn exposed(cx: &Cx) -> Cell<Exposed> {
+    let mut any_open = false;
+    for risk in cx.sources(THREATENS) {
+        any_open |= !cx.get::<Done>(risk)?.is_some_and(|d| d.finished().is_always()) && !cx.get::<Dropped>(risk)?.is_some_and(|d| d.0.0.holds(|v| *v == Some(true)).is_always());
     }
+    Ok(Some(Exposed(if any_open { cx.own_value::<Need>()?.0 } else { Space::global().never() })))
 }
 
 #[test]
-fn a_new_use_is_a_new_rule_and_a_new_component() {
+fn a_new_use_is_a_new_component_with_a_cell_of_its_own() {
     let mut g = G::with(|reg| {
-        plan::install(reg);
-        reg.set_default(ExposedRule);
+        install(reg);
+        reg.component(EXPOSURE, "Threatened by a risk.").requires(PART);
+        reg.cell::<Exposed>(EXPOSURE, "The worlds where an open risk threatens this.").builtin(exposed);
+        reg.edge(THREATENS, "Threatens that.").target_has(EXPOSURE);
     });
     for o in ["cad", "free"] {
         g.node(o);
     }
     g.decision("calib").option("cad", "calib").option("free", "calib");
     g.task("search").part_of("search", "free");
-    let (risk, search) = (g.e("diverges"), g.id("search"));
-    g.commit(vec![Op::set(risk, Risk), Op::link(risk, search, Threatens)]);
+    g.add("diverges", RISK).link("diverges", "search", THREATENS);
+    let search = g.id("search");
     let exposed = g.g().get::<Exposed>(search).unwrap().unwrap().0;
     assert_eq!(g.show(&exposed), "calib=free", "only exposed if you take the option that needs it");
     assert!(g.g().reads_of(search, Exposed::NAME).contains(&Dep::Cell((search, Need::NAME.to_string()))), "nothing declared that it reads need: the engine saw it");
     assert_eq!(g.need("search"), "calib=free", "and the new components change nothing the system computes");
 }
 
+/// The workspace's own cells, and edges the plan doesn't read, are kept as given and change nothing.
 #[test]
-fn a_component_this_system_does_not_know_is_kept_and_ignored() {
+fn what_this_system_does_not_read_is_kept_and_ignored() {
     let mut g = estimated();
     let (imu, search) = (g.id("imu"), g.id("search"));
     let before = (g.need("static"), g.open("calib"), g.blocked("search"));
-    g.commit(vec![Op::set_runtime(imu, "review", json!({ "by": "ana", "pages": 12 })), Op::link_runtime(imu, search, Runtime::new("informs", json!({ "strength": 0.5 })))]);
-    assert_eq!(g.g().get_runtime(imu, "review").unwrap().unwrap().value["by"], "ana", "stored as given");
+    g.commit(vec![Op::set_value(imu, "review", json!({ "by": "ana", "pages": 12 })), Op::link(imu, search, "relates"), Op::Set { on: On::Edge { from: imu, to: search }, cell: "strength".to_string(), to: Some(Stored::Value(json!(0.5))) }]);
+    assert_eq!(g.g().get_value(imu, "review").unwrap().unwrap()["by"], "ana", "stored as given");
+    assert_eq!(g.g().get_value(Entity::edge(imu, search), "strength").unwrap(), Some(json!(0.5)));
     assert_eq!((g.need("static"), g.open("calib"), g.blocked("search")), before);
 }
 
+/// Work is what's owed, so a plugin's component is owed when it requires work, and only then.
 #[test]
 fn a_plugin_can_add_an_obligation() {
-    let doc = |config: Option<Config>| {
-        let mut g = G::with(|reg| plan::install_with(reg, config.unwrap_or_default()));
-        let (d, n) = (g.e("doc"), g.e("note"));
-        g.commit(vec![Op::set_runtime(d, "review", json!({})), Op::set(n, Name("note".into()))]);
-        (g.open("doc"), g.open("note"))
+    let doc = |owed: bool| {
+        let mut g = G::with(|reg| {
+            install(reg);
+            let review = reg.component("review", "Something to read over.");
+            if owed {
+                review.requires(WORK);
+            }
+        });
+        g.add("doc", "review").node("note");
+        let get = |n: &str| g.g().get::<Done>(g.id(n)).unwrap().map(|d| g.show(&d.open()));
+        (get("doc"), get("note"))
     };
-    assert_eq!(doc(None), ("never".to_string(), "never".to_string()), "undeclared, it means nothing");
-    let mut config = Config::default();
-    config.obligations.push("review".to_string());
-    assert_eq!(doc(Some(config)), ("always".to_string(), "never".to_string()), "declared as work, it has to be finished");
-}
-
-#[test]
-fn a_plugin_can_add_to_scope() {
-    let scope = |config: Config| {
-        let mut g = G::with(|reg| plan::install_with(reg, config));
-        let (idea, thought) = (g.e("idea"), g.e("thought"));
-        g.commit(vec![Op::set(idea, Name("idea".into())), Op::set(thought, Name("thought".into())), Op::link_runtime(thought, idea, Runtime::new("annotates", json!({})))]);
-        g.scope("thought")
-    };
-    assert_eq!(scope(Config::default()), None);
-    let mut config = Config::default();
-    config.scoping.push("annotates".to_string());
-    assert_eq!(scope(config), Some("idea".to_string()));
+    assert_eq!(doc(false), (None, None), "not declared as work, it's not in the plan at all");
+    assert_eq!(doc(true), (Some("always".to_string()), None), "declared as work, it has to be finished");
 }
 
 /// Remaining effort, per world, with shared work counted once.
-#[component]
+#[cell]
 struct Remaining(Cond<f64>);
 
-#[rule("test/remaining", scans(Task))]
-struct RemainingRule;
+const EFFORT: &str = "effort";
 
-impl Compute for RemainingRule {
-    type Output = Remaining;
-    fn compute(&self, cx: &Cx) -> Result<Remaining, Error> {
-        let space = Space::global();
-        let mut total = space.pure(0.0);
-        for (t, _) in cx.with::<Task>()? {
-            let open = &cx.value::<Need>(t)?.0 & &cx.value::<Done>(t)?.open();
-            let days = cx.get::<Estimate>(t)?.map_or_else(|| space.pure(Some(0.0)), |e| e.0.0).map(|d| d.unwrap_or(0.0));
-            let term = Cond::when(&open, &days, &space.pure(0.0));
-            total = total.zip(&term, |a, b| a + b);
-        }
-        Ok(Remaining(total))
+fn remaining(cx: &Cx) -> Cell<Remaining> {
+    let space = Space::global();
+    let mut total = space.pure(0.0);
+    for t in cx.scan(TASK) {
+        let open = &cx.value::<Need>(t)?.0 & &cx.value::<Done>(t)?.open();
+        let days = cx.get::<Estimate>(t)?.map_or_else(|| space.pure(Some(0.0)), |e| e.0.0).map(|d| d.unwrap_or(0.0));
+        let term = Cond::when(&open, &days, &space.pure(0.0));
+        total = total.zip(&term, |a, b| a + b);
     }
+    Ok(Some(Remaining(total)))
 }
 
 /// Two approaches with shared work, and a gap, with estimates.
@@ -1004,8 +1037,9 @@ fn estimated_with(install: impl FnOnce(&mut Registry)) -> G {
         g.node(o).option(o, "calib");
     }
     for (t, estimate, parents) in [("imu", 1.0, vec!["calib"]), ("static", 2.0, vec!["cad", "free"]), ("export", 3.0, vec!["cad"]), ("search", 5.0, vec!["free"])] {
-        let e = g.e(t);
-        g.commit(vec![Op::set(e, Task {}), Op::set(e, Estimate::days(estimate))]);
+        g.task(t);
+        let e = g.id(t);
+        g.commit(vec![Op::set(e, Estimate::days(estimate))]);
         for p in parents {
             g.part_of(t, p);
         }
@@ -1014,17 +1048,18 @@ fn estimated_with(install: impl FnOnce(&mut Registry)) -> G {
 }
 
 fn estimated() -> G {
-    estimated_with(plan::install)
+    estimated_with(install)
 }
 
 #[test]
 fn numbers_differ_exactly_between_worlds() {
     let mut g = estimated_with(|reg| {
-        plan::install(reg);
-        reg.rule::<RemainingRule>();
+        install(reg);
+        reg.component(EFFORT, "What's left to do beneath it.");
+        reg.cell::<Remaining>(EFFORT, "Days of work left, in each world.").builtin(remaining);
     });
+    g.add("calib", EFFORT);
     let calib = g.id("calib");
-    g.commit(vec![Op::set::<Remaining>(calib, RemainingRule)]);
     let remaining = |g: &G| g.g().get::<Remaining>(calib).unwrap().unwrap().0;
     let c = remaining(&g);
     let world = |o: &str| BTreeMap::from([(calib.to_string(), g.ids[o].to_string())]);
@@ -1035,28 +1070,18 @@ fn numbers_differ_exactly_between_worlds() {
     assert_eq!(remaining(&g), Space::global().pure(8.0), "once decided, one value");
 }
 
-/// Standing in for a TypeScript function: only strings and JSON cross this line.
+/// Standing in for a TypeScript function: only strings and JSON cross this line. A cell with no
+/// Rust type, worked out by a formula, reads the plan's cells the same way.
 #[test]
-fn a_rule_with_no_rust_types_can_read_and_combine_these() {
-    let mut g = estimated_with(|reg| {
-        plan::install(reg);
-        let compute = |_: &Value, cx: &Cx| {
-            let Some(need) = cx.get_runtime(cx.id(), "need")? else { return Ok(None) };
-            let pages = cx.get_runtime(cx.id(), "review")?.and_then(|r| r.value["pages"].as_i64()).unwrap_or(0);
-            let need: Bool = serde_json::from_value(need.value).map_err(|e| Error::Failed(e.to_string()))?;
-            let space = Space::global();
-            let value = Cond::when(&need, &space.pure(pages), &space.pure(0));
-            Ok(Some(serde_json::to_value(value).expect("values serialise")))
-        };
-        reg.runtime_rule(RuntimeRule { key: "test/review_pages".into(), output: "review_pages".into(), inputs: Default::default(), compute: Arc::new(compute) });
-    });
+fn a_cell_with_no_rust_type_can_read_and_combine_these() {
+    let mut g = estimated();
     let export = g.id("export");
-    g.commit(vec![Op::set_runtime(export, "review", json!({ "pages": 12 })), Op::set_rule(export, "review_pages", "test/review_pages", Value::Null)]);
-    let value = g.g().get_runtime(export, "review_pages").unwrap().unwrap().value;
-    let c: Cond<i64> = serde_json::from_value(value).unwrap();
-    let at = |o: &str| *c.at(&BTreeMap::from([(g.id("calib").to_string(), g.ids[o].to_string())]));
-    assert_eq!((at("cad"), at("free")), (12, 0));
-    assert!(g.g().reads_of(export, "review_pages").contains(&Dep::Cell((export, "need".to_string()))), "reads are tracked the same way");
+    g.commit(vec![Op::set_value(export, "pages", json!(12)), Op::set_formula(export, "review_pages", "if(self.need, self.pages, 0)")]);
+    let value = g.g().get_value(export, "review_pages").unwrap().unwrap();
+    let c: Worldly<Val> = serde_json::from_value(value).unwrap();
+    let at = |o: &str| c.0.at(&BTreeMap::from([(g.id("calib").to_string(), g.ids[o].to_string())])).clone();
+    assert_eq!((at("cad"), at("free")), (Val::Num(12.0), Val::Num(0.0)));
+    assert!(g.g().reads_of(export, "review_pages").contains(&Dep::Cell((export, Need::NAME.to_string()))), "reads are tracked the same way");
 }
 
 // ---------- scope ----------
@@ -1095,7 +1120,7 @@ fn collapsing_folds_scopes_and_redraws_links_to_what_is_visible() {
     let top = full.collapse(g.g(), &BTreeSet::new());
     assert_eq!(g.entity_names(top.nodes.keys().copied()), vec!["calib", "other"]);
     assert_eq!(top.nodes[&g.id("calib")].hidden, 7, "cad, free, the gap and four tasks");
-    assert!(top.edges[&(g.id("other"), g.id("calib"))].kinds.contains(DependsOn::NAME), "a link into the fold points at the fold");
+    assert!(top.edges[&(g.id("other"), g.id("calib"))].kinds.contains(DEPENDS_ON), "a link into the fold points at the fold");
 
     let one = full.collapse(g.g(), &BTreeSet::from([g.id("calib")]));
     assert!(one.nodes.contains_key(&g.id("cad")) && one.nodes.contains_key(&g.id("static")) && !one.nodes.contains_key(&g.id("export")));
@@ -1129,16 +1154,21 @@ fn transforms_compose_including_with_what_decisions_rule_out() {
 #[test]
 fn it_scales_with_structure_not_with_the_number_of_worlds() {
     let mut g = G::new();
-    let root = g.e("root");
-    let mut ops = vec![Op::set(root, Name("root".into()))];
-    let task = Task {};
+    let mut ops = g.make("root");
+    let root = g.id("root");
     for i in 0..40 {
-        let (dec, a, b) = (g.e(&format!("d{i}")), g.e(&format!("d{i}a")), g.e(&format!("d{i}b")));
-        ops.extend([Op::set(dec, Decision::default()), Op::set(a, task.clone()), Op::set(b, task.clone())]);
-        ops.extend([Op::link(dec, root, PartOf), Op::link(a, dec, Alternative::default()), Op::link(b, dec, Alternative::default())]);
+        let (dn, an, bn) = (format!("d{i}"), format!("d{i}a"), format!("d{i}b"));
+        for n in [&dn, &an, &bn] {
+            ops.extend(g.make(n));
+        }
+        let (dec, a, b) = (g.id(&dn), g.id(&an), g.id(&bn));
+        ops.extend([Op::add(dec, DECISION), Op::add(a, TASK), Op::add(b, TASK)]);
+        ops.extend([Op::link(dec, root, PART_OF), Op::link(a, dec, ALTERNATIVE), Op::link(b, dec, ALTERNATIVE)]);
         for j in 0..20 {
-            let t = g.e(&format!("t{i}_{j}"));
-            ops.extend([Op::set(t, task.clone()), Op::link(t, a, PartOf)]);
+            let tn = format!("t{i}_{j}");
+            ops.extend(g.make(&tn));
+            let t = g.id(&tn);
+            ops.extend([Op::add(t, TASK), Op::link(t, a, PART_OF)]);
         }
     }
     g.commit(ops);
@@ -1149,12 +1179,13 @@ fn it_scales_with_structure_not_with_the_number_of_worlds() {
 #[test]
 fn a_long_chain_computes() {
     let mut g = G::new();
-    let mut ops = Vec::new();
-    let mut last = g.e("n0");
-    ops.push(Op::set(last, Name("top".into())));
+    let mut ops = g.make("n0");
+    let mut last = g.id("n0");
     for i in 1..20_000 {
-        let next = g.e(&format!("n{i}"));
-        ops.extend([Op::set(next, Name(i.to_string())), Op::link(next, last, PartOf)]);
+        let name = format!("n{i}");
+        ops.extend(g.make(&name));
+        let next = g.id(&name);
+        ops.push(Op::link(next, last, PART_OF));
         last = next;
     }
     g.commit(ops);

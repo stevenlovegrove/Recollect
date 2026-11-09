@@ -1,50 +1,76 @@
-//! Identity and component forms, using the core directly: entities are handles, a name is just
-//! a component, and JSON under a name is what a component really is. A Rust type is a shortcut.
+//! Identity and cell forms, using the core directly: entities are handles, a name is just a cell,
+//! and JSON under a name is what a cell really is. A Rust type is a shortcut.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use recollect_graph::worlds::{Bool, Cond, Space};
-use recollect_graph::{Entity, Error, Graph, Name, Rule, Runtime, component, rule};
+use recollect_graph::{Cell, Computed, Cx, Entity, Error, Graph, Name, Registry, cell};
 use serde_json::{Value, json};
 
 #[derive(Copy)]
-#[component]
+#[cell]
 struct Amount(f64);
 
-#[component]
-struct Addend;
+const ADDEND: &str = "addend";
 
-fn sum() -> Rule<Amount> {
-    rule("sum").incoming::<Addend>().compute(|cx| {
-        let mut total = 0.0;
-        for from in cx.sources::<Addend>()? {
-            total += cx.get::<Amount>(from)?.map_or(0.0, |a| a.0);
-        }
-        Ok(Amount(total))
-    })
+fn sum(cx: &Cx) -> Cell<Amount> {
+    let mut total = 0.0;
+    for from in cx.sources(ADDEND) {
+        total += cx.get::<Amount>(from)?.map_or(0.0, |a| a.0);
+    }
+    Ok(Some(Amount(total)))
+}
+
+/// Only strings and JSON cross this line, standing in for a TypeScript function.
+fn runtime_sum(cx: &Cx) -> Cell<Value> {
+    let mut total = 0.0;
+    for (from, _) in cx.incoming(ADDEND) {
+        total += cx.get_value(from, "amount")?.and_then(|v| v.as_f64()).unwrap_or(0.0);
+    }
+    Ok(Some(json!(total)))
+}
+
+fn count(cx: &Cx) -> Cell<Value> {
+    Ok(Some(json!(cx.outgoing("ships_with").len())))
+}
+
+/// A graph whose formulas are names of functions here: `sum` gives a typed cell, and the others JSON.
+fn graph() -> Graph {
+    let mut reg = Registry::new();
+    reg.free_formulas(Arc::new(|text| match text {
+        "sum" => Ok(Computed::typed("sum", sum)),
+        "runtime_sum" => Ok(Computed::json("runtime_sum", runtime_sum)),
+        "count" => Ok(Computed::json("count", count)),
+        _ => Err(format!("there's no function called {text}")),
+    }));
+    Graph::with_registry(Arc::new(reg))
 }
 
 #[test]
 fn a_sheet_with_edges_built_from_handles() {
-    let mut g = Graph::new();
+    let mut g = graph();
     let (a, b, total) = (g.spawn(), g.spawn(), g.spawn());
     g.set(a, Amount(1.0)).set(b, Amount(2.0));
-    g.set(total, sum());
+    g.set_formula(total, "amount", "sum");
     assert_eq!(g.get::<Amount>(total).unwrap(), Some(Amount(0.0)), "no edges yet, so nothing to add");
-    g.link(a, total, Addend).link(b, total, Addend);
+    g.link(a, total, ADDEND);
+    g.link(b, total, ADDEND);
     assert_eq!(g.get::<Amount>(total).unwrap(), Some(Amount(3.0)));
 }
 
 #[test]
-fn a_chain_records_its_rules_and_an_update_propagates_along_it() {
-    let mut g = Graph::new();
+fn a_chain_records_its_formulas_and_an_update_propagates_along_it() {
+    let mut g = graph();
     let (a, b, c, d) = (g.spawn(), g.spawn(), g.spawn(), g.spawn());
     let name = move |e: Entity| ["a", "b", "c", "d"][[a, b, c, d].iter().position(|x| *x == e).unwrap()];
 
-    // a → b → c → d. Recording rules and edges runs nothing.
+    // a → b → c → d. Recording formulas and edges runs nothing.
     g.set(a, Amount(1.0));
-    g.set(b, sum()).set(c, sum()).set(d, sum());
-    g.link(a, b, Addend).link(b, c, Addend).link(c, d, Addend);
+    g.set_formula(b, "amount", "sum").set_formula(c, "amount", "sum").set_formula(d, "amount", "sum");
+    g.link(a, b, ADDEND);
+    g.link(b, c, ADDEND);
+    g.link(c, d, ADDEND);
     assert!(g.take_ran().is_empty(), "nothing has been computed yet");
 
     assert_eq!(g.get::<Amount>(d).unwrap(), Some(Amount(1.0)));
@@ -73,11 +99,13 @@ fn a_chain_records_its_rules_and_an_update_propagates_along_it() {
 
 #[test]
 fn a_name_is_not_an_identity() {
-    let mut g = Graph::new();
+    let mut g = graph();
     let (a, b, total) = (g.spawn(), g.spawn(), g.spawn());
     g.set(a, Name("Widgets".into())).set(b, Name("Widgets".into()));
     g.set(a, Amount(1.0)).set(b, Amount(2.0));
-    g.set(total, sum()).link(a, total, Addend).link(b, total, Addend);
+    g.set_formula(total, "amount", "sum");
+    g.link(a, total, ADDEND);
+    g.link(b, total, ADDEND);
     assert_eq!(g.get::<Amount>(total).unwrap(), Some(Amount(3.0)), "two nodes can share a name");
     g.take_ran();
 
@@ -99,6 +127,17 @@ fn handles_sort_in_creation_order_and_round_trip() {
 }
 
 #[test]
+fn an_edges_handle_comes_from_its_ends() {
+    let mut g = Graph::new();
+    let (a, b) = (g.spawn(), g.spawn());
+    let edge = g.link(a, b, ADDEND);
+    assert_eq!(edge, Entity::edge(a, b), "the same whenever those two are linked");
+    assert_ne!(edge, Entity::edge(b, a), "and the other way is another edge");
+    assert_eq!(g.ends(edge), Some((a, b)));
+    assert!(g.is_edge(edge) && !g.contains(edge), "an edge isn't a node");
+}
+
+#[test]
 fn a_node_with_an_existing_identity_can_be_adopted() {
     let e = Entity::new();
     let mut g = Graph::new();
@@ -116,49 +155,42 @@ fn a_handle_from_nowhere_is_a_mistake() {
     g.set(Entity::new(), Amount(1.0));
 }
 
-// ---------- runtime components: a typed lookup is just a shortcut ----------
+// ---------- cells by name: a typed lookup is just a shortcut ----------
 
 #[test]
-fn typed_and_runtime_are_two_views_of_the_same_cell() {
+fn typed_and_by_name_are_two_views_of_the_same_cell() {
     let mut g = Graph::new();
     let e = g.spawn();
 
     // Stored typed, read by name.
     g.set(e, Amount(2.5));
-    assert_eq!(g.get_runtime(e, "amount").unwrap(), Some(Runtime::new("amount", json!(2.5))));
+    assert_eq!(g.get_value(e, "amount").unwrap(), Some(json!(2.5)));
 
     // Stored by name, read typed: nothing distinguishes it from having been typed.
-    g.set_runtime(e, "amount", json!(7.0));
+    g.set_value(e, "amount", json!(7.0));
     assert_eq!(g.get::<Amount>(e).unwrap(), Some(Amount(7.0)));
     g.take_ran();
     g.set(e, Amount(7.0));
-    assert_eq!(g.get_runtime(e, "amount").unwrap().unwrap().value, json!(7.0), "the same value, whichever way it arrived");
+    assert_eq!(g.get_value(e, "amount").unwrap(), Some(json!(7.0)), "the same value, whichever way it arrived");
 }
 
 #[test]
-fn a_rule_with_no_rust_type_is_readable_typed_and_the_other_way_round() {
-    let mut g = Graph::new();
+fn a_formula_with_no_rust_type_is_readable_typed_and_the_other_way_round() {
+    let mut g = graph();
     let (a, b, c) = (g.spawn(), g.spawn(), g.spawn());
     g.set(a, Amount(4.0)).set(b, Amount(5.0));
-    g.set_runtime(a, "supplier", json!({ "days": 12 }));
-    g.link(a, c, Addend).link(b, c, Addend);
+    g.set_value(a, "supplier", json!({ "days": 12 }));
+    g.link(a, c, ADDEND);
+    g.link(b, c, ADDEND);
 
-    // Only strings and JSON cross this line, standing in for a TypeScript function.
-    let runtime_sum = rule("runtime_sum").incoming_named("addend").compute::<Value>(|cx| {
-        let mut total = 0.0;
-        for (from, _) in cx.incoming_runtime("addend")? {
-            total += cx.get_runtime(from, "amount")?.and_then(|r| r.value.as_f64()).unwrap_or(0.0);
-        }
-        Ok(json!(total))
-    });
-    g.set_runtime(c, "amount", runtime_sum);
-    assert_eq!(g.get::<Amount>(c).unwrap(), Some(Amount(9.0)), "a typed rule can read this as its own type");
+    g.set_formula(c, "amount", "runtime_sum");
+    assert_eq!(g.get::<Amount>(c).unwrap(), Some(Amount(9.0)), "a typed reader can read this as its own type");
 
     let typed_reader = g.spawn();
-    g.link(c, typed_reader, Addend);
-    g.set(typed_reader, sum());
+    g.link(c, typed_reader, ADDEND);
+    g.set_formula(typed_reader, "amount", "sum");
     assert_eq!(g.get::<Amount>(typed_reader).unwrap(), Some(Amount(9.0)));
-    assert_eq!(g.get_runtime(typed_reader, "amount").unwrap().unwrap().value, json!(9.0), "and a runtime one can read a typed rule");
+    assert_eq!(g.get_value(typed_reader, "amount").unwrap(), Some(json!(9.0)), "and one by name can read a typed one");
 
     // Memoised and invalidated like anything else.
     g.take_ran();
@@ -167,41 +199,33 @@ fn a_rule_with_no_rust_type_is_readable_typed_and_the_other_way_round() {
     g.set(a, Amount(5.0));
     assert_eq!(g.get::<Amount>(typed_reader).unwrap(), Some(Amount(10.0)));
 
-    // Components nothing has a type for are kept, and their shape is nobody else's business.
-    assert_eq!(g.get_runtime(a, "supplier").unwrap().unwrap().value["days"], 12);
+    // Cells nothing has a type for are kept, and their shape is nobody else's business.
+    assert_eq!(g.get_value(a, "supplier").unwrap().unwrap()["days"], 12);
 }
 
 #[test]
-fn a_runtime_value_of_the_wrong_shape_is_an_error_in_that_cell() {
+fn a_value_of_the_wrong_shape_is_an_error_in_that_cell() {
     let mut g = Graph::new();
     let e = g.spawn();
-    g.set_runtime(e, "amount", json!("not a number"));
+    g.set_value(e, "amount", json!("not a number"));
     assert!(matches!(g.get::<Amount>(e), Err(Error::Malformed { .. })));
-    assert_eq!(g.get_runtime(e, "amount").unwrap().unwrap().value, json!("not a number"), "the data itself is untouched");
+    assert_eq!(g.get_value(e, "amount").unwrap(), Some(json!("not a number")), "the data itself is untouched");
 }
 
 #[test]
-fn runtime_links_are_links() {
-    let mut g = Graph::new();
+fn edges_by_name_are_edges() {
+    let mut g = graph();
     let (a, b) = (g.spawn(), g.spawn());
-    g.link_runtime(a, b, Runtime::new("ships_with", json!({ "crate": 3 })));
-    let count = rule("count").outgoing_named("ships_with").compute::<Value>(|cx| Ok(json!(cx.outgoing_runtime("ships_with")?.len())));
-    g.set_runtime(a, "n", count);
-    assert_eq!(g.get_runtime(a, "n").unwrap().unwrap().value, json!(1));
+    let edge = g.link(a, b, "ships_with");
+    g.set_value(edge, "crate", json!(3));
+    g.set_formula(a, "n", "count");
+    assert_eq!(g.get_value(a, "n").unwrap(), Some(json!(1)));
+    assert_eq!(g.get_value(edge, "crate").unwrap(), Some(json!(3)), "and an edge holds cells as a node does");
 }
 
-#[test]
-fn a_runtime_rule_is_held_to_its_declared_links_too() {
-    let mut g = Graph::new();
-    let a = g.spawn();
-    let sneaky = rule("sneaky").compute::<Value>(|cx| Ok(json!(cx.incoming_runtime("addend")?.len())));
-    g.set_runtime(a, "n", sneaky);
-    assert!(matches!(g.get_runtime(a, "n"), Err(Error::Undeclared { .. })));
-}
+// ---------- every cell is JSON, including values that differ between worlds ----------
 
-// ---------- every component is JSON, including values that differ between worlds ----------
-
-#[component]
+#[cell]
 struct Budget(Cond<f64>);
 
 fn round_trip<T: serde::Serialize + serde::de::DeserializeOwned>(v: &T) -> T {
@@ -228,25 +252,29 @@ fn world_values_survive_json_exactly() {
 }
 
 #[test]
-fn a_world_value_can_be_read_by_name_and_returned_by_a_runtime_rule() {
-    let mut g = Graph::new();
-    let (typed, runtime) = (g.spawn(), g.spawn());
+fn a_world_value_can_be_read_by_name_and_returned_by_a_formula_with_no_rust_type() {
     let v = Space::global().uniform("json_c", &["cheap", "dear"]);
-    let (v2, v3) = (v.clone(), v.clone());
-    g.set(typed, rule("typed").compute(move |_| Ok(Budget(v2.value().map(|o| if o == "cheap" { 10.0 } else { 20.0 })))));
+    let mut reg = Registry::new();
+    reg.free_formulas(Arc::new(move |text| {
+        let v = v.clone();
+        match text {
+            "typed" => Ok(Computed::typed("typed", move |_| Ok(Some(Budget(v.value().map(|o| if o == "cheap" { 10.0 } else { 20.0 })))))),
+            // This gets the world value as JSON, and hands one back: no shared memory.
+            "produce" => Ok(Computed::json("produce", move |_| Ok(Some(serde_json::to_value(Budget(v.value().map(|o| if o == "cheap" { 1.0 } else { 2.0 }))).unwrap())))),
+            _ => Err(format!("there's no function called {text}")),
+        }
+    }));
+    let mut g = Graph::with_registry(Arc::new(reg));
+    let (typed, runtime) = (g.spawn(), g.spawn());
+    g.set_formula(typed, "budget", "typed");
+    g.set_formula(runtime, "budget", "produce");
 
-    // A runtime rule gets the world value as JSON, and hands one back: no shared memory.
-    let produce = rule("produce").compute::<Value>(move |_| {
-        Ok(serde_json::to_value(Budget(v3.value().map(|o| if o == "cheap" { 1.0 } else { 2.0 }))).unwrap())
-    });
-    g.set_runtime(runtime, "budget", produce);
-
-    let as_json = g.get_runtime(typed, "budget").unwrap().unwrap();
-    let decoded: Budget = as_json.decode().unwrap();
+    let as_json = g.get_value(typed, "budget").unwrap().unwrap();
+    let decoded: Budget = serde_json::from_value(as_json).unwrap();
     assert!(decoded == g.get::<Budget>(typed).unwrap().unwrap(), "JSON decodes to the very same value");
 
     let typed_view = g.get::<Budget>(runtime).unwrap().unwrap().0;
-    assert_eq!((typed_view.min(), typed_view.max()), (1.0, 2.0), "and a typed reader can use what a runtime rule returned");
+    assert_eq!((typed_view.min(), typed_view.max()), (1.0, 2.0), "and a typed reader can use what a JSON formula returned");
 }
 
 #[test]

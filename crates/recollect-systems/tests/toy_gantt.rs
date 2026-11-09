@@ -1,159 +1,139 @@
 //! Toy 2: scheduling. Part one is classic critical-path scheduling with no worlds at all, written
-//! here and sharing nothing with the schedule system, where the same links are followed forwards
-//! for dates and backwards for slack. Part two is the schedule system, holding decisions open, and
-//! part one is what checks it: fix a decision and the two must agree.
+//! here as a system of its own and sharing nothing with the schedule system, where the same links
+//! are followed forwards for dates and backwards for slack. Part two is the schedule system, holding
+//! decisions open, and part one is what checks it: fix a decision and the two must agree.
 
 use std::collections::BTreeMap;
 
 mod support;
 
 use recollect_graph::worlds::{Cond, Worldly};
-use recollect_graph::{Compute, Cx, Entity, Error, Registry, component, rule};
-use serde_json::json;
-use recollect_systems::formulas::EXPR;
-use recollect_systems::plan::{self, Alternative, Decision, Estimate, Need, Task, Unknown};
+use recollect_graph::{Cell, CellType, Cx, Entity, Error, Registry, cell};
+use recollect_systems::plan::{self, ALTERNATIVE, Chosen, DECISION, Estimate, Need, TASK, UNKNOWN};
 use recollect_systems::schedule::{self, Finish as WorldFinish, Slack as WorldSlack, Start as WorldStart};
 use support::N;
 
-// ---------- links and stored facts ----------
-
-#[component]
-struct DependsOn;
-
-#[component]
-struct PartOf;
-
-#[derive(Copy)]
-#[component]
-struct Duration(f64);
-
 // ---------- part one: a plain schedule ----------
 
+/// Every node is in the plain schedule.
+const GANTT: &str = "gantt";
+const DEPENDS_ON: &str = "depends_on";
+const PART_OF: &str = "part_of";
+
 #[derive(Copy)]
-#[component]
+#[cell]
+struct Duration(f64);
+
+#[derive(Copy)]
+#[cell]
 struct Start(f64);
 
 #[derive(Copy)]
-#[component]
+#[cell]
 struct Finish(f64);
 
 #[derive(Copy)]
-#[component]
+#[cell]
 struct LatestFinish(f64);
 
 #[derive(Copy)]
-#[component]
+#[cell]
 struct Slack(f64);
 
 /// After everything you depend on, and no earlier than whatever you're part of.
-#[rule("gantt/start", outgoing(DependsOn, PartOf))]
-struct StartRule;
-
-impl Compute for StartRule {
-    type Output = Start;
-    fn compute(&self, cx: &Cx) -> Result<Start, Error> {
-        let mut s = 0.0f64;
-        for dep in cx.targets::<DependsOn>()? {
-            s = s.max(cx.value::<Finish>(dep)?.0);
-        }
-        for parent in cx.targets::<PartOf>()? {
-            s = s.max(cx.value::<Start>(parent)?.0);
-        }
-        Ok(Start(s))
+fn start(cx: &Cx) -> Cell<Start> {
+    let mut s = 0.0f64;
+    for dep in cx.targets(DEPENDS_ON) {
+        s = s.max(cx.value::<Finish>(dep)?.0);
     }
+    for parent in cx.targets(PART_OF) {
+        s = s.max(cx.value::<Start>(parent)?.0);
+    }
+    Ok(Some(Start(s)))
 }
 
 /// A leaf takes its duration. A summary ends when its last part does.
-#[rule("gantt/finish", incoming(PartOf))]
-struct FinishRule;
-
-impl Compute for FinishRule {
-    type Output = Finish;
-    fn compute(&self, cx: &Cx) -> Result<Finish, Error> {
-        let s = cx.own_value::<Start>()?.0;
-        let parts = cx.incoming::<PartOf>()?;
-        if parts.is_empty() {
-            return Ok(Finish(s + cx.own::<Duration>()?.map_or(0.0, |d| d.0)));
-        }
-        let mut f = s;
-        for (p, _) in parts {
-            f = f.max(cx.value::<Finish>(p)?.0);
-        }
-        Ok(Finish(f))
+fn finish(cx: &Cx) -> Cell<Finish> {
+    let s = cx.own_value::<Start>()?.0;
+    let parts = cx.sources(PART_OF);
+    if parts.is_empty() {
+        return Ok(Some(Finish(s + cx.own::<Duration>()?.map_or(0.0, |d| d.0))));
     }
+    let mut f = s;
+    for p in parts {
+        f = f.max(cx.value::<Finish>(p)?.0);
+    }
+    Ok(Some(Finish(f)))
 }
 
 /// The same links, followed the other way.
-#[rule("gantt/latest_finish", incoming(DependsOn), scans(Duration))]
-struct LatestFinishRule;
-
-impl Compute for LatestFinishRule {
-    type Output = LatestFinish;
-    fn compute(&self, cx: &Cx) -> Result<LatestFinish, Error> {
-        let mut end = 0.0f64;
-        for (t, _) in cx.with::<Duration>()? {
+fn latest_finish(cx: &Cx) -> Cell<LatestFinish> {
+    let mut end = 0.0f64;
+    for t in cx.scan(GANTT) {
+        if cx.get::<Duration>(t)?.is_some() {
             end = end.max(cx.value::<Finish>(t)?.0);
         }
-        let mut latest = end;
-        for after in cx.sources::<DependsOn>()? {
-            let l = cx.value::<LatestFinish>(after)?.0;
-            let d = cx.get::<Duration>(after)?.map_or(0.0, |d| d.0);
-            latest = latest.min(l - d);
-        }
-        Ok(LatestFinish(latest))
     }
-}
-
-#[rule("gantt/slack")]
-struct SlackRule;
-
-impl Compute for SlackRule {
-    type Output = Slack;
-    fn compute(&self, cx: &Cx) -> Result<Slack, Error> {
-        Ok(Slack(cx.own_value::<LatestFinish>()?.0 - cx.own_value::<Finish>()?.0))
+    let mut latest = end;
+    for after in cx.sources(DEPENDS_ON) {
+        let l = cx.value::<LatestFinish>(after)?.0;
+        let d = cx.get::<Duration>(after)?.map_or(0.0, |d| d.0);
+        latest = latest.min(l - d);
     }
+    Ok(Some(LatestFinish(latest)))
 }
 
-fn plain_rules(reg: &mut Registry) {
-    reg.set_default(StartRule).set_default(FinishRule).set_default(LatestFinishRule).set_default(SlackRule);
+fn slack(cx: &Cx) -> Cell<Slack> {
+    Ok(Some(Slack(cx.own_value::<LatestFinish>()?.0 - cx.own_value::<Finish>()?.0)))
 }
 
-fn finish(g: &N, id: &str) -> f64 {
+fn plain_system(reg: &mut Registry) {
+    reg.component(GANTT, "A bar on a plain Gantt chart.").everywhere();
+    reg.cell::<Duration>(GANTT, "How long it takes.");
+    reg.cell::<Start>(GANTT, "When it starts.").builtin(start);
+    reg.cell::<Finish>(GANTT, "When it finishes.").builtin(finish);
+    reg.cell::<LatestFinish>(GANTT, "How late it could finish.").builtin(latest_finish);
+    reg.cell::<Slack>(GANTT, "How far it could slip.").builtin(slack);
+    reg.edge(DEPENDS_ON, "Waits for that.");
+    reg.edge(PART_OF, "Part of that.");
+}
+
+fn finish_of(g: &N, id: &str) -> f64 {
     g.get::<Finish>(id).unwrap().unwrap().0
 }
 
-fn slack(g: &N, id: &str) -> f64 {
+fn slack_of(g: &N, id: &str) -> f64 {
     g.get::<Slack>(id).unwrap().unwrap().0
 }
 
 /// A → {B, C} → D, with C the long way round.
 fn textbook() -> N {
-    let mut g = N::with(plain_rules);
+    let mut g = N::with(plain_system);
     for (t, d) in [("a", 3.0), ("b", 2.0), ("c", 4.0), ("d", 2.0)] {
         g.set(t, Duration(d));
     }
-    g.link("b", "a", DependsOn).link("c", "a", DependsOn).link("d", "b", DependsOn).link("d", "c", DependsOn);
+    g.link("b", "a", DEPENDS_ON).link("c", "a", DEPENDS_ON).link("d", "b", DEPENDS_ON).link("d", "c", DEPENDS_ON);
     g
 }
 
 #[test]
 fn critical_path_forward_and_backward() {
     let g = textbook();
-    assert_eq!(finish(&g, "d"), 9.0);
+    assert_eq!(finish_of(&g, "d"), 9.0);
     g.assert_round_trips();
-    assert_eq!(slack(&g, "b"), 2.0, "b could slip by 2");
+    assert_eq!(slack_of(&g, "b"), 2.0, "b could slip by 2");
     for t in ["a", "c", "d"] {
-        assert_eq!(slack(&g, t), 0.0, "{t} is on the critical path");
+        assert_eq!(slack_of(&g, t), 0.0, "{t} is on the critical path");
     }
 }
 
 #[test]
 fn slipping_a_task_with_slack_stops_where_it_stops_mattering() {
     let mut g = textbook();
-    finish(&g, "d");
+    finish_of(&g, "d");
     g.take_ran();
     g.set("b", Duration(3.0));
-    assert_eq!(finish(&g, "d"), 9.0);
+    assert_eq!(finish_of(&g, "d"), 9.0);
     let ran = g.ran_cells();
     assert!(ran.contains(&"finish(b)".to_string()) && ran.contains(&"start(d)".to_string()), "{ran:?}");
     assert!(!ran.contains(&"finish(d)".to_string()), "d's start is still 7, so its finish never reruns: {ran:?}");
@@ -162,45 +142,44 @@ fn slipping_a_task_with_slack_stops_where_it_stops_mattering() {
 #[test]
 fn summary_tasks_roll_up_from_leaves_and_pass_down_their_dependencies() {
     let mut g = textbook();
-    g.link("x", "phase", PartOf).link("y", "phase", PartOf).link("phase", "d", DependsOn);
+    g.link("x", "phase", PART_OF).link("y", "phase", PART_OF).link("phase", "d", DEPENDS_ON);
     g.set("x", Duration(1.0)).set("y", Duration(5.0));
-    assert_eq!(finish(&g, "phase"), 14.0, "starts after d at 9, and the longest part takes 5");
+    assert_eq!(finish_of(&g, "phase"), 14.0, "starts after d at 9, and the longest part takes 5");
     assert_eq!(g.get::<Start>("x").unwrap().unwrap().0, 9.0, "x inherits the phase's dependency");
 }
 
 #[test]
 fn a_dependency_on_your_own_parent_is_a_reported_cycle() {
     let mut g = textbook();
-    g.link("b", "phase", PartOf).link("phase", "x", PartOf).link("x", "b", DependsOn);
-    g.link("phase", "b", DependsOn);
+    g.link("b", "phase", PART_OF).link("phase", "x", PART_OF).link("x", "b", DEPENDS_ON);
+    g.link("phase", "b", DEPENDS_ON);
     assert!(matches!(g.get::<Finish>("b"), Err(Error::Cycle(_))));
-    assert_eq!(finish(&g, "a"), 3.0);
+    assert_eq!(finish_of(&g, "a"), 3.0);
 }
 
 // ---------- part two: the schedule system, holding decisions open ----------
 
-fn world_rules(reg: &mut Registry) {
+fn world_system(reg: &mut Registry) {
     plan::install(reg);
     schedule::install(reg);
 }
 
 /// Calibration: three approaches with overlapping work, and a gap.
 fn calibration() -> N {
-    use plan::{DependsOn, PartOf};
-    let mut g = N::with(world_rules);
-    g.set("calib", Decision::default());
+    let mut g = N::with(world_system);
+    g.add("calib", DECISION);
     for o in ["cad", "free", "board"] {
-        g.link(o, "calib", Alternative::default());
+        g.link(o, "calib", ALTERNATIVE);
     }
-    g.set("calib.unknown", Unknown).link("calib.unknown", "calib", Alternative::default());
+    g.add("calib.unknown", UNKNOWN).link("calib.unknown", "calib", ALTERNATIVE);
     for (t, d, parents) in [("imu", 1.0, vec!["calib"]), ("static", 2.0, vec!["cad", "free"]), ("export", 3.0, vec!["cad"]), ("search", 5.0, vec!["free"]), ("detector", 4.0, vec!["board"])] {
-        g.set(t, Task {}).set(t, Estimate::days(d));
+        g.add(t, TASK).set(t, Estimate::days(d));
         for p in parents {
-            g.link(t, p, PartOf);
+            g.link(t, p, plan::PART_OF);
         }
     }
-    g.link("export", "static", DependsOn::default());
-    g.link("search", "static", DependsOn::default());
+    g.link("export", "static", plan::DEPENDS_ON);
+    g.link("search", "static", plan::DEPENDS_ON);
     g
 }
 
@@ -234,7 +213,7 @@ fn slack_differs_between_worlds_too() {
 fn deciding_narrows_the_dates_to_one_value() {
     let mut g = calibration();
     let cad = g.id("cad");
-    g.set("calib", Decision { chosen: Some(cad) });
+    g.set("calib", Chosen(cad));
     let end = g.get::<WorldFinish>("calib").unwrap().unwrap().0.0;
     assert_eq!(end.cases().len(), 1);
     assert_eq!(dated(&end, &g, "free"), Some(5.0), "whichever world you ask about");
@@ -242,14 +221,13 @@ fn deciding_narrows_the_dates_to_one_value() {
 
 #[test]
 fn shared_work_only_inherits_from_parents_in_play() {
-    use plan::{DependsOn, PartOf};
     // `shared` is under both approaches, and only approach a's phase waits on `prereq`.
-    let mut g = N::with(world_rules);
-    g.set("d", Decision::default());
-    g.link("a", "d", Alternative::default()).link("b", "d", Alternative::default());
-    g.set("prereq", Task {}).set("prereq", Estimate::days(10.0));
-    g.link("a", "prereq", DependsOn::default());
-    g.set("shared", Task {}).set("shared", Estimate::days(1.0)).link("shared", "a", PartOf).link("shared", "b", PartOf);
+    let mut g = N::with(world_system);
+    g.add("d", DECISION);
+    g.link("a", "d", ALTERNATIVE).link("b", "d", ALTERNATIVE);
+    g.add("prereq", TASK).set("prereq", Estimate::days(10.0));
+    g.link("a", "prereq", plan::DEPENDS_ON);
+    g.add("shared", TASK).set("shared", Estimate::days(1.0)).link("shared", "a", plan::PART_OF).link("shared", "b", plan::PART_OF);
     let start = g.get::<WorldStart>("shared").unwrap().unwrap().0.0;
     let at = |o: &str| *start.at(&g.world(&[("d", o)]));
     assert_eq!((at("a"), at("b")), (Some(10.0), Some(0.0)));
@@ -259,13 +237,12 @@ fn shared_work_only_inherits_from_parents_in_play() {
 /// vary between worlds, so a loop spanning two worlds counts even though no single world has it.
 #[test]
 fn a_loop_that_no_single_world_contains_is_still_reported() {
-    use plan::{DependsOn, PartOf};
-    let mut g = N::with(world_rules);
-    g.set("d", Decision::default());
-    g.link("a", "d", Alternative::default()).link("b", "d", Alternative::default());
-    g.set("x", Task {}).set("x", Estimate::days(1.0)).link("x", "a", PartOf);
-    g.set("y", Task {}).set("y", Estimate::days(1.0)).link("y", "b", PartOf);
-    g.link("x", "y", DependsOn::default()).link("y", "x", DependsOn::default());
+    let mut g = N::with(world_system);
+    g.add("d", DECISION);
+    g.link("a", "d", ALTERNATIVE).link("b", "d", ALTERNATIVE);
+    g.add("x", TASK).set("x", Estimate::days(1.0)).link("x", "a", plan::PART_OF);
+    g.add("y", TASK).set("y", Estimate::days(1.0)).link("y", "b", plan::PART_OF);
+    g.link("x", "y", plan::DEPENDS_ON).link("y", "x", plan::DEPENDS_ON);
     assert!(g.get::<Need>("x").is_ok(), "x and y are never both needed");
     assert!(matches!(g.get::<WorldFinish>("x"), Err(Error::Cycle(_))));
 }
@@ -275,7 +252,7 @@ fn memoisation_holds_across_worlds_too() {
     let mut g = calibration();
     g.get::<WorldFinish>("calib").unwrap();
     g.take_ran();
-    g.set("detector", Task {}).set("detector", Estimate::days(9.0));
+    g.set("detector", Estimate::days(9.0));
     let end = g.get::<WorldFinish>("calib").unwrap().unwrap().0.0;
     assert_eq!(dated(&end, &g, "board"), Some(9.0));
     let ran = g.ran_cells();
@@ -287,7 +264,7 @@ fn memoisation_holds_across_worlds_too() {
 fn any_date_can_be_typed_over_and_comes_back_when_that_goes() {
     let mut g = calibration();
     let cad = g.id("cad");
-    g.set("calib", Decision { chosen: Some(cad) });
+    g.set("calib", Chosen(cad));
     let end = |g: &N| *g.get::<WorldFinish>("calib").unwrap().unwrap().0.0.at(&BTreeMap::new());
     assert_eq!(end(&g), Some(5.0));
 
@@ -296,20 +273,18 @@ fn any_date_can_be_typed_over_and_comes_back_when_that_goes() {
     assert_eq!(end(&g), Some(15.0), "static from 10 for 2, then export for 3");
     g.assert_round_trips();
 
-    let e = g.id("static");
-    g.g.set_rule(e, "start", EXPR, json!({ "text": "4 + 1" }));
+    g.formula_on("static", WorldStart::NAME, "4 + 1");
     assert_eq!(end(&g), Some(10.0));
     g.assert_round_trips();
 
-    g.g.remove_named(e, "start");
+    g.clear("static", WorldStart::NAME);
     assert_eq!(end(&g), Some(5.0), "and without it, the default is back");
 }
 
 #[test]
 fn a_date_of_the_wrong_type_is_refused_by_its_cell() {
     let mut g = calibration();
-    let e = g.id("static");
-    g.g.set_rule(e, "start", EXPR, json!({ "text": "true" }));
+    g.formula_on("static", WorldStart::NAME, "true");
     let err = format!("{:?}", g.get::<WorldStart>("static").unwrap_err());
     assert!(err.contains("holds a number"), "{err}");
 }
@@ -401,24 +376,23 @@ fn random_plan(rng: &mut Rng) -> Plan {
 
 /// With this plan's decisions all open.
 fn with_worlds(p: &Plan) -> N {
-    let mut g = N::with(world_rules);
+    let mut g = N::with(world_system);
     for (id, d) in &p.nodes {
-        g.set(id, Task {}).set(id, Estimate::days(*d));
+        g.add(id, TASK).set(id, Estimate::days(*d));
     }
     for (c, par) in &p.parts {
-        g.link(c, par, plan::PartOf);
+        g.link(c, par, plan::PART_OF);
     }
     for (o, d) in &p.options {
-        g.link(o, d, Alternative::default());
-        g.set(d, Decision::default());
+        g.link(o, d, ALTERNATIVE);
+        g.add(d, DECISION);
     }
     for (a, b) in &p.deps {
-        g.link(a, b, plan::DependsOn::default());
+        g.link(a, b, plan::DEPENDS_ON);
     }
     for (id, d, o, days) in &p.varying {
         let usual = p.nodes.iter().find(|n| n.0 == *id).unwrap().1;
-        let e = g.id(id);
-        g.g.set_rule(e, "estimate", EXPR, json!({ "text": format!("if(chose(decision, option), {days}, {usual})") }));
+        g.formula_on(id, Estimate::NAME, &format!("if(chose(decision, option), {days}, {usual})"));
         g.input(id, d, "decision").input(id, o, "option");
     }
     g
@@ -442,7 +416,7 @@ fn plain_in_world(p: &Plan, world: &BTreeMap<String, String>, slower: Option<(&s
             kept.push(id.clone());
         }
     }
-    let mut g = N::with(plain_rules);
+    let mut g = N::with(plain_system);
     for (id, d) in &p.nodes {
         if kept.contains(id) {
             let extra = slower.filter(|(s, _)| *s == id).map_or(0.0, |(_, by)| by);
@@ -452,24 +426,24 @@ fn plain_in_world(p: &Plan, world: &BTreeMap<String, String>, slower: Option<(&s
     }
     for (c, par) in &p.parts {
         if kept.contains(c) && kept.contains(par) {
-            g.link(c, par, PartOf);
+            g.link(c, par, PART_OF);
         }
     }
     for (o, d) in &p.options {
         if kept.contains(o) && kept.contains(d) && world.get(d) == Some(o) {
-            g.link(o, d, PartOf);
+            g.link(o, d, PART_OF);
         }
     }
     for (a, b) in &p.deps {
         if kept.contains(a) && kept.contains(b) {
-            g.link(a, b, DependsOn);
+            g.link(a, b, DEPENDS_ON);
         }
     }
     (g, kept)
 }
 
 fn end_of(g: &N, kept: &[String]) -> f64 {
-    kept.iter().map(|id| finish(g, id)).fold(0.0, f64::max)
+    kept.iter().map(|id| finish_of(g, id)).fold(0.0, f64::max)
 }
 
 #[test]

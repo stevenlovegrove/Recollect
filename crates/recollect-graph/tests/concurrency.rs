@@ -6,25 +6,35 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 
 use recollect_graph::worlds::{Bool, Cond, Space};
-use recollect_graph::{Entity, Error, Graph, Rule, component, rule};
+use recollect_graph::{Cell, Computed, Cx, Entity, Error, Graph, Registry, cell};
 
-#[component]
+#[cell]
 struct Amount(f64);
 
-#[component]
-struct Addend;
-
-#[component]
+#[cell]
 struct Over(Bool);
 
-fn sum() -> Rule<Amount> {
-    rule("sum").incoming::<Addend>().compute(|cx| {
-        let mut total = 0.0;
-        for from in cx.sources::<Addend>()? {
-            total += cx.value::<Amount>(from)?.0;
-        }
-        Ok(Amount(total))
-    })
+const SHEET: &str = "sheet";
+const ADDEND: &str = "addend";
+
+fn sum(cx: &Cx) -> Cell<Amount> {
+    let mut total = 0.0;
+    for from in cx.sources(ADDEND) {
+        total += cx.value::<Amount>(from)?.0;
+    }
+    Ok(Some(Amount(total)))
+}
+
+/// A sheet whose amounts sum what's added to them, and whose one formula panics.
+fn registry() -> Arc<Registry> {
+    let mut reg = Registry::new();
+    reg.component(SHEET, "A cell of a sheet: what's added to it, unless a value is typed in.");
+    reg.cell::<Amount>(SHEET, "The sum of what's added to it.").builtin(sum).compiles(Arc::new(|text| match text {
+        "bad" => Ok(Computed::typed::<Amount>("bad", |_| panic!("this formula is broken"))),
+        _ => Err(format!("there's no function called {text}")),
+    }));
+    reg.edge(ADDEND, "Added to that.");
+    Arc::new(reg)
 }
 
 fn assert_shareable<T: Send + Sync>() {}
@@ -33,7 +43,8 @@ fn assert_shareable<T: Send + Sync>() {}
 fn everything_a_reader_holds_can_cross_threads() {
     assert_shareable::<Graph>();
     assert_shareable::<Entity>();
-    assert_shareable::<Rule<Amount>>();
+    assert_shareable::<Registry>();
+    assert_shareable::<Computed>();
     assert_shareable::<Bool>();
     assert_shareable::<Cond<f64>>();
     assert_shareable::<Error>();
@@ -41,16 +52,16 @@ fn everything_a_reader_holds_can_cross_threads() {
 
 /// `depth` layers of `width` cells, each summing every cell in the layer above.
 fn layered(depth: usize, width: usize) -> (Graph, Entity, Vec<Entity>) {
-    let mut g = Graph::new();
+    let mut g = Graph::with_registry(registry());
     let seed = g.spawn();
-    g.set(seed, Amount(1.0));
+    g.add(seed, SHEET).set(seed, Amount(1.0));
     let mut above = vec![seed];
     for _ in 0..depth {
         let layer: Vec<Entity> = (0..width).map(|_| g.spawn()).collect();
         for e in &layer {
-            g.set(*e, sum());
+            g.add(*e, SHEET);
             for a in &above {
-                g.link(*a, *e, Addend);
+                g.link(*a, *e, ADDEND);
             }
         }
         above = layer;
@@ -119,10 +130,13 @@ fn readers_and_a_writer_stay_consistent() {
 
 #[test]
 fn a_world_value_computed_on_one_thread_is_usable_on_another() {
-    let mut g = Graph::new();
-    let e = g.spawn();
     let var = Space::global().uniform("concurrency_choice", &["cheap", "dear"]);
-    g.set(e, rule("over").compute(move |_| Ok(Over(var.is("dear")))));
+    let mut reg = Registry::new();
+    reg.component("over", "Over budget, in some worlds.");
+    reg.cell::<Over>("over", "The worlds where it's over.").builtin(move |_| Ok(Some(Over(var.is("dear")))));
+    let mut g = Graph::with_registry(Arc::new(reg));
+    let e = g.spawn();
+    g.add(e, "over");
     let g = Arc::new(g);
 
     let (g2, on_other) = (g.clone(), e);
@@ -133,18 +147,19 @@ fn a_world_value_computed_on_one_thread_is_usable_on_another() {
 }
 
 #[test]
-fn a_rule_that_panics_fails_its_cell_and_nothing_else() {
-    let mut g = Graph::new();
+fn a_formula_that_panics_fails_its_cell_and_nothing_else() {
+    let mut g = Graph::with_registry(registry());
     let (bad, good, reader) = (g.spawn(), g.spawn(), g.spawn());
+    g.add(good, SHEET).add(bad, SHEET).add(reader, SHEET);
     g.set(good, Amount(2.0));
-    g.set::<Amount>(bad, rule("bad").compute(|_| panic!("this rule is broken")));
-    g.set(reader, sum()).link(bad, reader, Addend);
+    g.set_formula(bad, "amount", "bad");
+    g.link(bad, reader, ADDEND);
     let g = Arc::new(g);
 
     let g2 = g.clone();
     let result = thread::spawn(move || g2.get::<Amount>(reader)).join().unwrap();
     let Err(Error::Failed(message)) = result else { panic!("expected a failure, got {result:?}") };
-    assert!(message.contains("this rule is broken"), "{message}");
+    assert!(message.contains("this formula is broken"), "{message}");
 
     assert_eq!(g.get::<Amount>(good).unwrap().unwrap().0, 2.0, "other cells and other threads are fine");
     assert!(g.get::<Amount>(bad).is_err(), "and it's still reported, not left half done");

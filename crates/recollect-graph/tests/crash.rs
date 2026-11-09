@@ -9,8 +9,8 @@ use std::process::Command;
 use std::sync::Arc;
 
 use recollect_graph::log::CRASHED;
-use recollect_systems::plan::{self, Decision, Done, Estimate, PartOf, Task};
-use recollect_graph::{Entity, LoadProblem, Log, Op, Registry, SavedGraph, Stored};
+use recollect_graph::{Entity, LoadProblem, Log, Op, Registry, SavedGraph};
+use recollect_systems::plan::{self, DECISION, Done, Estimate, PART_OF, TASK};
 
 fn registry() -> Arc<Registry> {
     let mut reg = Registry::new();
@@ -27,24 +27,36 @@ fn uuid_like(n: u128) -> String {
     format!("{:08x}-0000-7000-8000-{:012x}", 1, n)
 }
 
-/// A graph with several files, and a commit that changes some, creates one, removes one and changes
-/// `graph.yaml`.
+/// A new node with a component.
+fn new(e: Entity, component: &str) -> [Op; 2] {
+    [Op::Spawn { id: e }, Op::add(e, component)]
+}
+
+/// A graph with several files, and a commit that changes some, creates one and removes one.
 fn setup(dir: &Path) -> SavedGraph {
     let (mut log, _) = Log::open(dir, registry(), "ext").unwrap();
-    log.commit("t", "setup", vec![Op::set(id(1), Task {}), Op::set(id(1), Estimate::days(1.0)), Op::set(id(2), Task {}), Op::set(id(3), Task {}), Op::set(id(4), Decision::default()), Op::link(id(2), id(1), PartOf)]).unwrap();
-    log.graph().save().unwrap()
+    let ops = [new(id(1), TASK).to_vec(), vec![Op::set(id(1), Estimate::days(1.0))], new(id(2), TASK).to_vec(), new(id(3), TASK).to_vec(), new(id(4), DECISION).to_vec(), vec![Op::link(id(2), id(1), PART_OF)]].concat();
+    log.commit("t", "setup", ops).unwrap();
+    log.graph().save()
 }
 
 fn the_commit() -> Vec<Op> {
-    vec![
-        Op::set(id(1), Done::yes()),
-        Op::remove::<Task>(id(2)),
-        Op::unlink::<PartOf>(id(2), id(1)),
-        Op::Despawn { id: id(3) },
-        Op::set(id(5), Task {}), Op::set(id(5), Estimate::days(2.0)),
-        Op::link(id(5), id(2), PartOf),
-        Op::Default { component: "marker".into(), to: Some(Stored::Value(serde_json::json!(7))) },
+    [
+        vec![
+            Op::set(id(1), Done::yes()),
+            Op::Remove { id: id(2), component: TASK.into() },
+            Op::Unlink { from: id(2), to: id(1), component: PART_OF.into() },
+            Op::Despawn { id: id(3) },
+        ],
+        new(id(5), TASK).to_vec(),
+        vec![Op::set(id(5), Estimate::days(2.0)), Op::link(id(5), id(2), PART_OF)],
     ]
+    .concat()
+}
+
+/// What's done afterwards, to show it goes on working.
+fn afterwards() -> Vec<Op> {
+    [new(id(6), TASK).to_vec(), vec![Op::set(id(6), Done::yes())]].concat()
 }
 
 fn run_child(test: &str, dir: &Path, envs: &[(&str, String)]) -> i32 {
@@ -98,14 +110,14 @@ fn a_crash_at_any_step_of_going_back_leaves_it_there_or_where_it_was() {
             assert!(matches!(p, LoadProblem::TornLog { .. }), "a crash isn't an edit: {p:?}");
         }
         assert_eq!(log.events().len(), 2, "going back adds no events");
-        let now = log.graph().save().unwrap();
+        let now = log.graph().save();
         let went = log.last_seq() == Some(0);
         assert_eq!(now, if went { before.clone() } else { after.clone() }, "at step {steps}");
         let (plain, _) = recollect_graph::Graph::load_dir(run.path(), registry()).unwrap();
-        assert_eq!(plain.save().unwrap(), now, "the files have caught up at step {steps}");
+        assert_eq!(plain.save(), now, "the files have caught up at step {steps}");
         outcomes.push(went);
         // And it goes on working, as a branch if it did go back.
-        let seq = log.commit("t", "afterwards", vec![Op::set(id(6), Done::yes())]).unwrap();
+        let seq = log.commit("t", "afterwards", afterwards()).unwrap();
         assert_eq!(log.events()[seq as usize].parent, Some(if went { 0 } else { 1 }));
         if code == 0 {
             assert!(steps > 5, "this should have passed several steps: {steps}");
@@ -145,7 +157,7 @@ fn recover_and_check(dir: &Path, before: &SavedGraph, after: &SavedGraph) -> boo
         assert!(matches!(p, LoadProblem::TornLog { .. }), "a crash isn't an edit: {p:?}");
     }
     assert_eq!(log.violations(), vec![]);
-    let now = log.graph().save().unwrap();
+    let now = log.graph().save();
     let committed = now == *after;
     assert!(committed || now == *before, "neither all of it nor none of it: {now:#?}");
     let events = if committed { 2 } else { 1 };
@@ -153,13 +165,13 @@ fn recover_and_check(dir: &Path, before: &SavedGraph, after: &SavedGraph) -> boo
 
     // The files say the same thing, and the log says how far they've got.
     let (plain, _) = recollect_graph::Graph::load_dir(dir, registry()).unwrap();
-    assert_eq!(plain.save().unwrap(), now, "the files have caught up");
+    assert_eq!(plain.save(), now, "the files have caught up");
     assert_eq!(std::fs::read_to_string(dir.join("log.applied")).unwrap().trim(), (events - 1).to_string());
     let leftovers: Vec<_> = std::fs::read_dir(dir.join("nodes")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).filter(|n| n.ends_with(".tmp")).collect();
     assert_eq!(leftovers, Vec::<String>::new());
 
     // And it goes on working.
-    log.commit("t", "afterwards", vec![Op::set(id(6), Done::yes())]).unwrap();
+    log.commit("t", "afterwards", afterwards()).unwrap();
     drop(log);
     let (log, problems) = Log::open(dir, registry(), "ext").unwrap();
     assert_eq!(problems, vec![], "a clean run leaves nothing to report");
@@ -175,7 +187,7 @@ fn expected_states() -> (tempfile::TempDir, SavedGraph, SavedGraph) {
         copy_dir(base.path(), copy.path());
         let (mut log, _) = Log::open(copy.path(), registry(), "ext").unwrap();
         log.commit("t", "the commit", the_commit()).unwrap();
-        log.graph().save().unwrap()
+        log.graph().save()
     };
     (base, before, after)
 }
@@ -253,7 +265,7 @@ fn a_torn_line_at_any_length_is_cut_off() {
 
         let (log, problems) = Log::open(run.path(), registry(), "ext").unwrap();
         assert_eq!(problems, vec![LoadProblem::TornLog { bytes: len as u64 }]);
-        assert_eq!(log.graph().save().unwrap(), before);
+        assert_eq!(log.graph().save(), before);
         drop(log);
         assert_eq!(std::fs::read(run.path().join("log.jsonl")).unwrap(), old, "and it's gone");
         let (_, problems) = Log::open(run.path(), registry(), "ext").unwrap();
@@ -288,14 +300,14 @@ fn a_hand_edit_made_while_the_files_were_behind_still_stands() {
         // Someone edits a file the commit never touched.
         let untouched = run.path().join("nodes").join(format!("{}.yaml", id(4)));
         let text = std::fs::read_to_string(&untouched).unwrap();
-        assert!(text.contains("decision: {}"), "{text}");
-        std::fs::write(&untouched, text.replace("decision: {}", "decision: {}\n  note: by hand")).unwrap();
+        assert!(text.contains("- decision\n"), "{text}");
+        std::fs::write(&untouched, text.replace("- decision\n", "- decision\ncells:\n  note: by hand\n")).unwrap();
 
         let (log, problems) = Log::open(run.path(), registry(), "by hand").unwrap();
         assert_eq!(problems, vec![LoadProblem::ExternalEdit { seq: 2 }], "the commit isn't an edit, and this is");
         let mut expected = after.clone();
-        expected.nodes.iter_mut().find(|n| n.id == id(4)).unwrap().components.insert("note".into(), serde_json::json!("by hand"));
-        assert_eq!(log.graph().save().unwrap(), expected, "both are there");
+        expected.nodes.iter_mut().find(|n| n.id == id(4)).unwrap().cells.insert("note".into(), serde_json::json!("by hand"));
+        assert_eq!(log.graph().save(), expected, "both are there");
         assert_eq!(log.events()[1].why, "the commit");
         assert_eq!(log.events()[2].ops.len(), 1, "and the edit is only the edit: {:?}", log.events()[2].ops);
         return;
@@ -307,13 +319,13 @@ fn a_failed_write_of_the_log_changes_nothing_and_stale_files_are_repaired() {
     // A directory that can't be written stands in for a full disk.
     let dir = tempfile::tempdir().unwrap();
     let (mut log, _) = Log::open(dir.path(), registry(), "ext").unwrap();
-    log.commit("t", "first", vec![Op::set(id(1), Task {})]).unwrap();
+    log.commit("t", "first", new(id(1), TASK).to_vec()).unwrap();
 
     let nodes = dir.path().join("nodes");
     let mut perms = std::fs::metadata(&nodes).unwrap().permissions();
     perms.set_readonly(true);
     std::fs::set_permissions(&nodes, perms.clone()).unwrap();
-    let result = log.commit("t", "second", vec![Op::set(id(2), Done::yes())]);
+    let result = log.commit("t", "second", [new(id(2), TASK).to_vec(), vec![Op::set(id(2), Done::yes())]].concat());
     #[allow(clippy::permissions_set_readonly_false)]
     perms.set_readonly(false);
     std::fs::set_permissions(&nodes, perms).unwrap();
@@ -321,12 +333,12 @@ fn a_failed_write_of_the_log_changes_nothing_and_stale_files_are_repaired() {
     assert!(matches!(result, Err(recollect_graph::CommitError::FilesBehind { seq: 1, .. })), "{result:?}");
     assert_eq!(log.graph().get(id(2)), Ok(Some(Done::yes())), "it did happen");
     log.commit("t", "third", vec![Op::set(id(1), Done::yes())]).unwrap();
-    let saved = log.graph().save().unwrap();
+    let saved = log.graph().save();
     drop(log);
 
     let (plain, _) = recollect_graph::Graph::load_dir(dir.path(), registry()).unwrap();
-    assert_eq!(plain.save().unwrap(), saved, "the next commit caught the files up");
+    assert_eq!(plain.save(), saved, "the next commit caught the files up");
     let (log, problems) = Log::open(dir.path(), registry(), "ext").unwrap();
     assert_eq!(problems, vec![]);
-    assert_eq!(log.graph().save().unwrap(), saved);
+    assert_eq!(log.graph().save(), saved);
 }

@@ -1,11 +1,11 @@
 //! What the planning rules cost. These are measurements rather than checks, so they don't run by
-//! default: `cargo test --release -p recollect-graph --test plan_cost -- --ignored --nocapture`.
+//! default: `cargo test --release -p recollect-systems --test plan_cost -- --ignored --nocapture`.
 
 use std::sync::Arc;
 use std::time::Instant;
 
-use recollect_systems::plan::{self, *};
 use recollect_graph::{Entity, Graph, Log, Name, Op, Registry};
+use recollect_systems::plan::{self, *};
 
 fn registry() -> Arc<Registry> {
     let mut reg = Registry::new();
@@ -23,8 +23,19 @@ fn read_everything(g: &Graph) {
     }
 }
 
-fn task() -> Task {
-    Task {}
+/// A new node, with these components.
+fn spawn(ops: &mut Vec<Op>, components: &[&str]) -> Entity {
+    let e = Entity::new();
+    ops.push(Op::Spawn { id: e });
+    ops.extend(components.iter().map(|c| Op::add(e, c)));
+    e
+}
+
+/// A new node with a name.
+fn named(ops: &mut Vec<Op>, name: &str) -> Entity {
+    let e = spawn(ops, &[]);
+    ops.push(Op::set(e, Name(name.to_string())));
+    e
 }
 
 /// The classic worst case for decision diagrams: (a0∧b0) ∨ (a1∧b1) ∨ … with all the a's ordered
@@ -34,22 +45,21 @@ fn task() -> Task {
 #[ignore]
 fn one_task_shared_under_nested_decisions() {
     for pairs in [4, 8, 12, 14, 16, 18, 20] {
-        let shared = Entity::new();
-        let mut ops = vec![Op::set(shared, task())];
+        let mut ops = Vec::new();
+        let shared = spawn(&mut ops, &[TASK]);
         let mut levels = Vec::new();
         for _ in 0..pairs {
-            let (a, b) = (Entity::new(), Entity::new());
+            let (a, b) = (spawn(&mut ops, &[DECISION]), spawn(&mut ops, &[DECISION]));
             let mut x = [None, None];
             for dec in [a, b] {
-                ops.push(Op::set(dec, Decision::default()));
-                let (ox, oy) = (Entity::new(), Entity::new());
-                ops.extend([Op::set(ox, Name("x".into())), Op::set(oy, Name("y".into())), Op::link(ox, dec, Alternative::default()), Op::link(oy, dec, Alternative::default())]);
+                let (ox, oy) = (named(&mut ops, "x"), named(&mut ops, "y"));
+                ops.extend([Op::link(ox, dec, ALTERNATIVE), Op::link(oy, dec, ALTERNATIVE)]);
                 x[usize::from(dec == b)] = Some(ox);
             }
             levels.push((a, b, x[0].unwrap(), x[1].unwrap()));
         }
         for (_, b, ax, bx) in &levels {
-            ops.extend([Op::link(*b, *ax, PartOf), Op::link(shared, *bx, PartOf)]);
+            ops.extend([Op::link(*b, *ax, PART_OF), Op::link(shared, *bx, PART_OF)]);
         }
         let mut log = Log::new(registry());
         log.commit("t", "worst case", ops).unwrap();
@@ -66,15 +76,14 @@ fn one_task_shared_under_nested_decisions() {
 #[test]
 #[ignore]
 fn many_independent_decisions() {
-    let root = Entity::new();
-    let mut ops = vec![Op::set(root, Name("root".into()))];
+    let mut ops = Vec::new();
+    let root = named(&mut ops, "root");
     for _ in 0..40 {
-        let (dec, a, b) = (Entity::new(), Entity::new(), Entity::new());
-        ops.extend([Op::set(dec, Decision::default()), Op::set(a, task()), Op::set(b, task())]);
-        ops.extend([Op::link(dec, root, PartOf), Op::link(a, dec, Alternative::default()), Op::link(b, dec, Alternative::default())]);
+        let (dec, a, b) = (spawn(&mut ops, &[DECISION]), spawn(&mut ops, &[TASK]), spawn(&mut ops, &[TASK]));
+        ops.extend([Op::link(dec, root, PART_OF), Op::link(a, dec, ALTERNATIVE), Op::link(b, dec, ALTERNATIVE)]);
         for _ in 0..20 {
-            let t = Entity::new();
-            ops.extend([Op::set(t, task()), Op::link(t, a, PartOf)]);
+            let t = spawn(&mut ops, &[TASK]);
+            ops.push(Op::link(t, a, PART_OF));
         }
     }
     let mut log = Log::new(registry());
@@ -95,25 +104,24 @@ fn an_edit_then_reading_the_whole_plan() {
         let (mut decisions, mut leaves) = (Vec::new(), Vec::new());
         let mut last_phase = None;
         for p in 0..phases {
-            let phase = Entity::new();
-            ops.push(Op::set(phase, Name(format!("phase {p}"))));
+            let phase = named(&mut ops, &format!("phase {p}"));
             if let Some(last) = last_phase {
-                ops.push(Op::link(phase, last, DependsOn::default()));
+                ops.push(Op::link(phase, last, DEPENDS_ON));
             }
             last_phase = Some(phase);
             // Every tenth phase holds a decision between two approaches, and the rest is plain.
             let (under_a, under_b) = if p % 10 == 0 {
-                let (dec, a, b) = (Entity::new(), Entity::new(), Entity::new());
-                ops.extend([Op::set(dec, Decision::default()), Op::set(a, Name("a".into())), Op::set(b, Name("b".into()))]);
-                ops.extend([Op::link(dec, phase, PartOf), Op::link(a, dec, Alternative::default()), Op::link(b, dec, Alternative::default())]);
+                let dec = spawn(&mut ops, &[DECISION]);
+                let (a, b) = (named(&mut ops, "a"), named(&mut ops, "b"));
+                ops.extend([Op::link(dec, phase, PART_OF), Op::link(a, dec, ALTERNATIVE), Op::link(b, dec, ALTERNATIVE)]);
                 decisions.push((dec, a));
                 (a, b)
             } else {
                 (phase, phase)
             };
             for t in 0..10 {
-                let leaf = Entity::new();
-                ops.extend([Op::set(leaf, task()), Op::link(leaf, if t % 2 == 0 { under_a } else { under_b }, PartOf)]);
+                let leaf = spawn(&mut ops, &[TASK]);
+                ops.push(Op::link(leaf, if t % 2 == 0 { under_a } else { under_b }, PART_OF));
                 leaves.push(leaf);
             }
         }

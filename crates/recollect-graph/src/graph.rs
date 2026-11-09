@@ -729,13 +729,15 @@ impl Graph {
 
     fn work_out_components(&self, e: Entity) -> BTreeMap<String, Origin> {
         let reg = &self.registry;
+        // A component given somewhere it doesn't go is kept, and a check says so, but it isn't there.
+        let fits = |c: &String, place: Place| reg.component_def(c).is_none_or(|d| d.place == place);
         let mut out: BTreeMap<String, Origin> = BTreeMap::new();
         if e == Entity::whole() {
             for c in reg.components().filter(|c| c.place == Place::Whole) {
                 out.insert(c.name.clone(), Origin::Everywhere);
             }
         } else if self.edges.contains_key(&e) {
-            for c in self.given.get(&e).into_iter().flatten() {
+            for c in self.given.get(&e).into_iter().flatten().filter(|c| fits(c, Place::Edge)) {
                 out.insert(c.clone(), Origin::Given);
             }
         } else if self.nodes.contains(&e) || self.is_implicit(e) {
@@ -743,7 +745,7 @@ impl Graph {
                 for c in reg.components().filter(|c| c.everywhere && c.place == Place::Node) {
                     out.insert(c.name.clone(), Origin::Everywhere);
                 }
-                for c in self.given.get(&e).into_iter().flatten() {
+                for c in self.given.get(&e).into_iter().flatten().filter(|c| fits(c, Place::Node)) {
                     out.insert(c.clone(), Origin::Given);
                 }
             }

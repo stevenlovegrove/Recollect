@@ -1,76 +1,58 @@
-//! Rules that can be written down: registering them, the file format, and what happens when a
-//! file and the running code don't line up. Nothing should ever be lost.
+//! What's written down: the file format, formulas saved as their text, and what happens when a file
+//! and the running code don't line up. Nothing should ever be lost.
 
 use std::fs;
 use std::sync::Arc;
 
-use recollect_graph::graph::Inputs;
-use recollect_graph::{Compute, Cx, Entity, Error, Graph, LoadProblem, Name, Registry, RuntimeRule, SaveError, SavedRule, component, rule};
+use recollect_graph::{Cell, CellType, Compile, Computed, Cx, Entity, Error, Graph, LoadProblem, Name, Place, Registry, SavedEdge, SavedGraph, SavedNode, cell};
 use serde_json::{Value, json};
 
-#[component]
+#[cell]
 struct Amount(f64);
 
-#[component]
-struct Addend;
+const SHEET: &str = "sheet";
+const ADDEND: &str = "addend";
+const BONUS: &str = "bonus";
 
-#[component]
-struct Bonus;
+/// The amounts of what links here by an edge with this component, each times `by`.
+fn sum_over(cx: &Cx, component: &str, by: f64) -> Cell<Amount> {
+    let mut total = 0.0;
+    for from in cx.sources(component) {
+        total += cx.value::<Amount>(from)?.0;
+    }
+    Ok(Some(Amount(total * by)))
+}
 
-#[rule("test/sum", incoming(Addend))]
-struct Sum;
-
-impl Compute for Sum {
-    type Output = Amount;
-    fn compute(&self, cx: &Cx) -> Result<Amount, Error> {
-        let mut total = 0.0;
-        for from in cx.sources::<Addend>()? {
-            total += cx.value::<Amount>(from)?.0;
+/// Formulas here are `sum`, `scaled <by>` and `sum_over <component>`: about what a rule's key and
+/// parameters used to say.
+fn compile() -> Compile {
+    Arc::new(|text| {
+        let words: Vec<&str> = text.split_whitespace().collect();
+        match words[..] {
+            ["sum"] => Ok(Computed::typed("sum", |cx| sum_over(cx, ADDEND, 1.0))),
+            ["scaled", by] => {
+                let by: f64 = by.parse().map_err(|_| format!("{by} isn't a number"))?;
+                Ok(Computed::typed("scaled", move |cx| sum_over(cx, ADDEND, by)))
+            }
+            ["sum_over", component] => {
+                let component = component.to_string();
+                Ok(Computed::typed("sum_over", move |cx| sum_over(cx, &component, 1.0)))
+            }
+            _ => Err(format!("there's no function called {text}")),
         }
-        Ok(Amount(total))
-    }
+    })
 }
 
-/// With a parameter, which is what a closure would have captured.
-#[rule("test/scaled", incoming(Addend))]
-struct Scaled {
-    by: f64,
-}
-
-impl Compute for Scaled {
-    type Output = Amount;
-    fn compute(&self, cx: &Cx) -> Result<Amount, Error> {
-        let mut total = 0.0;
-        for from in cx.sources::<Addend>()? {
-            total += cx.value::<Amount>(from)?.0;
-        }
-        Ok(Amount(total * self.by))
-    }
-}
-
-/// What it follows depends on its parameters.
-#[rule("test/sum_over")]
-struct SumOver {
-    kind: String,
-}
-
-impl Compute for SumOver {
-    type Output = Amount;
-    fn inputs(&self) -> Inputs {
-        Inputs { incoming: vec![self.kind.clone()], ..Inputs::default() }
-    }
-    fn compute(&self, cx: &Cx) -> Result<Amount, Error> {
-        let mut total = 0.0;
-        for (from, _) in cx.incoming_runtime(&self.kind)? {
-            total += cx.value::<Amount>(from)?.0;
-        }
-        Ok(Amount(total))
-    }
+fn install(reg: &mut Registry) {
+    reg.component(SHEET, "A cell of a sheet: what's added to it, unless something says otherwise.");
+    reg.cell::<Amount>(SHEET, "The sum of what's added to it.").builtin(|cx| sum_over(cx, ADDEND, 1.0)).compiles(compile());
+    reg.edge(ADDEND, "Added to that.");
+    reg.edge(BONUS, "A bonus to that.");
 }
 
 fn registry() -> Arc<Registry> {
     let mut reg = Registry::new();
-    reg.rule::<Sum>().rule::<Scaled>().rule::<SumOver>();
+    install(&mut reg);
     Arc::new(reg)
 }
 
@@ -78,8 +60,10 @@ fn registry() -> Arc<Registry> {
 fn sheet() -> (Graph, Entity, Entity, Entity) {
     let mut g = Graph::with_registry(registry());
     let (a, b, total) = (g.spawn(), g.spawn(), g.spawn());
+    g.add(a, SHEET).add(b, SHEET).add(total, SHEET);
     g.set(a, Amount(1.0)).set(b, Amount(2.0));
-    g.set(total, Sum).link(a, total, Addend).link(b, total, Addend);
+    g.link(a, total, ADDEND);
+    g.link(b, total, ADDEND);
     (g, a, b, total)
 }
 
@@ -90,10 +74,12 @@ fn value(g: &Graph, e: Entity) -> f64 {
 // ---------- the file format ----------
 
 #[test]
-fn a_node_file_is_plain_data_and_says_which_rule_backs_what() {
-    let (mut g, a, _, total) = sheet();
+fn a_node_file_is_plain_data_and_says_which_formula_backs_what() {
+    let (mut g, a, b, total) = sheet();
     g.set(total, Name("Total".into()));
-    g.set_runtime(total, "supplier", json!({ "days": 12 }));
+    g.set_value(total, "supplier", json!({ "days": 12 }));
+    g.set_formula(b, "amount", "scaled 2");
+    g.set_value(Entity::edge(a, total), "note", json!("by post"));
     let dir = tempfile::tempdir().unwrap();
     g.save_dir(dir.path()).unwrap();
 
@@ -101,24 +87,29 @@ fn a_node_file_is_plain_data_and_says_which_rule_backs_what() {
     println!("{text}");
     let file: Value = serde_yaml_ng::from_str(&text).unwrap();
     assert_eq!(file["id"], json!(total.to_string()));
-    assert_eq!(file["components"], json!({ "name": "Total", "supplier": { "days": 12 } }), "plain data, typed or not");
-    assert_eq!(file["rules"], json!({ "amount": { "rule": "test/sum" } }));
+    assert_eq!(file["components"], json!(["sheet"]));
+    assert_eq!(file["cells"], json!({ "name": "Total", "supplier": { "days": 12 } }), "plain data, typed or not");
+    assert!(file.get("formulas").is_none(), "what its component works out isn't written down");
     assert!(file.get("links").is_none(), "links live with their source");
 
     let source = fs::read_to_string(dir.path().join(format!("nodes/{a}.yaml"))).unwrap();
     let file: Value = serde_yaml_ng::from_str(&source).unwrap();
-    assert_eq!(file["links"], json!([{ "to": total.to_string(), "components": { "addend": null } }]));
-    assert_eq!(file["components"]["amount"], json!(1.0));
+    assert_eq!(file["links"], json!([{ "to": total.to_string(), "components": ["addend"], "cells": { "note": "by post" } }]), "with what the edge says");
+    assert_eq!(file["cells"]["amount"], json!(1.0));
+
+    let other = fs::read_to_string(dir.path().join(format!("nodes/{b}.yaml"))).unwrap();
+    let file: Value = serde_yaml_ng::from_str(&other).unwrap();
+    assert_eq!(file["formulas"], json!({ "amount": "scaled 2" }), "a formula is saved as its text");
 }
 
 #[test]
-fn parameters_are_saved_and_come_back() {
+fn a_formula_is_saved_and_comes_back() {
     let (mut g, _, _, total) = sheet();
-    g.set(total, Scaled { by: 10.0 });
+    g.set_formula(total, "amount", "scaled 10");
     assert_eq!(value(&g, total), 30.0);
-    let saved = g.save().unwrap();
+    let saved = g.save();
     let node = saved.nodes.iter().find(|n| n.id == total).unwrap();
-    assert_eq!(node.rules["amount"], SavedRule { rule: "test/scaled".into(), params: json!({ "by": 10.0 }) });
+    assert_eq!(node.formulas["amount"], "scaled 10");
 
     let (loaded, problems) = Graph::load(saved, registry());
     assert_eq!(problems, vec![]);
@@ -128,7 +119,7 @@ fn parameters_are_saved_and_come_back() {
 #[test]
 fn a_loaded_graph_carries_on_like_the_original() {
     let (mut g, a, _, total) = sheet();
-    let (mut loaded, _) = Graph::load(g.save().unwrap(), registry());
+    let (mut loaded, _) = Graph::load(g.save(), registry());
     assert_eq!(value(&loaded, total), 3.0);
     assert_eq!(loaded.take_ran().len(), 1, "memos aren't saved, so it runs once");
     value(&loaded, total);
@@ -168,8 +159,8 @@ fn a_hand_written_file_works() {
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(dir.path().join("nodes")).unwrap();
     let (a, total) = (Entity::new(), Entity::new());
-    fs::write(dir.path().join(format!("nodes/{a}.yaml")), format!("id: {a}\ncomponents:\n  amount: 7.0\nlinks:\n- to: {total}\n  components:\n    addend: null\n")).unwrap();
-    fs::write(dir.path().join(format!("nodes/{total}.yaml")), format!("id: {total}\nrules:\n  amount:\n    rule: test/scaled\n    params:\n      by: 2.0\n")).unwrap();
+    fs::write(dir.path().join(format!("nodes/{a}.yaml")), format!("id: {a}\ncomponents:\n- sheet\ncells:\n  amount: 7.0\nlinks:\n- to: {total}\n  components:\n  - addend\n")).unwrap();
+    fs::write(dir.path().join(format!("nodes/{total}.yaml")), format!("id: {total}\ncomponents:\n- sheet\nformulas:\n  amount: scaled 2\n")).unwrap();
 
     let (g, problems) = Graph::load_dir(dir.path(), registry()).unwrap();
     assert_eq!(problems, vec![]);
@@ -187,212 +178,179 @@ fn an_invalid_file_is_an_error_naming_it() {
 
 // ---------- when a file and the code don't line up ----------
 
-fn node_with_rule(saved: SavedRule, component: &str) -> (recollect_graph::SavedGraph, Entity) {
+fn node_with_formula(text: &str, cell: &str, components: &[&str]) -> (SavedGraph, Entity) {
     let id = Entity::new();
-    let node = recollect_graph::SavedNode { id, components: Default::default(), rules: [(component.to_string(), saved)].into_iter().collect(), links: vec![] };
-    (recollect_graph::SavedGraph { nodes: vec![node], defaults: Default::default() }, id)
+    let mut node = SavedNode::empty(id);
+    node.components = components.iter().map(|c| c.to_string()).collect();
+    node.formulas.insert(cell.to_string(), text.to_string());
+    (SavedGraph { nodes: vec![node] }, id)
 }
 
 #[test]
-fn an_unknown_rule_says_so_and_goes_back_out_unchanged() {
-    let written = SavedRule { rule: "plugin/missing".into(), params: json!({ "keep": ["me", 1] }) };
-    let (saved, id) = node_with_rule(written, "amount");
+fn a_formula_nothing_can_read_says_so_and_goes_back_out_unchanged() {
+    let (saved, id) = node_with_formula("plugin_missing", "amount", &[SHEET]);
     let (g, problems) = Graph::load(saved.clone(), registry());
-    assert_eq!(problems, vec![LoadProblem::BrokenRule((id, "amount".into()), Error::UnknownRule("plugin/missing".into()))]);
-    assert_eq!(g.get::<Amount>(id), Err(Error::UnknownRule("plugin/missing".into())));
-    assert_eq!(g.save().unwrap(), saved, "a missing plugin doesn't cost you the data");
+    let want = Error::Failed("there's no function called plugin_missing".into());
+    assert_eq!(problems, vec![LoadProblem::BrokenFormula((id, "amount".into()), want.clone())]);
+    assert_eq!(g.get::<Amount>(id), Err(want));
+    assert_eq!(g.save(), saved, "a missing plugin doesn't cost you the data");
 
-    // And it works as soon as something registers it.
+    // And it works as soon as something can read it.
     let mut reg = Registry::new();
-    reg.runtime_rule(RuntimeRule {
-        key: "plugin/missing".into(),
-        output: "amount".into(),
-        inputs: Inputs::default(),
-        compute: Arc::new(|params, _| Ok(Some(json!(params["keep"][1].as_f64().unwrap() + 1.0)))),
-    });
+    reg.component(SHEET, "");
+    reg.cell::<Amount>(SHEET, "").compiles(Arc::new(|text| match text {
+        "plugin_missing" => Ok(Computed::typed("plugin_missing", |_| Ok(Some(Amount(2.0))))),
+        _ => Err(format!("there's no function called {text}")),
+    }));
     let (g, problems) = Graph::load(saved, Arc::new(reg));
     assert_eq!(problems, vec![]);
     assert_eq!(value(&g, id), 2.0);
 }
 
 #[test]
-fn a_rule_on_the_wrong_component_says_so() {
-    let (saved, id) = node_with_rule(SavedRule { rule: "test/sum".into(), params: Value::Null }, "cost");
+fn a_formula_on_a_cell_that_cant_hold_one_says_so() {
+    // Nothing here reads formulas on the workspace's own cells.
+    let (saved, id) = node_with_formula("sum", "cost", &[]);
     let (g, problems) = Graph::load(saved.clone(), registry());
-    let want = Error::WrongRule { rule: "test/sum".into(), component: "cost".into(), provides: "amount".into() };
-    assert_eq!(problems, vec![LoadProblem::BrokenRule((id, "cost".into()), want.clone())]);
-    assert_eq!(g.get_runtime(id, "cost"), Err(want));
-    assert_eq!(g.save().unwrap(), saved);
+    let want = Error::Failed("nothing here can read a formula".into());
+    assert_eq!(problems, vec![LoadProblem::BrokenFormula((id, "cost".into()), want.clone())]);
+    assert_eq!(g.get_value(id, "cost"), Err(want));
+    assert_eq!(g.save(), saved);
 }
 
 #[test]
-fn bad_parameters_are_an_error_in_that_cell() {
-    let (saved, id) = node_with_rule(SavedRule { rule: "test/scaled".into(), params: json!({ "by": "lots" }) }, "amount");
+fn a_formula_that_doesnt_parse_is_an_error_in_that_cell() {
+    let (saved, id) = node_with_formula("scaled lots", "amount", &[SHEET]);
     let (g, problems) = Graph::load(saved.clone(), registry());
     assert_eq!(problems.len(), 1);
-    assert!(matches!(g.get::<Amount>(id), Err(Error::Malformed { .. })));
-    assert_eq!(g.save().unwrap(), saved);
+    assert_eq!(g.get::<Amount>(id), Err(Error::Failed("lots isn't a number".into())));
+    assert_eq!(g.save(), saved);
 }
 
 #[test]
 fn a_cell_reading_a_broken_one_inherits_the_error_and_others_are_fine() {
     let mut g = Graph::with_registry(registry());
     let (broken, reader, fine) = (g.spawn(), g.spawn(), g.spawn());
-    g.set_rule(broken, "amount", "plugin/missing", Value::Null);
-    g.set(reader, Sum).link(broken, reader, Addend);
+    g.add(broken, SHEET).add(reader, SHEET).add(fine, SHEET);
+    g.set_formula(broken, "amount", "plugin_missing");
+    g.link(broken, reader, ADDEND);
     g.set(fine, Amount(1.0));
-    assert_eq!(g.get::<Amount>(reader), Err(Error::UnknownRule("plugin/missing".into())));
+    assert_eq!(g.get::<Amount>(reader), Err(Error::Failed("there's no function called plugin_missing".into())));
     assert_eq!(value(&g, fine), 1.0);
 }
 
 #[test]
 fn a_dangling_link_is_reported_and_kept() {
     let (a, gone) = (Entity::new(), Entity::new());
-    let link = recollect_graph::saved::SavedLink { to: gone, components: [("addend".to_string(), Value::Null)].into_iter().collect() };
-    let node = recollect_graph::SavedNode { id: a, components: Default::default(), rules: Default::default(), links: vec![link.clone()] };
-    let (g, problems) = Graph::load(recollect_graph::SavedGraph { nodes: vec![node], defaults: Default::default() }, registry());
+    let link = SavedEdge { to: gone, components: vec![ADDEND.to_string()], cells: [("note".to_string(), json!(1))].into_iter().collect(), formulas: Default::default() };
+    let mut node = SavedNode::empty(a);
+    node.links = vec![link.clone()];
+    let (g, problems) = Graph::load(SavedGraph { nodes: vec![node] }, registry());
     assert_eq!(problems, vec![LoadProblem::DanglingLink { from: a, to: gone }]);
-    let saved = g.save().unwrap();
+    let saved = g.save();
     assert_eq!(saved.nodes.iter().find(|n| n.id == a).unwrap().links, vec![link]);
 }
 
-// ---------- what can't be saved ----------
+// ---------- behaviour of formulas as data ----------
 
 #[test]
-fn a_closure_can_run_but_saving_one_is_an_error_not_a_silent_drop() {
+fn setting_the_same_formula_changes_nothing() {
     let (mut g, _, _, total) = sheet();
-    g.set(total, rule("throwaway").compute(|_| Ok(Amount(9.0))));
-    assert_eq!(value(&g, total), 9.0);
-    assert_eq!(g.save(), Err(SaveError::Closures(vec![(total, "amount".into())])));
-}
-
-#[test]
-fn saving_a_rule_nothing_could_load_is_an_error() {
-    let mut g = Graph::new();
-    let e = g.spawn();
-    g.set(e, Sum);
-    assert_eq!(g.get::<Amount>(e), Ok(Some(Amount(0.0))), "it runs without being registered");
-    assert_eq!(g.save(), Err(SaveError::Unregistered(vec!["test/sum".into()])), "but the file couldn't be read back");
-}
-
-// ---------- behaviour of rules as data ----------
-
-#[test]
-fn setting_the_same_rule_and_parameters_changes_nothing() {
-    let (mut g, _, _, total) = sheet();
-    g.set(total, Scaled { by: 2.0 });
+    g.set_formula(total, "amount", "scaled 2");
     value(&g, total);
     g.take_ran();
 
-    g.set(total, Scaled { by: 2.0 });
+    g.set_formula(total, "amount", "scaled 2");
     value(&g, total);
-    assert!(g.take_ran().is_empty(), "the same rule with the same parameters");
+    assert!(g.take_ran().is_empty(), "the same formula");
 
-    g.set(total, Scaled { by: 3.0 });
+    g.set_formula(total, "amount", "scaled 3");
     assert_eq!(value(&g, total), 9.0);
-    assert_eq!(g.take_ran().len(), 1, "different parameters are a different rule");
+    assert_eq!(g.take_ran().len(), 1, "different text is a different formula");
 }
 
 #[test]
-fn inputs_can_depend_on_parameters() {
-    let (mut g, a, b, total) = sheet();
-    g.link(b, total, Bonus);
-    g.set(total, SumOver { kind: "bonus".into() });
-    assert_eq!(value(&g, total), 2.0, "only the link kind it was told to follow");
-    g.set(total, SumOver { kind: "addend".into() });
+fn what_a_formula_follows_can_depend_on_its_text() {
+    let (mut g, _, b, total) = sheet();
+    g.link(b, total, BONUS);
+    g.set_formula(total, "amount", "sum_over bonus");
+    assert_eq!(value(&g, total), 2.0, "only the edges it was told to follow");
+    g.set_formula(total, "amount", "sum_over addend");
     assert_eq!(value(&g, total), 3.0);
-    assert_eq!(g.rule_of(total, "amount").unwrap().1.incoming, vec!["addend"]);
 
-    let (loaded, _) = Graph::load(g.save().unwrap(), registry());
+    let (loaded, _) = Graph::load(g.save(), registry());
     assert_eq!(value(&loaded, total), 3.0);
-    let _ = a;
 }
 
 #[test]
-fn a_rule_can_be_attached_by_key_as_a_file_or_the_llm_would() {
+fn a_formula_can_be_written_as_a_file_or_the_llm_would() {
     let (mut g, _, _, total) = sheet();
-    g.set_rule(total, "amount", "test/scaled", json!({ "by": 2.0 }));
+    g.set_formula(total, "amount", "scaled 2");
     assert_eq!(value(&g, total), 6.0);
-    g.set_rule(total, "amount", "test/nonsense", Value::Null);
-    assert_eq!(g.get::<Amount>(total), Err(Error::UnknownRule("test/nonsense".into())), "and a mistake lands in that cell");
+    g.set_formula(total, "amount", "nonsense");
+    assert_eq!(g.get::<Amount>(total), Err(Error::Failed("there's no function called nonsense".into())), "and a mistake lands in that cell");
+    g.clear(total, "amount");
+    assert_eq!(value(&g, total), 3.0, "and clearing it brings back what its component works out");
 }
 
 #[test]
 fn the_registry_can_be_listed() {
     let reg = registry();
-    let list = reg.list();
-    assert_eq!(list.iter().map(|r| r.key.as_str()).collect::<Vec<_>>(), vec!["test/scaled", "test/sum", "test/sum_over"]);
-    let scaled = &list[0];
-    assert_eq!(scaled.output, "amount");
-    assert_eq!(scaled.inputs["incoming"], vec!["addend"]);
-    let schema = scaled.params.as_ref().unwrap();
-    assert_eq!(schema["properties"]["by"]["type"], "number", "enough to know how to attach it: {schema}");
-    assert_eq!(schema["required"], json!(["by"]));
+    let list: Vec<(&str, Place)> = reg.components().map(|c| (c.name.as_str(), c.place)).collect();
+    assert_eq!(list, vec![(ADDEND, Place::Edge), (BONUS, Place::Edge), (SHEET, Place::Node)]);
+    let sheet = reg.component_def(SHEET).unwrap();
+    assert_eq!(sheet.cells, vec![Amount::NAME]);
+    let amount = reg.cell_def(Amount::NAME).unwrap();
+    assert_eq!(amount.component, SHEET);
+    assert!(amount.computed() && amount.formulas() && amount.settable(), "enough to know what can be written on it");
+    assert_eq!(reg.owner("supplier"), None, "and a cell no component brings is the workspace's own");
 }
 
 #[test]
-fn a_runtime_rule_saves_by_key_like_any_other() {
+fn a_formula_with_no_rust_type_saves_like_any_other() {
     let mut reg = Registry::new();
-    reg.runtime_rule(RuntimeRule {
-        key: "ts/lead".into(),
-        output: "lead".into(),
-        inputs: Inputs { outgoing: vec!["ships_with".into()], ..Inputs::default() },
-        compute: Arc::new(|params, cx| {
-            let linked = cx.outgoing_runtime("ships_with")?.len() as f64;
-            Ok(Some(json!(params["base"].as_f64().unwrap() + linked)))
-        }),
-    });
+    reg.free_formulas(Arc::new(|text| {
+        let base: f64 = text.strip_prefix("lead ").and_then(|b| b.parse().ok()).ok_or_else(|| format!("can't read {text}"))?;
+        Ok(Computed::json("lead", move |cx| Ok(Some(json!(base + cx.outgoing("ships_with").len() as f64)))))
+    }));
     let reg = Arc::new(reg);
     let mut g = Graph::with_registry(reg.clone());
     let (a, b) = (g.spawn(), g.spawn());
-    g.link_runtime(a, b, recollect_graph::Runtime::new("ships_with", json!({})));
-    g.set_rule(a, "lead", "ts/lead", json!({ "base": 10.0 }));
-    assert_eq!(g.get_runtime(a, "lead").unwrap().unwrap().value, json!(11.0));
+    g.link(a, b, "ships_with");
+    g.set_formula(a, "lead", "lead 10");
+    assert_eq!(g.get_value(a, "lead").unwrap(), Some(json!(11.0)));
 
-    let (loaded, problems) = Graph::load(g.save().unwrap(), reg);
+    let (loaded, problems) = Graph::load(g.save(), reg);
     assert_eq!(problems, vec![]);
-    assert_eq!(loaded.get_runtime(a, "lead").unwrap().unwrap().value, json!(11.0));
+    assert_eq!(loaded.get_value(a, "lead").unwrap(), Some(json!(11.0)));
 }
 
 // ---------- defaults ----------
 
 #[test]
-fn registry_defaults_come_from_code_and_only_changes_are_saved() {
-    #[component]
+fn defaults_come_from_code_and_only_what_is_written_is_saved() {
+    #[cell]
     struct Doubled(f64);
-    #[rule("test/doubled")]
-    struct DoubledRule;
-    impl Compute for DoubledRule {
-        type Output = Option<Doubled>;
-        fn compute(&self, cx: &Cx) -> Result<Option<Doubled>, Error> {
-            Ok(cx.own::<Amount>()?.map(|a| Doubled(a.0 * 2.0)))
-        }
-    }
-    #[rule("test/tripled")]
-    struct TripledRule;
-    impl Compute for TripledRule {
-        type Output = Option<Doubled>;
-        fn compute(&self, cx: &Cx) -> Result<Option<Doubled>, Error> {
-            Ok(cx.own::<Amount>()?.map(|a| Doubled(a.0 * 3.0)))
-        }
-    }
     let mut reg = Registry::new();
-    reg.set_default(DoubledRule).rule::<TripledRule>();
+    install(&mut reg);
+    reg.component("doubling", "Twice its amount.").requires(SHEET);
+    reg.cell::<Doubled>("doubling", "Twice its amount.").builtin(|cx| Ok(cx.own::<Amount>()?.map(|a| Doubled(a.0 * 2.0))));
     let reg = Arc::new(reg);
 
     let mut g = Graph::with_registry(reg.clone());
     let (a, note) = (g.spawn(), g.spawn());
-    g.set(a, Amount(2.0));
+    g.add(a, "doubling").set(a, Amount(2.0));
     assert_eq!(g.get::<Doubled>(a).unwrap(), Some(Doubled(4.0)));
-    assert_eq!(g.get::<Doubled>(note).unwrap(), None);
-    let saved = g.save().unwrap();
-    assert!(saved.defaults.rules.is_empty(), "it's the code's default, so a code change takes effect");
+    assert_eq!(g.get::<Doubled>(note).unwrap(), None, "a node without the component hasn't the cell");
+    let saved = g.save();
+    let mine = saved.nodes.iter().find(|n| n.id == a).unwrap();
+    assert!(!mine.cells.contains_key("doubled") && mine.formulas.is_empty(), "it's the code's default, so a code change takes effect");
+    assert_eq!(mine.components, vec!["doubling"], "and what it requires comes with it, unwritten");
 
-    // Overriding it for this graph is saved.
-    g.set_default(TripledRule);
-    assert_eq!(g.get::<Doubled>(a).unwrap(), Some(Doubled(6.0)));
-    let saved = g.save().unwrap();
-    assert_eq!(saved.defaults.rules["doubled"].rule, "test/tripled");
+    // Writing over it on a node is saved.
+    g.set(a, Doubled(6.0));
+    let saved = g.save();
+    assert_eq!(saved.nodes.iter().find(|n| n.id == a).unwrap().cells["doubled"], json!(6.0));
     let (loaded, _) = Graph::load(saved, reg);
     assert_eq!(loaded.get::<Doubled>(a).unwrap(), Some(Doubled(6.0)));
 }

@@ -1,5 +1,5 @@
 //! Toys refer to nodes by name to stay readable, which is sugar over handles: the core only ever
-//! sees an `Entity`, and each name here is an ordinary `Name` component. `tests/handles.rs` uses
+//! sees an `Entity`, and each name here is an ordinary `name` cell. `tests/handles.rs` uses
 //! handles directly.
 #![allow(dead_code)]
 
@@ -8,7 +8,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use recollect_graph::worlds::Bool;
-use recollect_graph::{Cell, Component, Entity, Error, Graph, Name, Registry, Storage};
+use recollect_graph::{Cell, CellType, Entity, Error, Graph, Name, Registry};
 
 #[derive(Default)]
 pub struct N {
@@ -36,7 +36,7 @@ impl N {
         Self::default()
     }
 
-    /// With the rules a system installs.
+    /// With what a system installs.
     pub fn with(install: fn(&mut Registry)) -> Self {
         let mut reg = Registry::new();
         install(&mut reg);
@@ -53,15 +53,16 @@ impl N {
         assert_eq!(self.g.entities().collect::<Vec<_>>(), loaded.entities().collect::<Vec<_>>());
         for e in self.g.entities() {
             assert_eq!(self.g.components_of(e), loaded.components_of(e), "{}", self.name_of(e));
-            for c in self.g.components_of(e) {
-                match (self.g.get_runtime(e, &c), loaded.get_runtime(e, &c)) {
+            assert_eq!(self.g.cells_of(e), loaded.cells_of(e), "{}", self.name_of(e));
+            for c in self.g.cells_of(e) {
+                match (self.g.get_value(e, &c), loaded.get_value(e, &c)) {
                     // Which cell is named as starting a cycle can depend on what was asked first.
                     (Err(Error::Cycle(_)), Err(Error::Cycle(_))) => {}
                     (a, b) => assert_eq!(a, b, "{c} of {}", self.name_of(e)),
                 }
             }
         }
-        assert_eq!(self.g.save().unwrap(), loaded.save().unwrap(), "and saving it again gives the same thing");
+        assert_eq!(self.g.save(), loaded.save(), "and saving it again gives the same thing");
         loaded
     }
 
@@ -90,31 +91,61 @@ impl N {
         self.names.get(s).cloned().unwrap_or_else(|| s.to_string())
     }
 
-    pub fn set<C: Component>(&mut self, name: &str, storage: impl Into<Storage<C>>) -> &mut Self {
+    /// Give a node a component.
+    pub fn add(&mut self, name: &str, component: &str) -> &mut Self {
         let e = self.e(name);
-        self.g.set(e, storage);
+        self.g.add(e, component);
         self
     }
 
-    pub fn link<L: Component>(&mut self, from: &str, to: &str, v: L) -> &mut Self {
-        let (a, b) = (self.e(from), self.e(to));
-        self.g.link(a, b, v);
-        self
-    }
-
-    pub fn unlink<L: Component>(&mut self, from: &str, to: &str) -> &mut Self {
-        let (a, b) = (self.id(from), self.id(to));
-        self.g.unlink::<L>(a, b);
-        self
-    }
-
-    pub fn remove<C: Component>(&mut self, name: &str) -> &mut Self {
+    /// Take a component from a node.
+    pub fn remove(&mut self, name: &str, component: &str) -> &mut Self {
         let e = self.id(name);
-        self.g.remove::<C>(e);
+        self.g.remove(e, component);
         self
     }
 
-    pub fn get<C: Component>(&self, name: &str) -> Cell<C> {
+    /// Write a value in a cell.
+    pub fn set<C: CellType>(&mut self, name: &str, value: C) -> &mut Self {
+        let e = self.e(name);
+        self.g.set(e, value);
+        self
+    }
+
+    /// Write a formula in a cell.
+    pub fn formula_on(&mut self, name: &str, cell: &str, text: &str) -> &mut Self {
+        let e = self.e(name);
+        self.g.set_formula(e, cell, text);
+        self
+    }
+
+    /// Take away what's written in a cell, so it's worked out again.
+    pub fn clear(&mut self, name: &str, cell: &str) -> &mut Self {
+        let e = self.id(name);
+        self.g.clear(e, cell);
+        self
+    }
+
+    /// An edge with this component.
+    pub fn link(&mut self, from: &str, to: &str, component: &str) -> &mut Self {
+        let (a, b) = (self.e(from), self.e(to));
+        self.g.link(a, b, component);
+        self
+    }
+
+    /// Take a component off an edge.
+    pub fn unlink(&mut self, from: &str, to: &str, component: &str) -> &mut Self {
+        let (a, b) = (self.id(from), self.id(to));
+        self.g.unlink(a, b, component);
+        self
+    }
+
+    /// The edge from one node to another.
+    pub fn edge(&self, from: &str, to: &str) -> Entity {
+        Entity::edge(self.id(from), self.id(to))
+    }
+
+    pub fn get<C: CellType>(&self, name: &str) -> Cell<C> {
         self.g.get::<C>(self.id(name))
     }
 
@@ -127,14 +158,14 @@ impl N {
         picks.iter().map(|(d, o)| (self.id(d).to_string(), self.ids.get(*o).map_or(o.to_string(), |e| e.to_string()))).collect()
     }
 
-    /// The nodes whose rules have run since this was last called, sorted, by name.
+    /// The nodes whose cells have been worked out since this was last called, sorted, by name.
     pub fn ran(&self) -> Vec<String> {
         let mut r: Vec<String> = self.g.take_ran().into_iter().map(|(e, _)| self.name_of(e)).collect();
         r.sort();
         r
     }
 
-    /// The same, with which component ran.
+    /// The same, with which cell ran.
     pub fn ran_cells(&self) -> Vec<String> {
         self.g.take_ran().into_iter().map(|(e, c)| format!("{c}({})", self.name_of(e))).collect()
     }
