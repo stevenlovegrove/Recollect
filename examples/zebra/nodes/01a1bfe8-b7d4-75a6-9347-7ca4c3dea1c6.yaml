@@ -1,7 +1,0 @@
-id: 01a1bfe8-b7d4-75a6-9347-7ca4c3dea1c6
-components:
-- value
-cells:
-  name: The green house is just right of the ivory house
-formulas:
-  value: Colour[Green] = Colour[Ivory] + 1

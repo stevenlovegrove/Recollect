@@ -72,7 +72,7 @@ export function WorldsView({ ws, onSelect }: ViewProps) {
   const shared = w.vars.length > 0 && new Set(options).size === w.vars[0].options.length && w.vars.every((v) => v.options.length === w.vars[0].options.length);
   const atInfo = (v: VarView) => ws.byId.get(v.id)?.cells.at?.value as { row: number; col: number } | undefined;
   const isBoard = w.vars.length > 0 && w.vars.every((v) => atInfo(v));
-  const summaries = g.components.filter((c) => c.summary);
+  const summaries = g.cells.filter((c) => c.summary);
   // Differs between the worlds left, or in any world at all, whatever's pinned or ruled out, as a
   // puzzle's constraints are.
   const differsLeft = (c: Cell) => !!c.vars?.length;
@@ -80,7 +80,7 @@ export function WorldsView({ ws, onSelect }: ViewProps) {
   const differs = (c: Cell) => (showing === "all" ? true : showing === "any" ? differsAny(c) : differsLeft(c));
   // What a node says that's worth a column: what its systems summarise it by, and any of the workspace's
   // own cells that are worked out, like a car's cost a year.
-  const shownOf = (n: GraphNode) => [...summaries.map((c) => c.name).filter((k) => n.cells[k]), ...Object.keys(n.cells).filter((k) => n.cells[k].workspace && n.cells[k].source === "rule")];
+  const shownOf = (n: GraphNode) => [...summaries.map((c) => c.name).filter((k) => n.cells[k]), ...Object.keys(n.cells).filter((k) => !ws.cellInfo(k) && n.cells[k].formula !== undefined)];
   // A choice and its options say what they are above.
   const above = new Set(w.vars.flatMap((v) => [v.id, ...v.options.map((o) => o.id)]));
   const values = g.nodes.filter((n) => !above.has(n.id) && shownOf(n).some((k) => differs(n.cells[k])));

@@ -15,13 +15,12 @@ export type Shown =
   | { kind: "named"; items: { node: string; when: Reading }[] };
 
 export interface Cell {
-  source: "stored" | "rule";
-  rule?: string;
-  own: boolean;
-  /** The kind that says what it is, if one does. It's taken from there unless `own`. */
+  /** Where what's in it comes from: written here, taken from a kind, or its component's default. */
+  source: "own" | "kind" | "default";
+  /** The kind it's taken from, if it is. */
   kind?: string;
-  /** One of the workspace's own cells, such as a price, which no system says anything about. */
-  workspace?: boolean;
+  /** The kind that would say what it is, if this didn't. */
+  beneath?: string;
   /** The formula, if one backs it. */
   formula?: string;
   value?: unknown;
@@ -43,55 +42,84 @@ export interface RowCells {
 
 export interface CellRef {
   node: string;
-  component: string;
+  cell: string;
+}
+
+/** Why an entity has a component. */
+export interface Has {
+  name: string;
+  why: "given" | "everywhere" | "kind" | "requires" | "edge";
+  /** The kind or edge it comes from, or the component that requires it. */
+  from?: string;
 }
 
 export interface GraphNode {
   id: string;
   name: string;
+  components: Has[];
   cells: Record<string, Cell>;
   /** Which row of which table its name makes it: `Year[3]` is row 3 of Year. */
   row?: { table: string; key: number | string };
   /** The rows of related tables with the same key: with this one, they're one thing. */
   parts?: string[];
-  /** The rows its cells read by where they are, as `prev` or `Year[3]` do, rather than through a link. */
+  /** The rows its cells read by where they are, as `prev` or `Year[3]` do, rather than through an edge. */
   reads?: string[];
   /** A row nobody wrote, worked out from its table and not saved, here because something written reads it. */
   unwritten?: boolean;
 }
 
-export interface Link {
+export interface Edge {
+  id: string;
   from: string;
   to: string;
-  kind: string;
-  value: unknown;
+  components: string[];
+  cells: Record<string, Cell>;
 }
 
 export interface ComponentInfo {
   name: string;
   system: string;
-  on: "node" | "link";
+  place: "node" | "edge" | "whole";
   about: string;
-  derived: boolean;
-  internal: boolean;
-  quiet: boolean;
+  icon?: string;
+  requires: string[];
+  /** For an edge: what its source has because of it. */
+  source: string[];
+  /** For an edge: what its target has because of it. */
+  target: string[];
+  /** It says something about one entity alone, so it isn't taken from a kind. */
+  per_entity: boolean;
+  /** Every node has it. */
+  everywhere: boolean;
+  /** An edge that gives a graph its shape. */
   arranges: boolean;
-  /** For a link that arranges: what it points at goes beneath, not above. */
+  /** For an edge that gives a graph its shape: what it points at goes beneath, not above. */
   reversed: boolean;
-  /** A link that says what comes first, which a map can be laid out by. */
+  /** An edge that says what comes first, which a map can be laid out by. */
   orders: boolean;
-  summary: boolean;
-  /** It's either true or false, so it can be read and set as a tick. */
-  truth: boolean;
-  initial: unknown;
+  cells: string[];
 }
 
-export interface RuleInfo {
-  key: string;
-  output: string;
-  /** Other components it can fill. */
-  also?: string[];
-  params: unknown;
+export interface CellInfo {
+  name: string;
+  component: string;
+  about: string;
+  internal: boolean;
+  /** Worth a line on a card. */
+  summary: boolean;
+  /** For a view to read, rather than a person. */
+  quiet: boolean;
+  /** It's either true or false, so it can be read and set as a tick. */
+  truth: boolean;
+  per_entity: boolean;
+  /** What a new one starts as. */
+  initial: unknown;
+  /** Worked out, unless something says otherwise. */
+  computed: boolean;
+  /** It can hold a formula. */
+  formulas: boolean;
+  /** Anything can be written in it. */
+  settable: boolean;
 }
 
 export interface OptionView {
@@ -147,12 +175,12 @@ export interface View {
   nodes: GraphNode[];
   /** Rows nobody wrote that a node reads, so a map can show them. They aren't nodes anywhere else. */
   unwritten: GraphNode[];
-  links: Link[];
+  edges: Edge[];
   components: ComponentInfo[];
-  rules: RuleInfo[];
+  cells: CellInfo[];
   worlds: WorldsView;
   checks: Check[];
-  ran: { node: string; component: string }[];
+  ran: { node: string; cell: string }[];
   proposals: number;
 }
 
@@ -212,11 +240,15 @@ export interface PlanData {
 }
 
 export interface OpView {
-  verb: "create" | "delete" | "set" | "set_rule" | "remove" | "link" | "unlink" | "set_default" | "remove_default";
+  verb: "create" | "delete" | "add" | "remove" | "link" | "unlink" | "set" | "clear";
   node: string | null;
+  /** For an edge, its target. */
   other: string | null;
+  /** The component or cell. */
   what: string | null;
   value: unknown;
+  /** What's set is a formula. */
+  formula?: boolean;
 }
 
 export interface EventView {
@@ -276,11 +308,17 @@ export interface Tried {
   error: string | null;
 }
 
+/** A cell as it's given: a value, or a formula with what its names mean. */
+export type Written = unknown | { formula: string; labels?: Labels };
+
 /** A change to make. See crates/recollect-server/src/ops.rs for what these can say. */
 export type Op =
-  | { op: "add_node"; id: string; name?: string; body?: string; components?: Record<string, unknown>; rules?: Record<string, unknown>; formula?: string; labels?: Labels; links?: { to: string; kind: string; value?: unknown }[] }
-  | { op: "set"; id: string; component: string; value?: unknown; rule?: string; params?: unknown; formula?: string; labels?: Labels }
-  | { op: "link"; from: string; to: string; kind: string; value?: unknown }
+  | { op: "add_node"; id: string; name?: string; body?: string; components?: string[]; cells?: Record<string, Written>; links?: { to: string; component: string; cells?: Record<string, Written> }[] }
+  | { op: "add" | "remove"; id: string; component: string }
+  | { op: "set"; id: string; cell: string; value?: unknown; formula?: string; labels?: Labels }
+  | { op: "set"; from: string; to: string; cell: string; value?: unknown; formula?: string }
+  | { op: "link"; from: string; to: string; component: string; cells?: Record<string, Written> }
+  | { op: "unlink"; from: string; to: string; component: string }
   | { op: "delete_node"; id: string };
 
 class ApiError extends Error {

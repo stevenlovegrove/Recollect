@@ -1,0 +1,18 @@
+id: 01a1bff4-e966-7096-9b71-a569215b0272
+components:
+- value
+cells:
+  name: “We are both knaves”
+formulas:
+  value: a = "knave" && b = "knave"
+links:
+- to: 01a1bff4-e966-7096-9b71-a5674dd7981e
+  components:
+  - label
+  cells:
+    called: a
+- to: 01a1bff4-e966-7096-9b71-a568b1037427
+  components:
+  - label
+  cells:
+    called: b

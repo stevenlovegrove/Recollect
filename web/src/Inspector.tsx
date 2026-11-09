@@ -1,17 +1,20 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, type Cell, type ComponentInfo, type EventView, type GraphNode, type Labels, type Link, type Op } from "./api";
-import { linksOf, type Workspace } from "./workspace";
-import { GLYPH, compColor, factsOf, isDropped, isNote, label, nodeColor } from "./theme";
+import { api, type Cell, type Edge, type EventView, type GraphNode, type Has, type Labels, type Op, type Written } from "./api";
+import { edgesOf, labelsOf, type Workspace } from "./workspace";
+import { badgesOf, compColor, isDropped, isNote, label, nodeColor } from "./theme";
 import { DdItemButton, Dropdown } from "./Dropdown";
 import { Brackets, CellValue, CompBadge, NodeChip, Resolved, TickBox, casesOf, shownText } from "./bits";
 import { entryText, parseEntry } from "./cellEntry";
-import { summaryOf } from "./summary";
+import { beliefLines } from "./summary";
 import { Key } from "./Shortcuts";
 import { OpLine } from "./views/HistoryView";
 import { askSure, askWhy } from "./Ask";
 
 /** A node about to be made: nothing exists until it's saved. */
 export type NodeTemplate = { heading: string; parent?: string; n: number };
+
+/** What a cell is on: a node, or the edge from one node to another. */
+type Target = { id: string } | { from: string; to: string };
 
 /** A textarea that grows with its content. */
 function AutoText({ inputRef, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { inputRef?: React.Ref<HTMLTextAreaElement | null> }) {
@@ -52,18 +55,21 @@ function useDraft(value: string, commit: (v: string) => void) {
   };
 }
 
+/** The components something can be given here: those of this place that it doesn't have, and every node doesn't have anyway. */
+function addable(ws: Workspace, place: "node" | "edge", has: string[]) {
+  return ws.view!.components.filter((c) => c.place === place && !c.everywhere && !has.includes(c.name));
+}
+
 export function NewNodePanel({ ws, template, onCreated, onClose }: { ws: Workspace; template: NodeTemplate; onCreated: (id: string) => void; onClose: () => void }) {
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
-  const [facts, setFacts] = useState<string[]>(() => (template.parent && ws.view!.workspace.systems.includes("plan") ? ["task"] : []));
+  const [components, setComponents] = useState<string[]>(() => (template.parent && ws.info("task") ? ["task"] : []));
   const [err, setErr] = useState<string | null>(null);
-  const available = ws.view!.components.filter((c) => c.on === "node" && !c.derived && !["name", "body", "sources", "done", "dropped"].includes(c.name));
+  const available = addable(ws, "node", []);
   const link = ws.partKind;
 
   const save = async (again: boolean) => {
-    const components: Record<string, unknown> = {};
-    for (const f of facts) components[f] = ws.info(f)?.initial ?? null;
-    const op: Op = { op: "add_node", id: "new:node", name: name.trim() || "Untitled", components, links: template.parent && link ? [{ to: template.parent, kind: link, value: ws.info(link)?.initial ?? null }] : [] };
+    const op: Op = { op: "add_node", id: "new:node", name: name.trim() || "Untitled", components, links: template.parent && link ? [{ to: template.parent, component: link }] : [] };
     if (body.trim()) op.body = body.trimEnd();
     try {
       const created = await ws.apply([op]);
@@ -113,8 +119,8 @@ export function NewNodePanel({ ws, template, onCreated, onClose }: { ws: Workspa
         <div className="chips">
           {available.map((c) => (
             <label key={c.name} className="toggle" title={c.about}>
-              <input type="checkbox" checked={facts.includes(c.name)} onChange={() => setFacts(facts.includes(c.name) ? facts.filter((f) => f !== c.name) : [...facts, c.name])} />
-              {GLYPH[c.name] ? `${GLYPH[c.name]} ` : ""}
+              <input type="checkbox" checked={components.includes(c.name)} onChange={() => setComponents(components.includes(c.name) ? components.filter((f) => f !== c.name) : [...components, c.name])} />
+              {c.icon ? `${c.icon} ` : ""}
               {label(c.name)}
             </label>
           ))}
@@ -132,6 +138,31 @@ export function NewNodePanel({ ws, template, onCreated, onClose }: { ws: Workspa
       </p>
     </aside>
   );
+}
+
+/** Which component cards are folded away, remembered per component, so the same kind of card stays the same way. */
+function useCollapsed(component: string): [boolean, () => void] {
+  const key = `recollect.collapsed.${component}`;
+  const read = () => {
+    try {
+      return localStorage.getItem(key) === "1";
+    } catch {
+      return false;
+    }
+  };
+  const [collapsed, setCollapsed] = useState(read);
+  return [
+    collapsed,
+    () => {
+      const next = !collapsed;
+      setCollapsed(next);
+      try {
+        localStorage.setItem(key, next ? "1" : "0");
+      } catch {
+        // Not remembered, then.
+      }
+    },
+  ];
 }
 
 export function Inspector({
@@ -156,6 +187,7 @@ export function Inspector({
   const view = ws.view!;
   const [err, setErr] = useState<string | null>(null);
   const [linking, setLinking] = useState(false);
+  const [naming, setNaming] = useState(false);
   const nameRef = useRef<HTMLTextAreaElement | null>(null);
   const lastCommand = useRef(command?.n);
   useEffect(() => {
@@ -179,38 +211,29 @@ export function Inspector({
     }
   };
 
-  const text = (c: string) => (typeof node.cells[c]?.value === "string" ? (node.cells[c].value as string) : "");
-  const name = useDraft(text("name"), (v) => v.trim() && run([{ op: "set", id, component: "name", value: v.trim() }]));
-  const notes = useDraft(text("body"), (v) => run(v.trim() ? [{ op: "set", id, component: "body", value: v.trimEnd() }] : [{ op: "set", id, component: "body" }]));
-
-  const { outgoing, incoming } = linksOf(view, id, ws.ends);
-  const facts = factsOf(node);
-  // Where a cell shows goes by what it is, not by who last said it, so typing over one doesn't move it.
-  const typedOver = (c: string) => !!ws.info(c)?.derived && holdsFormula(ws, c);
-  const shows = (c: string, cell: Cell) => cell.own || !ws.info(c)?.quiet;
-  const stored = view.components.filter((c) => c.on === "node" && !["name", "body"].includes(c.name) && node.cells[c.name]?.source === "stored" && !typedOver(c.name));
-  // A tick with nothing to say, such as done on something with nothing to finish, isn't worth showing.
-  const ticks = Object.entries(node.cells).filter(([c, cell]) => typedOver(c) && ws.info(c)?.truth && shows(c, cell) && (cell.own || casesOf(cell).some((v) => v !== null)));
-  const kinds = view.links.filter((l) => l.from === id && l.kind === "is_a").map((l) => l.to);
-  // The workspace's own cells, which no system says anything about: typed in here, or taken from its kind.
-  const ownCells = Object.entries(node.cells).filter(([, cell]) => cell.workspace);
-  const computedHere = Object.entries(node.cells).filter(([c, cell]) => !cell.workspace && (cell.source === "rule" || typedOver(c)) && shows(c, cell) && !(typedOver(c) && ws.info(c)?.truth));
-  const missing = view.components.filter((c) => c.on === "node" && !c.derived && !node.cells[c.name]);
-  const [naming, setNaming] = useState(false);
-  // What its card on the map says, said in full.
-  const summary = summaryOf(ws, node);
+  const nameValue = typeof node.cells.name?.value === "string" ? (node.cells.name.value as string) : "";
+  const name = useDraft(nameValue, (v) => v.trim() && run([{ op: "set", id, cell: "name", value: v.trim() }]));
+  const { outgoing, incoming } = edgesOf(view, id, ws.ends);
+  // The workspace's own cells, grouped by where they come from: a kind, or here.
+  const free = Object.entries(node.cells).filter(([c]) => !ws.cellInfo(c) && c !== "name");
+  const homes = new Map<string, [string, Cell][]>();
+  for (const [c, cell] of free) {
+    const home = cell.kind ?? cell.beneath ?? "";
+    homes.set(home, [...(homes.get(home) ?? []), [c, cell]]);
+  }
+  // What it was given first, then what its kinds give it, then what its edges bring, then what those require.
+  const order = ["given", "kind", "everywhere", "edge", "requires"];
+  const shown = node.components.filter((c) => c.name !== "named").sort((a, b) => order.indexOf(a.why) - order.indexOf(b.why));
+  const has = node.components.map((c) => c.name);
 
   return (
     <aside className="inspector">
       <div className="insp-head" style={{ borderColor: nodeColor(node) }}>
         <div className="insp-kind">
-          {facts.map((c) => (
-            <CompBadge key={c} c={c} />
+          {badgesOf(node).map((c) => (
+            <CompBadge key={c} ws={ws} c={c} onClick={() => document.getElementById(`card-${c}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" })} />
           ))}
-          {kinds.map((k) => (
-            <NodeChip key={k} ws={ws} id={k} onSelect={onSelect} />
-          ))}
-          {isNote(node) && !kinds.length && <span className="muted">note</span>}
+          {isNote(node) && <span className="muted">note</span>}
         </div>
         <button className="icon" onClick={onClose} title="Close (esc)">
           ×
@@ -222,50 +245,24 @@ export function Inspector({
           <Key k="e" />
           <AutoText inputRef={nameRef} className="insp-title-input" aria-label="Name" placeholder="Name" {...name} onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()} />
         </div>
-        <AutoText className="insp-notes" aria-label="Notes" placeholder="Notes…" {...notes} />
         <code className="muted small">{id}</code>
       </div>
 
       {err && <div className="error">{err}</div>}
 
-      {summary.length > 0 && (
-        <section>
-          <h4>At a glance</h4>
-          <dl className="glance">
-            {summary.map((l) => (
-              <div key={l.name} className={l.trivial ? "trivial" : ""}>
-                <dt title={l.about}>{label(l.name)}</dt>
-                <dd>
-                  <Brackets text={l.text} />
-                  {l.about && <div className="muted small">{l.about}.</div>}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-      )}
+      {shown.map((c) => (
+        <ComponentCard key={c.name} ws={ws} node={node} has={c} run={run} onSelect={onSelect} onShowDecisions={onShowDecisions} />
+      ))}
+      {[...homes].map(([home, cells]) => (
+        <CellsCard key={home || "own"} ws={ws} id={id} home={home} cells={cells} onSelect={onSelect} />
+      ))}
+      {naming && <NewCell ws={ws} taken={Object.keys(node.cells)} onName={(c) => run([{ op: "set", id, cell: c, value: 0 }]).then(() => setNaming(false))} onCancel={() => setNaming(false)} />}
 
-      <section>
-        <h4>What it is</h4>
-        {stored.length === 0 && ownCells.length === 0 && ticks.length === 0 && !computedHere.some(([, cell]) => cell.own) && <p className="muted small">A plain note. Add something to give it behaviour, or leave it as a note.</p>}
-        {ticks.map(([c, cell]) => (
-          <TickRow key={c} ws={ws} id={id} c={c} cell={cell} info={ws.info(c)} onSelect={onSelect} />
-        ))}
-        {stored.map((c) => (
-          <FactEditor key={c.name} node={node} info={c} ws={ws} run={run} onSelect={onSelect} onShowDecisions={onShowDecisions} />
-        ))}
-        {ownCells.length > 0 && (
-          <div className="own-cells">
-            {ownCells.map(([c, cell]) => (
-              <OwnCell key={c} ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} />
-            ))}
-          </div>
-        )}
-        {naming && <NewCell ws={ws} taken={Object.keys(node.cells)} onName={(c) => run([{ op: "set", id, component: c, value: null }]).then(() => setNaming(false))} onCancel={() => setNaming(false)} />}
+      <div className="row">
         <Dropdown label={<>＋ Add</>}>
-          {missing.map((c) => (
-            <DdItemButton key={c.name} color={compColor(c.name)} onClick={() => run([{ op: "set", id, component: c.name, value: c.initial ?? null }])}>
-              <span className="dd-glyph">{GLYPH[c.name] ?? "·"}</span>
+          {addable(ws, "node", has).map((c) => (
+            <DdItemButton key={c.name} color={compColor(c.name)} onClick={() => run([{ op: "add", id, component: c.name }])}>
+              <span className="dd-glyph">{c.icon ?? "·"}</span>
               <span>
                 <b>{label(c.name)}</b>
                 <span className="dd-desc">{c.about}</span>
@@ -280,237 +277,273 @@ export function Inspector({
             </span>
           </DdItemButton>
         </Dropdown>
-      </section>
+      </div>
 
-      {computedHere.length > 0 && (
-        <section>
-          <h4>Worked out</h4>
-          {computedHere.map(([c, cell]) => (
-            <Derived key={c} ws={ws} id={id} c={c} cell={cell} info={ws.info(c)} onSelect={onSelect} />
-          ))}
-        </section>
-      )}
+      <EdgeList title="Goes to" id={id} edges={outgoing} ws={ws} onSelect={onSelect} run={run} />
+      <EdgeList title="Comes from" id={id} edges={incoming} ws={ws} onSelect={onSelect} run={run} />
 
-      <LinkList title="Goes to" id={id} links={outgoing} ws={ws} onSelect={onSelect} run={run} />
-      <LinkList title="Comes from" id={id} links={incoming} ws={ws} onSelect={onSelect} run={run} />
-
-      {(
-        <div className="row">
-          <button className="key-host" onClick={() => setLinking(!linking)}>
-            <Key k="l" />
-            Link…
+      <div className="row">
+        <button className="key-host" onClick={() => setLinking(!linking)}>
+          <Key k="l" />
+          Link…
+        </button>
+        {ws.partKind && (
+          <button className="key-host" onClick={() => onAdd({ heading: `New part of “${node.name}”`, parent: id })}>
+            <Key k="c" />
+            Add part…
           </button>
-          {ws.partKind && (
-            <button className="key-host" onClick={() => onAdd({ heading: `New part of “${node.name}”`, parent: id })}>
-              <Key k="c" />
-              Add part…
-            </button>
-          )}
-        </div>
-      )}
+        )}
+      </div>
       {linking && <LinkForm ws={ws} id={id} onDone={() => setLinking(false)} run={run} />}
 
       <NodeHistory ws={ws} id={id} onSelect={onSelect} />
 
-      {(
-        <section className="danger-zone">
-          {ws.info("dropped") && (
-            <button
-              className="key-host"
-              onClick={async () => {
-                if (isDropped(node)) run([{ op: "set", id, component: "dropped" }], "brought back");
-                else {
-                  const why = await askWhy(`Drop “${node.name}”?`, "Drop");
-                  if (why !== null) run([{ op: "set", id, component: "dropped", value: true }], why);
-                }
-              }}
-            >
-              <Key k="⌫" />
-              {isDropped(node) ? "Bring back" : "Drop…"}
-            </button>
-          )}
+      <section className="danger-zone">
+        {node.cells.dropped && (
           <button
-            className="danger"
+            className="key-host"
             onClick={async () => {
-              if (await askSure(`Delete “${node.name}” and its links? It stays in the log, and can be undone from there.`, "Delete")) run([{ op: "delete_node", id }], "deleted");
+              if (isDropped(node)) run([{ op: "set", id, cell: "dropped" }], "brought back");
+              else {
+                const why = await askWhy(`Drop “${node.name}”?`, "Drop");
+                if (why !== null) run([{ op: "set", id, cell: "dropped", value: true }], why);
+              }
             }}
           >
-            Delete
+            <Key k="⌫" />
+            {isDropped(node) ? "Bring back" : "Drop…"}
           </button>
-        </section>
-      )}
+        )}
+        <button
+          className="danger"
+          onClick={async () => {
+            if (await askSure(`Delete “${node.name}” and its edges? It stays in the log, and can be undone from there.`, "Delete")) run([{ op: "delete_node", id }], "deleted");
+          }}
+        >
+          Delete
+        </button>
+      </section>
     </aside>
   );
 }
 
-/** Edit a stored fact: as a number, as text, or as fields, whichever it is. */
-function FactEditor({ node, info, ws, run, onSelect, onShowDecisions }: { node: GraphNode; info: ComponentInfo; ws: Workspace; run: (ops: Op[], why?: string) => Promise<boolean>; onSelect: (id: string) => void; onShowDecisions: (id: string) => void }) {
-  const id = node.id;
-  const c = info.name;
-  const cell = node.cells[c];
-  const value = cell.value;
-  const set = (v: unknown, why = "") => run([{ op: "set", id, component: c, value: v }], why);
-  const rules = ws.view!.rules.filter((r) => r.output === c && !r.key.startsWith("expr@"));
-  const formulaCan = holdsFormula(ws, c);
-  return (
-    <div className="comp" style={{ ["--c" as string]: compColor(c) }}>
-      <div className="comp-head">
-        <span className="comp-name" title={info.about}>
-          {GLYPH[c] && <span className="glyph">{GLYPH[c]}</span>} {label(c)}
+/** Why something has a component, in a few words. */
+function Why({ ws, has, self, onSelect }: { ws: Workspace; has: Has; self: string; onSelect: (id: string) => void }) {
+  switch (has.why) {
+    case "kind":
+      return (
+        <span className="comp-origin">
+          from <NodeChip ws={ws} id={has.from!} onSelect={onSelect} />
         </span>
-        {(
-          <button className="icon small" title={info.derived ? "Go back to working this out" : `Remove ${label(c).toLowerCase()}`} onClick={() => run([{ op: "set", id, component: c }])}>
+      );
+    case "requires":
+      return <span className="comp-origin">because it's {article(has.from!)}</span>;
+    case "edge": {
+      const e = ws.edgeById.get(has.from!);
+      if (!e) return null;
+      // The edge's component that brings this one.
+      const by = e.components.find((c) => (e.from === self ? ws.info(c)?.source : ws.info(c)?.target)?.includes(has.name)) ?? e.components[0];
+      const words = relation(by);
+      return e.from === self ? (
+        <span className="comp-origin">
+          as {words} <NodeChip ws={ws} id={e.to} onSelect={onSelect} />
+        </span>
+      ) : (
+        <span className="comp-origin">
+          as what <NodeChip ws={ws} id={e.from} onSelect={onSelect} /> is {words}
+        </span>
+      );
+    }
+    default:
+      return null;
+  }
+}
+
+/** An edge component as the words between its ends: "part of", "an alternative of". */
+function relation(c: string): string {
+  const words = label(c).toLowerCase();
+  return /\b(of|on|a|to)$/.test(words) ? words : `${/^[aeiou]/.test(words) ? "an" : "a"} ${words} of`;
+}
+
+/** A component's name after "a" or "an". */
+function article(c: string): string {
+  const word = label(c).toLowerCase();
+  return /^[aeiou]/.test(word) ? `an ${word}` : `a ${word}`;
+}
+
+/** A component and its cells, with why it's here. One given here can be taken away. */
+function ComponentCard({ ws, node, has, run, onSelect, onShowDecisions }: { ws: Workspace; node: GraphNode; has: Has; run: (ops: Op[], why?: string) => Promise<boolean>; onSelect: (id: string) => void; onShowDecisions: (id: string) => void }) {
+  const c = has.name;
+  const info = ws.info(c);
+  const [collapsed, toggle] = useCollapsed(c);
+  const id = node.id;
+  // A tick with nothing to say, such as done on something with nothing to finish, isn't worth showing.
+  const silent = (x: string) => !!ws.cellInfo(x)?.truth && node.cells[x].source !== "own" && casesOf(node.cells[x]).every((v) => v === null);
+  const cells = (info?.cells ?? []).filter((x) => node.cells[x] && !ws.cellInfo(x)?.internal && (!ws.cellInfo(x)?.quiet || node.cells[x].source === "own") && !silent(x));
+  const beliefs = beliefLines(ws, node).filter((l) => l.component === c);
+  const chosen = c === "decision" ? node.cells.chosen?.value : undefined;
+  return (
+    <div className={`comp ${collapsed ? "collapsed" : ""}`} id={`card-${c}`} style={{ ["--c" as string]: compColor(c) }}>
+      <div className="comp-head">
+        <button className="comp-fold" onClick={toggle} title={collapsed ? "Show" : "Fold away"} aria-expanded={!collapsed}>
+          {collapsed ? "▸" : "▾"}
+        </button>
+        <span className="comp-name" title={info?.about}>
+          {info?.icon && <span className="glyph">{info.icon}</span>} {label(c)}
+        </span>
+        <Why ws={ws} has={has} self={id} onSelect={onSelect} />
+        {has.why === "given" && (
+          <button className="icon small" title={`Take ${label(c).toLowerCase()} away`} onClick={() => run([{ op: "remove", id, component: c }])}>
             ×
           </button>
         )}
       </div>
-      {c === "decision" ? (
-        <div className="comp-body small">
-          {(value as { chosen?: string }).chosen ? (
-            <>
-              Chose <NodeChip ws={ws} id={(value as { chosen: string }).chosen} onSelect={onSelect} />.{" "}
-            </>
-          ) : (
-            <span className="muted">Still open. </span>
-          )}
-          <span className="muted">
-            Its options are the nodes linked to it by an Alternative link, which you can compare on the{" "}
-            <button className="link" onClick={() => onShowDecisions(id)}>
-              Decisions tab
-            </button>
-            .
-          </span>
-        </div>
-      ) : formulaCan ? (
+      {!collapsed && (
         <div className="comp-body">
-          <CellEditor ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} />
-        </div>
-      ) : value !== null && value !== undefined && (
-        <div className="comp-body">
-          <ValueEditor key={JSON.stringify(value)} value={value} onCommit={set} />
-          {rules.length > 0 && (
-            <div className="muted small">
-              or work it out with{" "}
-              {rules.map((r) => (
-                <button key={r.key} className="link" onClick={() => run([{ op: "set", id, component: c, rule: r.key }])}>
-                  {r.key}
+          {info?.about && !cells.length && !beliefs.length && c !== "decision" && <span className="muted small">{info.about}</span>}
+          {c === "decision" && (
+            <div className="small">
+              {typeof chosen === "string" ? (
+                <>
+                  Chose <NodeChip ws={ws} id={chosen} onSelect={onSelect} />.{" "}
+                  <button className="link" onClick={() => run([{ op: "set", id, cell: "chosen" }], "reopened")}>
+                    reopen
+                  </button>
+                </>
+              ) : (
+                <span className="muted">Still open. </span>
+              )}{" "}
+              <span className="muted">
+                Its options are what's linked to it as an alternative, which you can compare on the{" "}
+                <button className="link" onClick={() => onShowDecisions(id)}>
+                  Decisions tab
                 </button>
-              ))}
+                .
+              </span>
             </div>
           )}
+          {beliefs.map((l) => (
+            <div key={l.name} className="derived">
+              <span className="derived-k" title={l.about}>
+                {label(l.name)}
+              </span>
+              <span className="derived-v mono-value">{l.text}</span>
+              <span />
+            </div>
+          ))}
+          {c === "notes" && <NotesBody value={typeof node.cells.body?.value === "string" ? (node.cells.body.value as string) : ""} commit={(v) => run([{ op: "set", id, cell: "body", value: v.trimEnd() }])} />}
+          {cells.filter((x) => x !== "chosen" && !(c === "notes" && x === "body")).map((x) => (
+            <CellRow key={x} ws={ws} target={{ id }} c={x} cell={node.cells[x]} onSelect={onSelect} />
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-function ValueEditor({ value, onCommit }: { value: unknown; onCommit: (v: unknown) => void }) {
-  const [text, setText] = useState(typeof value === "string" ? value : JSON.stringify(value));
-  const [bad, setBad] = useState(false);
-  if (typeof value === "number") {
-    return (
-      <input
-        type="number"
-        step="any"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={() => text !== "" && Number(text) !== value && onCommit(Number(text))}
-        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-      />
-    );
-  }
-  if (typeof value === "string" && value.includes("\n")) {
-    return <textarea className="value-text" rows={Math.min(24, value.split("\n").length + 1)} spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} onBlur={() => text !== value && onCommit(text)} />;
-  }
-  if (typeof value === "string") {
-    return <input value={text} onChange={(e) => setText(e.target.value)} onBlur={() => text !== value && onCommit(text)} onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()} />;
-  }
-  // Fields of a plain object get their own inputs, and anything else is edited as it's written.
-  if (value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((v) => typeof v === "number" || typeof v === "string")) {
-    const fields = value as Record<string, unknown>;
-    return (
-      <div className="fields">
-        {Object.entries(fields).map(([k, v]) => (
-          <label key={k} className="labelled">
-            <span className="labelled-l">{label(k)}</span>
-            <span className="labelled-c">
-              <ValueEditor value={v} onCommit={(next) => onCommit({ ...fields, [k]: next })} />
-            </span>
-          </label>
-        ))}
-      </div>
-    );
-  }
+/** Notes, as text that grows as it's written. */
+function NotesBody({ value, commit }: { value: string; commit: (v: string) => void }) {
+  const notes = useDraft(value, commit);
+  return <AutoText className="insp-notes" aria-label="Notes" placeholder="Notes…" {...notes} />;
+}
+
+/** The workspace's own cells that come from one place: a kind, or the node itself. */
+function CellsCard({ ws, id, home, cells, onSelect }: { ws: Workspace; id: string; home: string; cells: [string, Cell][]; onSelect: (id: string) => void }) {
+  const [collapsed, toggle] = useCollapsed(home ? "kind cells" : "own cells");
   return (
-    <textarea
-      className={bad ? "bad" : undefined}
-      rows={2}
-      value={text}
-      onChange={(e) => {
-        setText(e.target.value);
-        setBad(false);
-      }}
-      onBlur={() => {
-        try {
-          const next = JSON.parse(text);
-          if (JSON.stringify(next) !== JSON.stringify(value)) onCommit(next);
-        } catch {
-          setBad(true);
-        }
-      }}
-    />
+    <div className={`comp ${collapsed ? "collapsed" : ""}`} style={{ ["--c" as string]: "var(--c-none)" }}>
+      <div className="comp-head">
+        <button className="comp-fold" onClick={toggle} title={collapsed ? "Show" : "Fold away"} aria-expanded={!collapsed}>
+          {collapsed ? "▸" : "▾"}
+        </button>
+        {home ? (
+          <span className="comp-name">
+            Cells from <NodeChip ws={ws} id={home} onSelect={onSelect} />
+          </span>
+        ) : (
+          <span className="comp-name">Its own cells</span>
+        )}
+      </div>
+      {!collapsed && (
+        <div className="comp-body">
+          {cells.map(([c, cell]) => (
+            <CellRow key={c} ws={ws} target={{ id }} c={c} cell={cell} onSelect={onSelect} own />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
-/** Whether a formula can go in this component at all. A workspace's own cells can always hold one. */
-export function holdsFormula(ws: Workspace, c: string): boolean {
-  return !ws.info(c) || ws.view!.rules.some((r) => r.key.startsWith("expr@") && (r.output === c || r.also?.includes(c)));
-}
-
-/** One of the workspace's own cells: typed in here, or taken from its kind until this node says otherwise. */
-function OwnCell({ ws, id, c, cell, onSelect }: { ws: Workspace; id: string; c: string; cell: Cell; onSelect: (id: string) => void }) {
+/**
+ * One cell: what it comes to, where that's from, and a way to write over it. A true-or-false cell on a node
+ * is a box to tick. Taking away what's written here goes back to the kind's, or the default.
+ */
+function CellRow({ ws, target, c, cell, onSelect, own }: { ws: Workspace; target: Target; c: string; cell: Cell; onSelect: (id: string) => void; own?: boolean }) {
   const [editing, setEditing] = useState(false);
-  const ownFormula = cell.formula !== undefined && cell.own;
-  const kindName = cell.kind ? (ws.byId.get(cell.kind)?.name ?? "its kind") : null;
+  const info = ws.cellInfo(c);
+  const settable = !info || info.settable;
+  const here = cell.source === "own";
+  const ownFormula = cell.formula !== undefined && here;
+  const tick = info?.truth && "id" in target;
+  const back = cell.beneath ?? cell.kind;
+  const clear = () => ws.apply([entryOp(target, c, parseEntry(""), undefined, ownFormula)]).catch((e) => alert(String(e)));
   return (
     <div className="derived">
-      <code className="derived-k own-cell-k" title="What a formula calls it">
-        {c}
-      </code>
+      <span className={`derived-k ${own ? "own-cell-k" : ""}`} title={info?.about ?? "What a formula calls it"}>
+        {tick ? (
+          <label className="tick-k">
+            <TickBox ws={ws} id={(target as { id: string }).id} c={c} /> {label(c)}
+          </label>
+        ) : own ? (
+          <code>{c}</code>
+        ) : (
+          label(c)
+        )}
+      </span>
       <span className="derived-v">
         {ownFormula ? (
-          <CellEditor key={cell.formula} ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} />
+          <CellEditor key={cell.formula} ws={ws} target={target} c={c} cell={cell} onSelect={onSelect} />
         ) : editing ? (
-          <CellEditor ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} opening onClosed={() => setEditing(false)} />
+          <CellEditor ws={ws} target={target} c={c} cell={cell} onSelect={onSelect} opening onClosed={() => setEditing(false)} />
         ) : (
           <span className="cell-line">
             <CellValue ws={ws} cell={cell} onSelect={onSelect} component={c} />
-            {cell.kind && !cell.own && (
+            {cell.source === "kind" && cell.kind && (
               <span className="muted small">
                 {" "}
                 from <NodeChip ws={ws} id={cell.kind} onSelect={onSelect} />
               </span>
             )}
-            <button className="link small" title={cell.formula ? `=${cell.formula}` : undefined} onClick={() => setEditing(true)}>
-              edit
-            </button>
+            {settable && (
+              <button className="link small" title={cell.formula ? `Worked out by =${cell.formula}` : undefined} onClick={() => setEditing(true)}>
+                edit
+              </button>
+            )}
           </span>
         )}
       </span>
-      {cell.own && (
-        <button className="icon small" title={kindName ? `Go back to ${kindName}’s` : `Remove ${c}`} onClick={() => ws.apply([entryOp(id, c, parseEntry(""), undefined, ownFormula)]).catch((e) => alert(String(e)))}>
+      {here && (info?.computed || back || !info) ? (
+        <button className="icon small" title={back ? `Go back to ${ws.byId.get(back)?.name ?? "its kind"}’s` : info?.computed ? "Go back to working this out" : `Take ${c} away`} onClick={clear}>
           ×
         </button>
+      ) : (
+        <span />
       )}
     </div>
   );
+}
+
+/** Whether a formula can go in this cell. A workspace's own cells can always hold one. */
+export function holdsFormula(ws: Workspace, c: string): boolean {
+  return ws.cellInfo(c)?.formulas ?? true;
 }
 
 /** Naming a new cell of the node's own. It has to read as a name, since that's what formulas call it. */
 function NewCell({ ws, taken, onName, onCancel }: { ws: Workspace; taken: string[]; onName: (c: string) => void; onCancel: () => void }) {
   const [name, setName] = useState("");
   const c = name.trim();
-  const problem = !c ? null : !/^[\p{L}_][\p{L}\p{N}_]*$/u.test(c) ? "A name is letters, digits and _, and starts with a letter" : ws.info(c) ? `${c} is a system's, not the workspace's` : taken.includes(c) ? "It already has that" : NOT_NAMES.has(c) ? `${c} means something in a formula already` : null;
+  const problem = !c ? null : !/^[\p{L}_][\p{L}\p{N}_]*$/u.test(c) ? "A name is letters, digits and _, and starts with a letter" : ws.cellInfo(c) ? `${c} is a cell of ${label(ws.cellInfo(c)!.component).toLowerCase()}, not one of the workspace's own` : taken.includes(c) ? "It already has that" : NOT_NAMES.has(c) ? `${c} means something in a formula already` : null;
   return (
     <div className="new-cell">
       <input
@@ -538,13 +571,14 @@ function NewCell({ ws, taken, onName, onCancel }: { ws: Workspace; taken: string
 }
 
 /** The change an entry makes. A formula's labels go with it, so a formula replaced by a value takes them along. */
-export function entryOp(id: string, component: string, entry: ReturnType<typeof parseEntry>, labels: Labels | undefined, wasFormula: boolean): Op {
-  if (entry.kind === "formula") return { op: "set", id, component, formula: entry.text, labels };
-  const dropped = wasFormula ? { labels: {} } : {};
-  return entry.kind === "value" ? { op: "set", id, component, value: entry.value, ...dropped } : { op: "set", id, component, ...dropped };
+export function entryOp(target: Target, cell: string, entry: ReturnType<typeof parseEntry>, labels: Labels | undefined, wasFormula: boolean): Op {
+  const on = "id" in target ? { id: target.id } : { from: target.from, to: target.to };
+  const dropped = wasFormula && "id" in target ? { labels: {} } : {};
+  if (entry.kind === "formula") return { op: "set", ...on, cell, formula: entry.text, ...("id" in target ? { labels } : {}) } as Op;
+  return (entry.kind === "value" ? { op: "set", ...on, cell, value: entry.value, ...dropped } : { op: "set", ...on, cell, ...dropped }) as Op;
 }
 
-const NOT_NAMES = new Set(["true", "false", "undefined", "self", "in", "out", "with", "if", "defined", "chose", "round", "floor", "ceil", "sum", "product", "all", "any", "count", "pick", "distinct", "row", "rows", "prev", "next", "abs", "min", "max", "or", "effort", "has", "whole", "is_leaf", "done_beneath", "days"]);
+const NOT_NAMES = new Set(["true", "false", "undefined", "self", "from", "to", "via", "in", "out", "with", "if", "defined", "chose", "round", "floor", "ceil", "sum", "product", "all", "any", "count", "pick", "distinct", "row", "rows", "prev", "next", "abs", "min", "max", "or", "effort", "has", "whole", "is_leaf", "done_beneath", "days"]);
 
 /** The names a formula uses that have to come from somewhere: its labels. */
 function namesIn(formula: string): string[] {
@@ -556,14 +590,15 @@ function namesIn(formula: string): string[] {
 
 /**
  * A cell as in a spreadsheet: one field, where `=` starts a formula and anything else is a value. A
- * formula also says what its names mean. Hovering over a bracketed part says what that part comes to.
+ * formula on a node also says what its names mean. Hovering over a bracketed part says what that part
+ * comes to.
  */
-function CellEditor({ ws, id, c, cell, onSelect, opening, onClosed }: { ws: Workspace; id: string; c: string; cell: Cell; onSelect: (id: string) => void; opening?: boolean; onClosed?: () => void }) {
+function CellEditor({ ws, target, c, cell, onSelect, opening, onClosed }: { ws: Workspace; target: Target; c: string; cell: Cell; onSelect: (id: string) => void; opening?: boolean; onClosed?: () => void }) {
   const formula = cell.formula;
+  const id = "id" in target ? target.id : null;
   // A formula taken from a kind has its names labelled there, and typing over it starts from those.
-  const labelledOn = !cell.own && cell.kind ? cell.kind : id;
-  const existing: Labels = {};
-  for (const l of ws.view!.links) if (l.from === labelledOn && l.kind === "label") (existing[String(l.value)] ??= []).push(l.to);
+  const labelledOn = id && cell.source === "kind" && cell.kind ? cell.kind : id;
+  const existing: Labels = labelledOn ? labelsOf(ws.view!, labelledOn) : {};
   const [draft, setOpenDraft] = useState<{ text: string; labels: Labels } | null>(opening ? { text: entryText(cell), labels: existing } : null);
   const setDraft = (d: { text: string; labels: Labels } | null) => {
     setOpenDraft(d);
@@ -578,7 +613,7 @@ function CellEditor({ ws, id, c, cell, onSelect, opening, onClosed }: { ws: Work
 
   const hold = (text: string | null) => {
     const n = ++asked.current;
-    if (!text) return setPart(null);
+    if (!text || !id) return setPart(null);
     setTimeout(() => {
       if (n !== asked.current) return;
       api.tryFormula(id, text, ws.world).then((t) => {
@@ -589,12 +624,12 @@ function CellEditor({ ws, id, c, cell, onSelect, opening, onClosed }: { ws: Work
 
   if (draft) {
     const entry = parseEntry(draft.text);
-    const uses = entry.kind === "formula" ? namesIn(entry.text) : [];
+    const uses = entry.kind === "formula" && id ? namesIn(entry.text) : [];
     const unknown = uses.filter((n) => !draft.labels[n]?.length);
     const save = async () => {
       const labels = Object.fromEntries(uses.filter((n) => draft.labels[n]?.length).map((n) => [n, draft.labels[n]]));
       try {
-        await ws.apply([entryOp(id, c, entry, labels, formula !== undefined)]);
+        await ws.apply([entryOp(target, c, entry, labels, formula !== undefined)]);
         setRefused(null);
         setDraft(null);
       } catch (e) {
@@ -705,16 +740,18 @@ function CellEditor({ ws, id, c, cell, onSelect, opening, onClosed }: { ws: Work
           <code>{part.text}</code> <span className="muted">is</span> {part.reads}
         </div>
       )}
-      <button
-        className="link small"
-        onClick={async () => {
-          if (expansion !== null) return setExpansion(null);
-          const t = await api.tryFormula(id, formula, ws.world);
-          setExpansion(t.expansion ?? t.error ?? "");
-        }}
-      >
-        {expansion === null ? "what it expands to" : "hide"}
-      </button>
+      {id && (
+        <button
+          className="link small"
+          onClick={async () => {
+            if (expansion !== null) return setExpansion(null);
+            const t = await api.tryFormula(id, formula, ws.world);
+            setExpansion(t.expansion ?? t.error ?? "");
+          }}
+        >
+          {expansion === null ? "what it expands to" : "hide"}
+        </button>
+      )}
       {expansion !== null && (
         <code className="formula-text formula-expansion small">
           <Brackets text={expansion} />
@@ -751,124 +788,59 @@ function FormulaRefs({ text, labels, ws, onSelect }: { text: string; labels: Lab
   return <>{parts}</>;
 }
 
-/** A cell that's worked out. Anything a formula can fill can be typed over, and that's undone by taking it away again. */
-function Derived({ ws, id, c, cell, info, onSelect }: { ws: Workspace; id: string; c: string; cell: Cell; info: ComponentInfo | undefined; onSelect: (id: string) => void }) {
-  const [editing, setEditing] = useState(false);
-  const canEdit = holdsFormula(ws, c);
-  const ownFormula = cell.formula !== undefined && cell.own;
-  const typed = cell.own && cell.formula === undefined && cell.source === "stored";
-  return (
-    <div className="derived">
-      <span className="derived-k" title={info?.about}>
-        {label(c)}
-        {cell.own && cell.formula === undefined && cell.rule && <span className="muted small"> · {cell.rule}</span>}
-      </span>
-      <span className="derived-v">
-        {ownFormula ? (
-          <CellEditor key={cell.formula} ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} />
-        ) : editing ? (
-          <CellEditor ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} opening onClosed={() => setEditing(false)} />
-        ) : (
-          <span className="cell-line">
-            <CellValue ws={ws} cell={cell} onSelect={onSelect} component={c} />
-            {canEdit && (
-              <button className="link small" title={cell.formula ? `Worked out by =${cell.formula}` : undefined} onClick={() => setEditing(true)}>
-                edit
-              </button>
-            )}
-          </span>
-        )}
-      </span>
-      {(ownFormula || typed) && info?.derived && (
-        <button className="icon small" title="Go back to working this out" onClick={() => ws.apply([entryOp(id, c, parseEntry(""), undefined, ownFormula)]).catch((e) => alert(String(e)))}>
-          ×
-        </button>
-      )}
-    </div>
-  );
-}
-
-/** A true-or-false cell a node can say for itself: a box to tick, and the formula behind it for anyone who wants it. */
-function TickRow({ ws, id, c, cell, info, onSelect }: { ws: Workspace; id: string; c: string; cell: Cell; info: ComponentInfo | undefined; onSelect: (id: string) => void }) {
-  const [editing, setEditing] = useState(false);
-  const ownFormula = cell.formula !== undefined && cell.own;
-  return (
-    <div className="tick-row">
-      <div className="tick-line">
-        <label className="tick-k" title={info?.about}>
-          <TickBox ws={ws} id={id} c={c} /> {label(c)}
-        </label>
-        <span className="tick-v">
-          <CellValue ws={ws} cell={cell} onSelect={onSelect} component={c} />
-          {cell.own && <span className="muted small"> · {ownFormula ? "its own formula" : "said here"}</span>}
-        </span>
-        {!ownFormula && !editing && (
-          <button className="link small" title={cell.formula ? `Worked out by =${cell.formula}` : undefined} onClick={() => setEditing(true)}>
-            edit
-          </button>
-        )}
-        {cell.own && (
-          <button className="icon small" title="Go back to working this out" onClick={() => ws.apply([entryOp(id, c, parseEntry(""), undefined, ownFormula)]).catch((e) => alert(String(e)))}>
-            ×
-          </button>
-        )}
-      </div>
-      {ownFormula ? <CellEditor key={cell.formula} ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} /> : editing && <CellEditor ws={ws} id={id} c={c} cell={cell} onSelect={onSelect} opening onClosed={() => setEditing(false)} />}
-    </div>
-  );
-}
-
-/** What a link holds, in a few words, or nothing if it holds nothing. */
-export function linkValueText(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "object" && !Array.isArray(value)) {
-    return Object.entries(value as Record<string, unknown>)
-      .filter(([, v]) => v !== null && v !== undefined)
-      .map(([k, v]) => `${label(k).toLowerCase()} ${typeof v === "string" ? v : JSON.stringify(v)}`)
-      .join(" · ");
-  }
-  return typeof value === "string" ? value : JSON.stringify(value);
+/** What an edge holds, in a few words: each cell that has something in it. A label says its name. */
+export function edgeText(e: Edge): string {
+  return Object.entries(e.cells)
+    .filter(([c, cell]) => c !== "called" && cell.source !== "default" && cell.value !== undefined)
+    .map(([c, cell]) => `${label(c).toLowerCase()} ${typeof cell.value === "string" ? cell.value : JSON.stringify(cell.value)}`)
+    .join(" · ");
 }
 
 /**
- * A node's links, by kind. What each holds, such as an option's weight, shows beside it, and clicking that
- * edits it, so it reads the same from either end.
+ * A node's edges, grouped by what they are. What each holds, such as an option's weight, shows beside it,
+ * and clicking that opens its cells, so it reads the same from either end.
  */
-function LinkList({ title, id, links, ws, onSelect, run }: { title: string; id: string; links: Link[]; ws: Workspace; onSelect: (id: string) => void; run: (ops: Op[], why?: string) => Promise<boolean> }) {
-  const [editing, setEditing] = useState<string | null>(null);
-  if (!links.length) return null;
-  const other = (l: Link) => (l.from === id ? l.to : l.from);
-  const byKind = new Map<string, Link[]>();
-  for (const l of links) byKind.set(l.kind, [...(byKind.get(l.kind) ?? []), l]);
+function EdgeList({ title, id, edges, ws, onSelect, run }: { title: string; id: string; edges: Edge[]; ws: Workspace; onSelect: (id: string) => void; run: (ops: Op[], why?: string) => Promise<boolean> }) {
+  const [open, setOpen] = useState<string | null>(null);
+  if (!edges.length) return null;
+  const other = (e: Edge) => (e.from === id ? e.to : e.from);
+  const groups = new Map<string, Edge[]>();
+  for (const e of edges) {
+    const key = e.components.join(", ");
+    groups.set(key, [...(groups.get(key) ?? []), e]);
+  }
   return (
     <section>
       <h4>{title}</h4>
-      {[...byKind].map(([kind, ls]) => (
-        <div key={kind} className="edge-group">
-          <div className="rel" title={ws.info(kind)?.about}>
-            {label(kind)}
+      {[...groups].map(([key, es]) => (
+        <div key={key} className="edge-group">
+          <div className="rel" title={es[0].components.map((c) => ws.info(c)?.about ?? c).join(" ")}>
+            {es[0].components.map(label).join(", ")}
           </div>
           <div className="link-rows">
-            {ls.map((l) => {
-              const key = `${l.from}|${l.kind}|${l.to}`;
-              const holds = kind === "label" ? "" : linkValueText(l.value);
+            {es.map((e) => {
+              const holds = edgeText(e);
+              const called = e.cells.called?.value;
+              const cells = Object.keys(e.cells).filter((c) => !ws.cellInfo(c)?.internal);
               return (
-                <div key={key} className="link-row">
+                <div key={e.id} className="link-row">
                   <span className="edge-chip">
-                    {kind === "label" && <code className="small">{String(l.value)}</code>}
-                    <NodeChip ws={ws} id={other(l)} onSelect={onSelect} />
-                    {holds && (
-                      <button className={`link-holds ${editing === key ? "on" : ""}`} title="What this link holds. Click to change it." onClick={() => setEditing(editing === key ? null : key)}>
-                        {holds}
+                    {typeof called === "string" && <code className="small">{called}</code>}
+                    <NodeChip ws={ws} id={other(e)} onSelect={onSelect} />
+                    {cells.length > 0 && (
+                      <button className={`link-holds ${open === e.id ? "on" : ""}`} title="What this edge holds. Click to see or change it." onClick={() => setOpen(open === e.id ? null : e.id)}>
+                        {holds || "…"}
                       </button>
                     )}
-                    <button className="icon small" title="Remove this link" onClick={() => run([{ op: "link", from: l.from, to: l.to, kind: l.kind }])}>
+                    <button className="icon small" title="Take this edge away" onClick={() => run(e.components.map((c) => ({ op: "unlink", from: e.from, to: e.to, component: c }) as Op))}>
                       ×
                     </button>
                   </span>
-                  {editing === key && (
+                  {open === e.id && (
                     <div className="link-holds-edit">
-                      <ValueEditor key={JSON.stringify(l.value)} value={l.value} onCommit={(value) => run([{ op: "link", from: l.from, to: l.to, kind: l.kind, value }])} />
+                      {cells.map((c) => (
+                        <CellRow key={c} ws={ws} target={{ from: e.from, to: e.to }} c={c} cell={e.cells[c]} onSelect={onSelect} />
+                      ))}
                     </div>
                   )}
                 </div>
@@ -882,7 +854,7 @@ function LinkList({ title, id, links, ws, onSelect, run }: { title: string; id: 
 }
 
 function LinkForm({ ws, id, onDone, run }: { ws: Workspace; id: string; onDone: () => void; run: (ops: Op[]) => Promise<boolean> }) {
-  const kinds = ws.view!.components.filter((c) => c.on === "link");
+  const kinds = ws.view!.components.filter((c) => c.place === "edge");
   const [kind, setKind] = useState(kinds[0]?.name ?? "");
   const [called, setCalled] = useState("");
   const [target, setTarget] = useState("");
@@ -895,8 +867,8 @@ function LinkForm({ ws, id, onDone, run }: { ws: Workspace; id: string; onDone: 
       onSubmit={async (e) => {
         e.preventDefault();
         if (!other) return;
-        const value = kind === "label" ? called.trim() : ws.info(kind)?.initial ?? null;
-        if (await run([{ op: "link", from: outgoing ? id : other, to: outgoing ? other : id, kind, value }])) onDone();
+        const cells: Record<string, Written> = kind === "label" ? { called: called.trim() } : {};
+        if (await run([{ op: "link", from: outgoing ? id : other, to: outgoing ? other : id, component: kind, cells }])) onDone();
       }}
     >
       <div className="row small">
@@ -971,11 +943,10 @@ function NodeHistory({ ws, id, onSelect }: { ws: Workspace; id: string; onSelect
   );
 }
 
-/** A selected link. It lives on its source node, and can be read or removed here. */
-export function LinkInspector({ ws, edge, onSelect, onClose }: { ws: Workspace; edge: { from: string; kind: string; to: string }; onSelect: (id: string) => void; onClose: () => void }) {
+/** A selected edge: its ends, and its components with their cells, as a node's are. */
+export function EdgeInspector({ ws, edge: id, onSelect, onClose }: { ws: Workspace; edge: string; onSelect: (id: string) => void; onClose: () => void }) {
   const [err, setErr] = useState<string | null>(null);
-  const link = ws.view!.links.find((l) => l.from === edge.from && l.kind === edge.kind && l.to === edge.to);
-  const info = ws.info(edge.kind);
+  const edge = ws.edgeById.get(id);
   const run = async (ops: Op[]) => {
     try {
       setErr(null);
@@ -990,39 +961,69 @@ export function LinkInspector({ ws, edge, onSelect, onClose }: { ws: Workspace; 
     <aside className="inspector">
       <div className="insp-head" style={{ borderColor: "var(--muted)" }}>
         <div className="insp-kind">
-          <span className={`dd-swatch rel-${edge.kind}`} /> link
+          {edge?.components.map((c) => (
+            <CompBadge key={c} ws={ws} c={c} />
+          ))}
+          <span className="muted">edge</span>
         </div>
         <button className="icon" onClick={onClose} title="Close">
           ×
         </button>
       </div>
-      {!link ? (
-        <p className="muted">This link no longer exists.</p>
+      {!edge ? (
+        <p className="muted">This edge no longer exists.</p>
       ) : (
         <>
-          <h2 className="insp-title">{label(edge.kind)}</h2>
-          {info && <p className="muted small">{info.about}</p>}
           <div className="edge-ends">
             <NodeChip ws={ws} id={edge.from} onSelect={onSelect} />
-            <span className="edge-arrow">↓</span>
+            <span className="edge-arrow">→</span>
             <NodeChip ws={ws} id={edge.to} onSelect={onSelect} />
           </div>
-          {link.value !== null && (
-            <section>
-              <h4>What it holds</h4>
-              <ValueEditor key={JSON.stringify(link.value)} value={link.value} onCommit={(value) => run([{ op: "link", from: edge.from, to: edge.to, kind: edge.kind, value }])} />
-            </section>
-          )}
+          {edge.components.map((c) => (
+            <EdgeCard key={c} ws={ws} edge={edge} c={c} run={run} onSelect={onSelect} />
+          ))}
+          <Dropdown label={<>＋ Add</>}>
+            {addable(ws, "edge", edge.components).map((c) => (
+              <DdItemButton key={c.name} color={compColor(c.name)} onClick={() => run([{ op: "link", from: edge.from, to: edge.to, component: c.name }])}>
+                <span className="dd-glyph">{c.icon ?? "·"}</span>
+                <span>
+                  <b>{label(c.name)}</b>
+                  <span className="dd-desc">{c.about}</span>
+                </span>
+              </DdItemButton>
+            ))}
+          </Dropdown>
           {err && <div className="error">{err}</div>}
-          {(
-            <section className="danger-zone">
-              <button className="danger" onClick={() => run([{ op: "link", from: edge.from, to: edge.to, kind: edge.kind }]).then((ok) => ok && onClose())}>
-                Remove this link
-              </button>
-            </section>
-          )}
+          <section className="danger-zone">
+            <button className="danger" onClick={() => run(edge.components.map((c) => ({ op: "unlink", from: edge.from, to: edge.to, component: c }) as Op)).then((ok) => ok && onClose())}>
+              Take this edge away
+            </button>
+          </section>
         </>
       )}
     </aside>
+  );
+}
+
+function EdgeCard({ ws, edge, c, run, onSelect }: { ws: Workspace; edge: Edge; c: string; run: (ops: Op[]) => Promise<boolean>; onSelect: (id: string) => void }) {
+  const info = ws.info(c);
+  const cells = (info?.cells ?? []).filter((x) => edge.cells[x] && !ws.cellInfo(x)?.internal);
+  return (
+    <div className="comp" style={{ ["--c" as string]: compColor(c) }}>
+      <div className="comp-head">
+        <span className="comp-name" title={info?.about}>
+          {info?.icon && <span className="glyph">{info.icon}</span>} {label(c)}
+        </span>
+        <button className="icon small" title={`Take ${label(c).toLowerCase()} away`} onClick={() => run([{ op: "unlink", from: edge.from, to: edge.to, component: c }])}>
+          ×
+        </button>
+      </div>
+      <div className="comp-body">
+        {info?.about && <span className="muted small">{info.about}</span>}
+        {cells.map((x) => (
+          <CellRow key={x} ws={ws} target={{ from: edge.from, to: edge.to }} c={x} cell={edge.cells[x]} onSelect={onSelect} />
+        ))}
+      </div>
+    </div>
   );
 }

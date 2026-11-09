@@ -1,0 +1,7 @@
+id: 01a1bff4-e9f4-733c-a970-1a589d44b587
+components:
+- value
+cells:
+  name: The Spaniard owns the dog
+formulas:
+  value: Nationality[Spanish] = Pet[Dog]

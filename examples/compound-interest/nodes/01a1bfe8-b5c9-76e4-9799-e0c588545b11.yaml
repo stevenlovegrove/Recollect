@@ -1,8 +1,0 @@
-id: 01a1bfe8-b5c9-76e4-9799-e0c588545b11
-components:
-- decision
-- value
-cells:
-  name: Top up in year 5?
-formulas:
-  value: pick(in.alternative)

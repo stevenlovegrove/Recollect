@@ -1,8 +1,0 @@
-id: 01a1bfe8-b76e-73e1-a55c-7745cc105422
-components:
-- decision
-- uncertain
-cells:
-  name: How did Mr Pryce get home?
-formulas:
-  at_house_by: 'pick(o in in.alternative: o.at_house_by)'

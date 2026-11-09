@@ -1,34 +1,35 @@
 import { useMemo, useState } from "react";
-import type { Cell, GraphNode, Link, Op, Reading, Shown } from "./api";
+import type { Cell, GraphNode, Op, Reading, Shown } from "./api";
 import { bracketRuns, pairText } from "./brackets";
 import type { Workspace } from "./workspace";
-import { GLYPH, compColor, factsOf, isDropped, isNote, label, nodeColor } from "./theme";
+import { badgesOf, compColor, isDropped, isNote, label, nodeColor } from "./theme";
 
 export function NodeChip({ ws, id, onSelect, fallback }: { ws: Workspace; id: string; onSelect: (id: string) => void; fallback?: string }) {
   const n = ws.byId.get(id);
   if (!n && fallback) return <span className="chip new">{fallback}</span>;
   return (
-    <button className={`chip ${n ? (isDropped(n) ? "dead" : "") : "missing"}`} onClick={() => n && onSelect(id)} title={n ? factsOf(n).join(", ") || (isNote(n) ? "note" : "") : "not in this graph"}>
+    <button className={`chip ${n ? (isDropped(n) ? "dead" : "") : "missing"}`} onClick={() => n && onSelect(id)} title={n ? badgesOf(n).map(label).join(", ") || (isNote(n) ? "note" : "") : "not in this graph"}>
       <span className="chip-dot" style={{ background: n ? nodeColor(n) : "var(--danger)" }} />
       {n?.name ?? `${id.slice(-6)}`}
     </button>
   );
 }
 
-export function CompBadges({ n }: { n: GraphNode }) {
+export function CompBadges({ ws, n }: { ws: Workspace; n: GraphNode }) {
   return (
     <span className="badges">
-      {factsOf(n).map((c) => (
-        <CompBadge key={c} c={c} />
+      {badgesOf(n).map((c) => (
+        <CompBadge key={c} ws={ws} c={c} />
       ))}
     </span>
   );
 }
 
-export function CompBadge({ c }: { c: string }) {
+export function CompBadge({ ws, c, onClick }: { ws: Workspace; c: string; onClick?: () => void }) {
+  const icon = ws.info(c)?.icon;
   return (
-    <span className="cbadge" style={{ ["--c" as string]: compColor(c) }} title={c}>
-      {GLYPH[c] && <span className="glyph">{GLYPH[c]}</span>}
+    <span className={`cbadge ${onClick ? "clickable" : ""}`} style={{ ["--c" as string]: compColor(c) }} title={ws.info(c)?.about ?? c} onClick={onClick}>
+      {icon && <span className="glyph">{icon}</span>}
       {label(c)}
     </span>
   );
@@ -261,9 +262,9 @@ export function casesOf(cell: Cell | undefined): unknown[] {
 
 /** The change a tick makes: what the node says for itself goes first, and otherwise it says the opposite of what's worked out. */
 export function tickOp(id: string, c: string, cell: Cell): Op {
-  if (cell.own) return { op: "set", id, component: c };
+  if (cell.source === "own") return { op: "set", id, cell: c };
   const cases = casesOf(cell);
-  return { op: "set", id, component: c, value: !(cases.length > 0 && cases.every((v) => v === true)) };
+  return { op: "set", id, cell: c, value: !(cases.length > 0 && cases.every((v) => v === true)) };
 }
 
 /** A true-or-false cell as a box to tick. A node's own formula decides for itself, and differing worlds show as neither. */
@@ -273,7 +274,8 @@ export function TickBox({ ws, id, c }: { ws: Workspace; id: string; c: string })
   const cases = casesOf(cell);
   const yes = cases.length > 0 && cases.every((v) => v === true);
   const mixed = !yes && cases.includes(true);
-  const decided = cell.own && cell.formula !== undefined;
+  const own = cell.source === "own";
+  const decided = own && cell.formula !== undefined;
   return (
     <input
       type="checkbox"
@@ -283,18 +285,16 @@ export function TickBox({ ws, id, c }: { ws: Workspace; id: string; c: string })
       ref={(el) => {
         if (el) el.indeterminate = mixed;
       }}
-      title={decided ? "Its own formula decides this" : cell.own ? "Go back to working this out" : yes ? `Say it isn't ${label(c).toLowerCase()}` : `Mark as ${label(c).toLowerCase()}`}
+      title={decided ? "Its own formula decides this" : own ? "Go back to working this out" : yes ? `Say it isn't ${label(c).toLowerCase()}` : `Mark as ${label(c).toLowerCase()}`}
       onClick={(e) => e.stopPropagation()}
       onChange={() => ws.apply([tickOp(id, c, cell)]).catch((e) => alert(String(e)))}
     />
   );
 }
 
-/** Selection keys: nodes are handles, so a link can be keyed as "e:from|kind|to". */
-export const edgeKey = (e: Pick<Link, "from" | "kind" | "to">) => `e:${e.from}|${e.kind}|${e.to}`;
+/** Selection keys: a node is its handle, and an edge is "e:" and its handle. */
+export const edgeKey = (edge: string) => `e:${edge}`;
 
-export function parseEdgeKey(key: string | null): { from: string; kind: string; to: string } | null {
-  if (!key?.startsWith("e:")) return null;
-  const [from, kind, to] = key.slice(2).split("|");
-  return from && kind && to ? { from, kind, to } : null;
+export function parseEdgeKey(key: string | null): string | null {
+  return key?.startsWith("e:") ? key.slice(2) : null;
 }

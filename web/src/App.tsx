@@ -13,7 +13,7 @@ import { ChecksView } from "./views/ChecksView";
 import { HistoryView } from "./views/HistoryView";
 import { InboxView } from "./views/InboxView";
 import { FilesView } from "./views/FilesView";
-import { Inspector, LinkInspector, NewNodePanel, type NodeTemplate } from "./Inspector";
+import { EdgeInspector, Inspector, NewNodePanel, type NodeTemplate } from "./Inspector";
 import { parseEdgeKey, tickOp } from "./bits";
 import { ContextMenu, type CtxTarget } from "./ContextMenu";
 import { WorldBar } from "./WorldBar";
@@ -99,14 +99,14 @@ export function App() {
     setMapKey((k) => k + 1);
   }, [dir]);
 
-  // Drop the selection if its node or link disappears: deleted, or edited on disk.
+  // Drop the selection if its node or edge disappears: deleted, or edited on disk.
   const selEdge = parseEdgeKey(selected);
   useEffect(() => {
     if (!selected || !view) return;
     const e = parseEdgeKey(selected);
-    const exists = e ? view.links.some((x) => x.from === e.from && x.kind === e.kind && x.to === e.to) : ws.byId.has(selected);
+    const exists = e ? ws.edgeById.has(e) : ws.byId.has(selected);
     if (!exists) setSelected(null);
-  }, [view, ws.byId, selected]);
+  }, [view, ws.byId, ws.edgeById, selected]);
 
   const selNode = selected ? ws.byId.get(selected) : undefined;
   const closeCtx = useCallback(() => setCtx(null), []);
@@ -133,7 +133,7 @@ export function App() {
       else if (tabIndex >= 0 && tabIndex < tabs.length && key !== "0") setTab(tabs[tabIndex]);
       else if (selNode && key === "c" && ws.partKind) startNew({ heading: `New part of “${selNode.name}”`, parent: selNode.id });
       else if (selNode && key === "s") {
-        const up = view.links.find((l) => l.from === selNode.id && l.kind === ws.partKind);
+        const up = view.edges.find((l) => l.from === selNode.id && ws.partKind && l.components.includes(ws.partKind));
         if (up) startNew({ heading: `New sibling of “${selNode.name}”`, parent: up.to });
         else startNew({ heading: "New node" });
       } else if (selNode && (key === "e" || key === "Enter")) {
@@ -143,12 +143,12 @@ export function App() {
       } else if (selNode && key === "l") setCommand((c) => ({ kind: "link", n: (c?.n ?? 0) + 1 }));
       else if (selNode?.cells.done && key === "x") {
         // A node's own formula decides for itself, as it does for the box.
-        if (!(selNode.cells.done.own && selNode.cells.done.formula !== undefined)) run([tickOp(selNode.id, "done", selNode.cells.done)]);
-      } else if (selNode && ws.info("dropped") && (key === "Backspace" || key === "Delete")) {
-        if (isDropped(selNode)) run([{ op: "set", id: selNode.id, component: "dropped" }], "brought back");
+        if (!(selNode.cells.done.source === "own" && selNode.cells.done.formula !== undefined)) run([tickOp(selNode.id, "done", selNode.cells.done)]);
+      } else if (selNode?.cells.dropped && (key === "Backspace" || key === "Delete")) {
+        if (isDropped(selNode)) run([{ op: "set", id: selNode.id, cell: "dropped" }], "brought back");
         else {
           askWhy(`Drop “${selNode.name}”?`, "Drop").then((why) => {
-            if (why !== null) run([{ op: "set", id: selNode.id, component: "dropped", value: true }], why);
+            if (why !== null) run([{ op: "set", id: selNode.id, cell: "dropped", value: true }], why);
           });
         }
       } else return;
@@ -252,7 +252,7 @@ export function App() {
         ) : (
           selected && ws.byId.has(selected) && <Inspector key={selected} ws={ws} id={selected} onSelect={select} onClose={() => select(null)} onAdd={startNew} onShowDecisions={showDecisions} command={command} />
         )}
-        {selEdge && <LinkInspector key={selected} ws={ws} edge={selEdge} onSelect={select} onClose={() => select(null)} />}
+        {selEdge && <EdgeInspector key={selected} ws={ws} edge={selEdge} onSelect={select} onClose={() => select(null)} />}
       </main>
       {picking && (
         <div className="modal-backdrop" onClick={() => setPicking(false)}>

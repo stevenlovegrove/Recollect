@@ -115,12 +115,12 @@ function DecisionCard({ m, ws, selected, onSelect, focused }: { m: Matrix; ws: W
                   </button>
                 )}
                 {o.ruled_out && (
-                  <button className="link" onClick={() => run([{ op: "link", from: o.id, to: m.id, kind: "alternative", value: {} }], "brought back")}>
+                  <button className="link" onClick={() => run([{ op: "set", from: o.id, to: m.id, cell: "ruled_out" }], "brought back")}>
                     bring back
                   </button>
                 )}
                 {o.chosen && (
-                  <button className="link" onClick={() => run([{ op: "set", id: m.id, component: "decision", value: {} }], "reopened")}>
+                  <button className="link" onClick={() => run([{ op: "set", id: m.id, cell: "chosen" }], "reopened")}>
                     reopen
                   </button>
                 )}
@@ -172,7 +172,7 @@ function CommitPanel({ m, ws, commit, onSelect, onCancel, run }: { m: Matrix; ws
   const notNeeded = choosing ? m.rows.filter((r) => !r.need.never && !r.finished && (r.per_option[o.id] ?? 0) <= 0) : m.rows.filter((r) => !r.need.never && !r.finished && m.options.every((x) => x.id === o.id || x.ruled_out || x.dropped || (r.per_option[x.id] ?? 0) <= 0));
   const confirm = async () => {
     const reason = why.trim();
-    const ops: Parameters<Workspace["apply"]>[0] = choosing ? [{ op: "set", id: m.id, component: "decision", value: { chosen: o.id } }] : [{ op: "link", from: o.id, to: m.id, kind: "alternative", value: { ruled_out: { why: reason } } }];
+    const ops: Parameters<Workspace["apply"]>[0] = choosing ? [{ op: "set", id: m.id, cell: "chosen", value: o.id }] : [{ op: "set", from: o.id, to: m.id, cell: "ruled_out", value: reason || true }];
     if (await run(ops, reason)) {
       if (ws.world[m.id]) ws.pin(m.id, null);
       onCancel();
@@ -279,13 +279,13 @@ function CompareTable({ m, ws, onSelect }: { m: Matrix; ws: Workspace; onSelect:
   const options = new Set(m.options.map((o) => o.id));
   const columns: Column[] = [];
   // What the options say about themselves: their own cells, by the names formulas use.
-  const own = new Set(live.flatMap((o) => Object.entries(ws.byId.get(o.id)?.cells ?? {}).filter(([, c]) => c.workspace).map(([c]) => c)));
+  const own = new Set(live.flatMap((o) => Object.entries(ws.byId.get(o.id)?.cells ?? {}).filter(([c]) => !ws.cellInfo(c)).map(([c]) => c)));
   for (const c of [...own].sort()) columns.push({ node: "", cell: c, title: c, of: "option" });
   // Anything else whose value isn't the same whichever is taken.
   for (const n of ws.view!.nodes) {
     if (options.has(n.id) || n.id === m.id) continue;
-    for (const [c, cell] of Object.entries(n.cells)) {
-      if (c !== "value" && !cell.workspace) continue;
+    for (const c of Object.keys(n.cells)) {
+      if (c !== "value" && ws.cellInfo(c)) continue;
       const seen = new Set(live.map((o) => JSON.stringify(cellIn(o.id, n.id, c)?.shown ?? cellIn(o.id, n.id, c)?.value ?? null)));
       if (seen.size > 1) columns.push({ node: n.id, cell: c, title: c === "value" ? n.name : `${n.name} · ${c}`, of: "elsewhere" });
     }
@@ -300,7 +300,7 @@ function CompareTable({ m, ws, onSelect }: { m: Matrix; ws: Workspace; onSelect:
   // another choice can be drawn as a line.
   const choice = (id: string) => ws.view!.worlds.vars.some((v) => v.id === id && !v.uncertain);
   // What to vary is a number of its own, or something uncertain as a whole, not one of its options.
-  const optionOfAny = new Set(ws.view!.links.filter((l) => l.kind === "alternative").map((l) => l.from));
+  const optionOfAny = new Set(ws.view!.edges.filter((l) => l.components.includes("alternative")).map((l) => l.from));
   const drawable = numeric.filter((col) => live.every((o) => !(at(o.id, col)?.vars ?? []).some(choice)));
   const worked = drawable.find((col) => live.some((o) => at(o.id, col)?.formula)) ?? drawable[0] ?? numeric[0];
   const charted = numeric.find((c) => colKey(c) === chartCol) ?? worked;
@@ -308,7 +308,7 @@ function CompareTable({ m, ws, onSelect }: { m: Matrix; ws: Workspace; onSelect:
     .view!.nodes.filter((n) => !optionOfAny.has(n.id) && n.id !== m.id && !choice(n.id) && casesOf(n.cells.value).some((v) => typeof v === "number"))
     .map((n) => ({ node: n.id, name: n.name, uncertain: !!ws.view!.worlds.vars.find((v) => v.id === n.id)?.uncertain }))
     .sort((a, b) => Number(b.uncertain) - Number(a.uncertain));
-  const lines: Line[] = charted ? live.map((o) => ({ id: o.id, name: o.name, read: { node: charted.of === "option" ? o.id : charted.node, component: charted.cell }, world: { ...ws.world, [m.id]: o.id } })) : [];
+  const lines: Line[] = charted ? live.map((o) => ({ id: o.id, name: o.name, read: { node: charted.of === "option" ? o.id : charted.node, cell: charted.cell }, world: { ...ws.world, [m.id]: o.id } })) : [];
 
   return (
     <div className="compare-wrap">

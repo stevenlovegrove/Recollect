@@ -19,18 +19,19 @@ export function OutlineView({ ws, selected, onSelect, onShowDecisions, onContext
     const children = new Map<string, { id: string; kind: string }[]>();
     const parents = new Map<string, string[]>();
     const notes = new Map<string, { kind: string; id: string }[]>();
-    for (const l of g.links) {
-      const shape = ws.shape(l);
+    for (const e of g.edges) {
+      const shape = ws.shape(e);
+      const kind = e.components.find((c) => ws.arranging.includes(c)) ?? e.components[0];
       if (shape) {
         const { parent, child } = shape;
-        if (!children.get(parent)?.some((c) => c.id === child)) children.set(parent, [...(children.get(parent) ?? []), { id: child, kind: l.kind }]);
+        if (!children.get(parent)?.some((c) => c.id === child)) children.set(parent, [...(children.get(parent) ?? []), { id: child, kind }]);
         parents.set(child, [...(parents.get(child) ?? []), parent]);
       } else {
-        notes.set(l.from, [...(notes.get(l.from) ?? []), { kind: l.kind, id: l.to }]);
+        notes.set(e.from, [...(notes.get(e.from) ?? []), { kind, id: e.to }]);
       }
     }
     return { children, parents, notes };
-  }, [g.links, ws.shape]);
+  }, [g.edges, ws.shape, ws.arranging]);
 
   const visible = (n: GraphNode | undefined): n is GraphNode => !!n && (showDropped || !isDropped(n));
   const liveParents = (id: string) => (parents.get(id) ?? []).filter((p) => visible(ws.byId.get(p)));
@@ -104,8 +105,8 @@ export function OutlineView({ ws, selected, onSelect, onShowDecisions, onContext
           <button className="outline-title" onClick={() => onSelect(id)}>
             {n.name}
           </button>
-          <CompBadges n={n} />
-          {g.components
+          <CompBadges ws={ws} n={n} />
+          {g.cells
             // What it could start on says less than whether it's needed, and there's only one line.
             .filter((c) => c.summary && c.name !== "actionable" && n.cells[c.name])
             .map((c) => {
@@ -175,7 +176,7 @@ export function OutlineView({ ws, selected, onSelect, onShowDecisions, onContext
                 <button className="outline-title" onClick={() => onSelect(n.id)}>
                   {n.name}
                 </button>
-                <CompBadges n={n} />
+                <CompBadges ws={ws} n={n} />
                 {isNote(n) && <span className="muted small">note</span>}
                 {(notes.get(n.id) ?? []).map((a) => (
                   <button key={a.kind + a.id} className="annotation" onClick={() => onSelect(a.id)}>

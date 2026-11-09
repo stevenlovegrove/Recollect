@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, isNothingOpen, subscribe, type ComponentInfo, type GraphNode, type Link, type Op, type PlanData, type Proposal, type View, type Workspaces, type World } from "./api";
+import { api, isNothingOpen, subscribe, type CellInfo, type ComponentInfo, type Edge, type GraphNode, type Op, type PlanData, type Proposal, type View, type Workspaces, type World } from "./api";
 
 export interface Workspace {
   view: View | null;
@@ -11,9 +11,9 @@ export interface Workspace {
   available: Workspaces | null;
   connected: boolean;
   error: string | null;
-  /** Nodes whose rules ran for the last change. */
+  /** Nodes whose cells were worked out again for the last change. */
   recent: Set<string>;
-  /** The same, as `node|component`. */
+  /** The same, as `node|cell`. */
   recentCells: Set<string>;
   /** Choices pinned to an option, which everything on screen is narrowed by. */
   world: World;
@@ -21,16 +21,20 @@ export interface Workspace {
   setWorld: (w: World) => void;
   /** Go to any point in the log. The next change follows from there. */
   checkout: (seq: number, why?: string) => Promise<void>;
-  /** The kinds of link that give this graph its shape. */
+  /** Edges by id. */
+  edgeById: Map<string, Edge>;
+  /** The edge components that give this graph its shape. */
   arranging: string[];
-  /** Which end of a link goes on top, if it gives the graph its shape at all. */
-  shape: (l: Link) => { parent: string; child: string } | null;
-  /** Which end of any link comes first, if a map were laid out by it. */
-  ends: (l: Link) => { parent: string; child: string };
-  /** The kind of link that makes a node part of another, if this workspace has one. */
+  /** Which end of an edge goes on top, if it gives the graph its shape at all. */
+  shape: (e: Edge) => { parent: string; child: string } | null;
+  /** Which end of any edge comes first, if a map were laid out by it. */
+  ends: (e: Edge) => { parent: string; child: string };
+  /** The edge component that makes a node part of another, if this workspace has one. */
   partKind: string | undefined;
-  /** A component's meaning, if a system says. */
+  /** What a system says a component is. */
   info: (name: string) => ComponentInfo | undefined;
+  /** What a system says a cell is. Nothing for one of the workspace's own cells. */
+  cellInfo: (name: string) => CellInfo | undefined;
   refresh: () => Promise<void>;
   apply: (ops: Op[], why?: string) => Promise<Record<string, string>>;
   openSample: (name: string, reset?: boolean) => Promise<void>;
@@ -73,7 +77,7 @@ export function useWorkspace(): Workspace {
       lastDir.current = v.workspace.dir;
       if (v.ran.length && !opened) {
         setRecent(new Set(v.ran.map((r) => r.node)));
-        setRecentCells(new Set(v.ran.map((r) => `${r.node}|${r.component}`)));
+        setRecentCells(new Set(v.ran.map((r) => `${r.node}|${r.cell}`)));
         window.clearTimeout(recentTimer.current);
         recentTimer.current = window.setTimeout(() => {
           setRecent(new Set());
@@ -131,13 +135,24 @@ export function useWorkspace(): Workspace {
 
   // Rows nobody wrote that something reads can be looked up too, though they're not in `nodes`.
   const byId = useMemo(() => new Map([...(view?.nodes ?? []), ...(view?.unwritten ?? [])].map((n) => [n.id, n])), [view]);
+  const edgeById = useMemo(() => new Map((view?.edges ?? []).map((e) => [e.id, e])), [view?.edges]);
   const arranging = useMemo(() => (view?.components ?? []).filter((c) => c.arranges).map((c) => c.name), [view?.components]);
   const reversed = useMemo(() => (view?.components ?? []).filter((c) => c.reversed).map((c) => c.name), [view?.components]);
   const partKind = arranging.includes("part_of") ? "part_of" : arranging.find((k) => !reversed.includes(k));
-  const ends = useCallback((l: Link) => (reversed.includes(l.kind) ? { parent: l.from, child: l.to } : { parent: l.to, child: l.from }), [reversed]);
-  const shape = useCallback((l: Link) => (arranging.includes(l.kind) ? ends(l) : null), [arranging, ends]);
+  // An edge goes the way its first component that gives a graph its shape says, so a name a formula uses
+  // points into what reads it.
+  const ends = useCallback(
+    (e: Edge) => {
+      const lead = e.components.find((c) => arranging.includes(c)) ?? e.components[0];
+      return reversed.includes(lead) ? { parent: e.from, child: e.to } : { parent: e.to, child: e.from };
+    },
+    [arranging, reversed],
+  );
+  const shape = useCallback((e: Edge) => (e.components.some((c) => arranging.includes(c)) ? ends(e) : null), [arranging, ends]);
   const infoMap = useMemo(() => new Map((view?.components ?? []).map((c) => [c.name, c])), [view?.components]);
   const info = useCallback((name: string) => infoMap.get(name), [infoMap]);
+  const cellMap = useMemo(() => new Map((view?.cells ?? []).map((c) => [c.name, c])), [view?.cells]);
+  const cellInfo = useCallback((name: string) => cellMap.get(name), [cellMap]);
 
   const pin = useCallback((choice: string, option: string | null) => {
     setWorld((w) => {
@@ -175,14 +190,29 @@ export function useWorkspace(): Workspace {
     await api.create(path, name, systems);
   }, []);
 
-  return { view, nothingOpen, byId, plan, proposals, available, connected, error, recent, recentCells, world, pin, setWorld, checkout, arranging, shape, ends, partKind, info, refresh, apply, openSample, openPath, create };
+  return { view, nothingOpen, byId, edgeById, plan, proposals, available, connected, error, recent, recentCells, world, pin, setWorld, checkout, arranging, shape, ends, partKind, info, cellInfo, refresh, apply, openSample, openPath, create };
 }
 
-/** Links touching a node, in each direction. */
 /**
- * A node's links, the way the map's arrows point: a name a formula uses points into the node whose formula
+ * A node's edges, the way the map's arrows point: a name a formula uses points into the node whose formula
  * reads it, though it's written the other way, from the reader.
  */
-export function linksOf(view: View, id: string, ends: (l: Link) => { parent: string; child: string }): { outgoing: Link[]; incoming: Link[] } {
-  return { outgoing: view.links.filter((l) => ends(l).child === id), incoming: view.links.filter((l) => ends(l).parent === id) };
+export function edgesOf(view: View, id: string, ends: (e: Edge) => { parent: string; child: string }): { outgoing: Edge[]; incoming: Edge[] } {
+  return { outgoing: view.edges.filter((e) => ends(e).child === id), incoming: view.edges.filter((e) => ends(e).parent === id) };
+}
+
+/** The edge from one node to another, if there is one. */
+export function edgeBetween(view: View, from: string, to: string): Edge | undefined {
+  return view.edges.find((e) => e.from === from && e.to === to);
+}
+
+/** The nodes a node's formula calls each name, from its label edges. */
+export function labelsOf(view: View, id: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const e of view.edges) {
+    if (e.from !== id || !e.components.includes("label")) continue;
+    const name = e.cells.called?.value;
+    if (typeof name === "string") (out[name] ??= []).push(e.to);
+  }
+  return out;
 }

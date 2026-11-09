@@ -1,0 +1,9 @@
+id: 01a1bff4-e83b-75af-8aba-de4ce9a804cd
+components:
+- options
+cells:
+  name: South Australia
+  options:
+  - red
+  - green
+  - blue

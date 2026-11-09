@@ -22,10 +22,11 @@ export function TimelineView({ ws, selected, onSelect }: ViewProps) {
   const rows = useMemo(() => {
     const kids = new Map<string, string[]>();
     const hasParent = new Set<string>();
-    for (const l of g.links) {
-      if (ws.arranging.includes(l.kind)) {
-        kids.set(l.to, [...(kids.get(l.to) ?? []), l.from]);
-        hasParent.add(l.from);
+    for (const e of g.edges) {
+      const shape = ws.shape(e);
+      if (shape) {
+        kids.set(shape.parent, [...(kids.get(shape.parent) ?? []), shape.child]);
+        hasParent.add(shape.child);
       }
     }
     const out: Row[] = [];
@@ -45,7 +46,7 @@ export function TimelineView({ ws, selected, onSelect }: ViewProps) {
     };
     for (const n of g.nodes) if (!hasParent.has(n.id)) walk(n.id, 0);
     return out;
-  }, [g.nodes, g.links, ws.arranging, ws.byId]);
+  }, [g.nodes, g.edges, ws.shape, ws.byId]);
 
   const finishes = rows.flatMap((r) => known(spans(r.node).map((s) => s.finish)));
   const days = Math.max(1, Math.ceil(Math.max(0, ...finishes)));
@@ -90,7 +91,7 @@ export function TimelineView({ ws, selected, onSelect }: ViewProps) {
           const starts = known(here.map((s) => s.start));
           const ends = known(here.map((s) => s.finish));
           const slack = known(here.map((s) => s.slack));
-          const isSummary = !n.cells.task || g.links.some((l) => ws.arranging.includes(l.kind) && l.to === n.id);
+          const isSummary = !n.components.some((c) => c.name === "task") || g.edges.some((e) => ws.shape(e)?.parent === n.id);
           const out = !here.length;
           const someWorldsOnly = !out && !reading(n.cells.need)?.always;
           const done = n.cells.done?.value === true;

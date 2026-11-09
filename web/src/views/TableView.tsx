@@ -47,13 +47,16 @@ function EveryNode({ ws, selected, onSelect, pick }: ViewProps & { pick: React.R
     const present = new Set(g.nodes.flatMap((n) => Object.keys(n.cells)));
     present.delete("name");
     present.delete("body");
-    return g.components.filter((c) => c.on === "node" && !c.quiet && present.has(c.name)).map((c) => c.name);
-  }, [g.nodes, g.components]);
+    // The systems' cells first, in the order they say them, and then the workspace's own.
+    const known = g.cells.filter((c) => !c.quiet && present.has(c.name)).map((c) => c.name);
+    const own = [...present].filter((c) => !ws.cellInfo(c)).sort();
+    return [...known, ...own];
+  }, [g.nodes, g.cells, ws]);
   // What a card would show, and what's typed in. Everything else is a click away.
   const preferred = useMemo(() => {
-    const summaries = g.components.filter((c) => c.summary && all.includes(c.name)).map((c) => c.name);
+    const summaries = all.filter((c) => !ws.cellInfo(c) || ws.cellInfo(c)!.summary);
     return summaries.length ? summaries : all.slice(0, 4);
-  }, [g.components, all]);
+  }, [all, ws]);
   const [hidden, setHidden] = useState<Set<string> | null>(null);
   const columns = all.filter((c) => (hidden ? !hidden.has(c) : preferred.includes(c)));
   const toggle = (c: string) => {
@@ -70,7 +73,7 @@ function EveryNode({ ws, selected, onSelect, pick }: ViewProps & { pick: React.R
         {pick}
         <Dropdown label={<>Columns {columns.length}/{all.length}</>}>
           {all.map((c) => (
-            <DdItem key={c} checked={columns.includes(c)} onChange={() => toggle(c)} title={ws.info(c)?.about}>
+            <DdItem key={c} checked={columns.includes(c)} onChange={() => toggle(c)} title={ws.cellInfo(c)?.about}>
               <span className="dd-label">{label(c)}</span>
             </DdItem>
           ))}
@@ -82,7 +85,7 @@ function EveryNode({ ws, selected, onSelect, pick }: ViewProps & { pick: React.R
           <tr>
             <th>Node</th>
             {columns.map((c) => (
-              <th key={c} title={ws.info(c)?.about}>
+              <th key={c} title={ws.cellInfo(c)?.about}>
                 {label(c)}
               </th>
             ))}
@@ -95,7 +98,7 @@ function EveryNode({ ws, selected, onSelect, pick }: ViewProps & { pick: React.R
                 <span className="chip-dot" style={{ background: nodeColor(n) }} /> {n.name}
               </td>
               {columns.map((c) => (
-                <td key={c} className={`sheet-cell ${n.cells[c]?.error ? "err" : ""} ${ws.recentCells.has(`${n.id}|${c}`) ? "ran" : ""} ${n.cells[c]?.source === "rule" ? "formula-cell" : ""}`}>
+                <td key={c} className={`sheet-cell ${n.cells[c]?.error ? "err" : ""} ${ws.recentCells.has(`${n.id}|${c}`) ? "ran" : ""} ${n.cells[c]?.formula !== undefined ? "formula-cell" : ""}`}>
                   <TableCell ws={ws} node={n} c={c} cell={n.cells[c]} />
                 </td>
               ))}
@@ -113,7 +116,7 @@ export function TableCell({ ws, node, c, cell, written, readOnly }: { ws: ViewPr
   const nameOf = (s: string) => ws.byId.get(s)?.name ?? s;
   const r = reading(cell);
   // What can hold a formula is typed into, as in a spreadsheet, unless it comes from a rule of the column's.
-  if (!readOnly && holdsFormula(ws, c) && (cell.source === "stored" || cell.formula !== undefined)) {
+  if (!readOnly && holdsFormula(ws, c) && (cell.source === "own" || cell.formula !== undefined)) {
     const words = r && truthWords(c, r);
     const shown = written && cell.formula !== undefined ? `=${cell.formula}` : cell.error ? "#ERROR" : !words ? cellText(cell, nameOf) : "fixed" in words ? words.fixed : `${words.lead} ${r!.when}`;
     return <EntryCell key={`${cell.formula}|${JSON.stringify(cell.value)}|${shown}`} ws={ws} node={node} c={c} cell={cell} shown={shown} />;
@@ -122,7 +125,7 @@ export function TableCell({ ws, node, c, cell, written, readOnly }: { ws: ViewPr
   if (r) return <Truth component={c} r={r} />;
   // A list of words, such as a choice's options, reads as a list.
   if (Array.isArray(cell.value) && cell.value.every((v) => typeof v === "string")) return <span>{cell.value.join(", ")}</span>;
-  return <span title={cell.rule}>{cellText(cell, nameOf)}</span>;
+  return <span>{cellText(cell, nameOf)}</span>;
 }
 
 /** Shows what a cell comes to, and what it holds while it's being edited: a value, or `=` and a formula. */
@@ -134,7 +137,7 @@ function EntryCell({ ws, node, c, cell, shown }: { ws: ViewProps["ws"]; node: Gr
     if (text.trim() === entryText(cell)) return setText(null);
     try {
       // Names it already has keep their meaning. New ones are said in the inspector, which refusing here points to.
-      await ws.apply([entryOp(node.id, c, parseEntry(text), undefined, cell.formula !== undefined)]);
+      await ws.apply([entryOp({ id: node.id }, c, parseEntry(text), undefined, cell.formula !== undefined)]);
       setRefused(null);
       setText(null);
     } catch (e) {

@@ -1,0 +1,9 @@
+id: 01a1bff4-e83b-75af-8aba-de4e92782b4a
+components:
+- options
+cells:
+  name: New South Wales
+  options:
+  - red
+  - green
+  - blue

@@ -7,10 +7,10 @@ mod support;
 use std::collections::BTreeMap;
 
 use recollect_graph::worlds::Space;
-use recollect_graph::{Error, Registry};
+use recollect_graph::{CellType, Error, Registry};
 use recollect_systems::expr::{BinOp, Expr, Val, parse};
-use recollect_systems::formulas::{Domain, Label, Macro, Requires, ValueCell, install, truth, try_formula};
-use recollect_systems::plan::{self, Alternative, Decision, Estimate, PartOf, Task, Unknown};
+use recollect_systems::formulas::{Called, LABEL, MACRO, Macro, OPTIONS, Options, REQUIRES, VALUE, ValueCell, install, truth, try_formula};
+use recollect_systems::plan::{self, ALTERNATIVE, DECISION, Estimate, PART_OF, TASK, UNKNOWN};
 use recollect_systems::schedule::{self, Finish};
 use serde_json::json;
 use support::N;
@@ -40,6 +40,11 @@ fn just(text: &str) -> Val {
     cases[0].1.clone()
 }
 
+/// Give a node options, and so make it a choice.
+fn options(g: &mut N, name: &str, options: &[&str]) {
+    g.add(name, OPTIONS).set(name, Options(options.iter().map(|s| s.to_string()).collect()));
+}
+
 fn just_error(text: &str) -> String {
     let mut g = N::with(sheet);
     g.formula("x", text);
@@ -64,10 +69,11 @@ fn arithmetic_and_logic_with_no_worlds_are_ordinary() {
 #[test]
 fn has_says_whether_a_node_has_a_cell_and_folds_begin_where_they_are_told() {
     let mut g = N::with(sheet);
-    g.set("a", ValueCell::num(3.0)).set("b", ValueCell::num(7.0)).set("gap", ValueCell::plain(Val::Undefined));
+    g.value("a", ValueCell::num(3.0)).value("b", ValueCell::num(7.0)).value("gap", ValueCell::plain(Val::Undefined));
     g.formula("has", "has(x.value)").input("has", "a", "x");
     g.formula("hasnt", "has(x.nothing_like_this)").input("hasnt", "a", "x");
-    g.set("own", Domain(vec!["only".to_string()])).formula("own", "has(self.domain)");
+    options(&mut g, "own", &["only"]);
+    g.formula("own", "has(self.options)");
     g.formula("top", "max(x in line: x, 0)").input("top", "a", "line").input("top", "b", "line");
     g.formula("low", "min(x in line: x, 5)").input("low", "a", "line").input("low", "b", "line");
     g.formula("nothing", "max(x in line: x, 9)");
@@ -97,7 +103,7 @@ fn undefined_spreads_and_logic_is_three_valued() {
 #[test]
 fn an_undefined_world_is_only_undefined_in_that_world() {
     let mut g = N::with(sheet);
-    g.set("x", Domain(vec!["0".into(), "2".into()]));
+    options(&mut g, "x", &["0", "2"]);
     g.formula("half", "1 / x").input("half", "x", "x");
     g.formula("safe", "if(x != 0, 1 / x, 0)").input("safe", "x", "x");
     let at = |o: &str| BTreeMap::from([(g.id("x").to_string(), o.to_string())]);
@@ -261,9 +267,9 @@ fn worlds() -> Vec<(String, String, String)> {
 fn with_choices() -> N {
     let mut g = N::with(sheet);
     for name in NUMBER_CHOICES {
-        g.set(name, Domain(NUMBER_OPTIONS.iter().map(|s| s.to_string()).collect()));
+        options(&mut g, name, &NUMBER_OPTIONS);
     }
-    g.set("colour", Domain(TEXT_OPTIONS.iter().map(|s| s.to_string()).collect()));
+    options(&mut g, "colour", &TEXT_OPTIONS);
     g
 }
 
@@ -319,7 +325,7 @@ fn narrowing_a_formula_agrees_with_really_deciding() {
 }
 
 fn decided_plan(text: &str) -> (recollect_graph::Log, BTreeMap<&'static str, recollect_graph::Entity>) {
-    use recollect_graph::{Entity, Log, Op};
+    use recollect_graph::{Entity, Log, On, Op, Stored};
     use std::sync::Arc;
     let mut reg = Registry::new();
     plan::install(&mut reg);
@@ -328,22 +334,21 @@ fn decided_plan(text: &str) -> (recollect_graph::Log, BTreeMap<&'static str, rec
     let mut ops: Vec<Op> = ids.values().map(|e| Op::Spawn { id: *e }).collect();
     // `pp` and `qq` read as numbers from their options, and `cc` is true or false in the same way.
     for (d, options) in [("pp", [("a", 0.0), ("b", 3.0)]), ("qq", [("c", 1.0), ("d", 5.0)])] {
-        ops.push(Op::set(ids[d], Decision::default()));
-        ops.push(Op::set_rule(ids[d], "value", recollect_systems::formulas::EXPR, json!({ "text": "pick(in.alternative)" })));
+        ops.extend([Op::add(ids[d], DECISION), Op::add(ids[d], VALUE), Op::set_formula(ids[d], ValueCell::NAME, "pick(in.alternative)")]);
         for (o, price) in options {
-            ops.push(Op::set(ids[o], ValueCell::num(price)));
-            ops.push(Op::link(ids[o], ids[d], Alternative::default()));
+            ops.extend([Op::add(ids[o], VALUE), Op::set(ids[o], ValueCell::num(price))]);
+            ops.push(Op::link(ids[o], ids[d], ALTERNATIVE));
         }
     }
-    ops.push(Op::set(ids["cc"], Decision::default()));
-    ops.push(Op::set_rule(ids["cc"], "value", recollect_systems::formulas::EXPR, json!({ "text": "pick(in.alternative)" })));
+    ops.extend([Op::add(ids["cc"], DECISION), Op::add(ids["cc"], VALUE), Op::set_formula(ids["cc"], ValueCell::NAME, "pick(in.alternative)")]);
     for (o, v) in [("e", "red"), ("f2", "blue")] {
-        ops.push(Op::set(ids[o], ValueCell::plain(Val::Text(v.to_string()))));
-        ops.push(Op::link(ids[o], ids["cc"], Alternative::default()));
+        ops.extend([Op::add(ids[o], VALUE), Op::set(ids[o], ValueCell::plain(Val::Text(v.to_string())))]);
+        ops.push(Op::link(ids[o], ids["cc"], ALTERNATIVE));
     }
-    ops.push(Op::set_rule(ids["f"], "value", recollect_systems::formulas::EXPR, json!({ "text": text })));
+    ops.extend([Op::add(ids["f"], VALUE), Op::set_formula(ids["f"], ValueCell::NAME, text)]);
     for name in ["pp", "qq", "cc"] {
-        ops.push(Op::link(ids["f"], ids[name], Label(name.to_string())));
+        ops.push(Op::link(ids["f"], ids[name], LABEL));
+        ops.push(Op::Set { on: On::Edge { from: ids["f"], to: ids[name] }, cell: Called::NAME.to_string(), to: Some(Stored::Value(json!(name))) });
     }
     log.commit("t", "made", ops).unwrap();
     (log, ids)
@@ -357,8 +362,8 @@ fn a_group_is_however_many_links_have_that_label_including_none() {
     g.formula("total", "sum(line)");
     assert_eq!(value(&g, "total"), ValueCell::num(0.0), "no lines yet is fine");
     g.formula("how_many", "count(line)").formula("every", "all(x in line: x > 0)").formula("some", "any(x in line: x > 5)").formula("times", "product(line)");
-    g.set("a", ValueCell::num(2.0)).input("total", "a", "line").input("how_many", "a", "line").input("every", "a", "line").input("some", "a", "line").input("times", "a", "line");
-    g.set("b", ValueCell::num(3.0)).input("total", "b", "line").input("how_many", "b", "line").input("every", "b", "line").input("some", "b", "line").input("times", "b", "line");
+    g.value("a", ValueCell::num(2.0)).input("total", "a", "line").input("how_many", "a", "line").input("every", "a", "line").input("some", "a", "line").input("times", "a", "line");
+    g.value("b", ValueCell::num(3.0)).input("total", "b", "line").input("how_many", "b", "line").input("every", "b", "line").input("some", "b", "line").input("times", "b", "line");
     assert_eq!(value(&g, "total"), ValueCell::num(5.0));
     assert_eq!(value(&g, "how_many"), ValueCell::num(2.0));
     assert_eq!(value(&g, "every"), ValueCell::plain(Val::Bool(true)));
@@ -373,31 +378,31 @@ fn a_group_is_however_many_links_have_that_label_including_none() {
 fn groups_can_follow_any_kind_of_link_and_scan_a_component() {
     let mut g = N::with(plan::install);
     for (t, d) in [("a", 1.0), ("b", 2.0)] {
-        g.set(t, Task {}).set(t, Estimate::days(d)).link(t, "whole", PartOf);
+        g.add(t, TASK).set(t, Estimate::days(d)).link(t, "whole", PART_OF);
     }
     g.formula("whole", "sum(in.part_of.estimate)");
     assert_eq!(value(&g, "whole"), ValueCell::num(3.0));
     g.formula("everything", "sum(t in with.task: t.estimate)");
     assert_eq!(value(&g, "everything"), ValueCell::num(3.0));
     g.formula("up", "count(x in out.part_of: true)");
-    g.link("up", "elsewhere", PartOf);
+    g.link("up", "elsewhere", PART_OF);
     assert_eq!(value(&g, "up"), ValueCell::num(1.0));
-    g.set("c", Task {}).set("c", Estimate::days(4.0)).link("c", "whole", PartOf);
+    g.add("c", TASK).set("c", Estimate::days(4.0)).link("c", "whole", PART_OF);
     assert_eq!(value(&g, "whole"), ValueCell::num(7.0), "a new one is noticed");
 }
 
 #[test]
 fn a_cell_can_read_other_cells_and_their_fields() {
     let mut g = N::with(plan::install);
-    g.set("gate", Decision::default());
-    g.link("yes", "gate", Alternative::default()).link("no", "gate", Alternative::default());
-    g.set("t", Task {}).set("t", Estimate::days(2.0)).link("t", "yes", PartOf);
+    g.add("gate", DECISION);
+    g.link("yes", "gate", ALTERNATIVE).link("no", "gate", ALTERNATIVE);
+    g.add("t", TASK).set("t", Estimate::days(2.0)).link("t", "yes", PART_OF);
     g.formula("t", "if(self.need, self.estimate * 100, 0)");
     let v = value(&g, "t").0.0;
     let at = |o: &str| BTreeMap::from([(g.id("gate").to_string(), g.id(o).to_string())]);
     assert_eq!((v.at(&at("yes")), v.at(&at("no"))), (&Val::Num(200.0), &Val::Num(0.0)));
 
-    g.g.set_runtime(g.id("yes"), "supplier", json!({ "lead": { "days": 12 } }));
+    g.g.set_value(g.id("yes"), "supplier", json!({ "lead": { "days": 12 } }));
     g.formula("lead", "s.supplier.lead.days + 1").input("lead", "yes", "s");
     assert_eq!(value(&g, "lead"), ValueCell::num(13.0));
     g.formula("nothing", "s.supplier.nope").input("nothing", "yes", "s");
@@ -411,9 +416,9 @@ fn a_missing_input_says_so_and_heals() {
     let mut g = N::with(sheet);
     g.formula("x", "rate * 2");
     assert!(error(&g, "x").contains("no input called rate"), "{}", error(&g, "x"));
-    g.set("r", ValueCell::num(3.0)).input("x", "r", "rate");
+    g.value("r", ValueCell::num(3.0)).input("x", "r", "rate");
     assert_eq!(value(&g, "x"), ValueCell::num(6.0));
-    g.unlink::<Label>("x", "r");
+    g.unlink("x", "r", LABEL);
     assert!(error(&g, "x").contains("no input called rate"));
     g.assert_round_trips();
 }
@@ -422,7 +427,7 @@ fn a_missing_input_says_so_and_heals() {
 fn text_that_doesnt_parse_is_kept_says_why_and_heals() {
     let mut g = N::with(sheet);
     g.formula("x", "1 +");
-    assert!(matches!(g.get::<ValueCell>("x"), Err(Error::Malformed { detail, .. }) if detail.contains("stops short")));
+    assert!(matches!(g.get::<ValueCell>("x"), Err(Error::Failed(detail)) if detail.contains("stops short")));
     g.formula("x", "1 + 1");
     assert_eq!(value(&g, "x"), ValueCell::num(2.0));
 }
@@ -452,7 +457,7 @@ fn types_are_checked_without_looking_at_a_world() {
 
     // It's a type error even in worlds the bad branch never runs in.
     let mut g = N::with(sheet);
-    g.set("x", Domain(vec!["a".into(), "b".into()]));
+    options(&mut g, "x", &["a", "b"]);
     g.formula("f", r#"if(x = "a", 1, "text")"#).input("f", "x", "x");
     assert!(error(&g, "f").contains("the two sides of if"), "{}", error(&g, "f"));
 }
@@ -460,7 +465,8 @@ fn types_are_checked_without_looking_at_a_world() {
 #[test]
 fn a_choice_has_a_type_from_its_options() {
     let mut g = N::with(sheet);
-    g.set("colour", Domain(vec!["red".into(), "blue".into()])).set("house", Domain(vec!["1".into(), "2".into()]));
+    options(&mut g, "colour", &["red", "blue"]);
+    options(&mut g, "house", &["1", "2"]);
     g.formula("typo", r#"c = "rde""#).input("typo", "colour", "c");
     assert!(error(&g, "typo").contains("isn't one of the options, which are red, blue"), "{}", error(&g, "typo"));
     g.formula("fine", r#"c = "red""#).input("fine", "colour", "c");
@@ -476,24 +482,24 @@ fn a_choice_has_a_type_from_its_options() {
 #[test]
 fn a_types_error_reaches_whatever_reads_it_and_a_stored_value_has_a_type_too() {
     let mut g = N::with(sheet);
-    g.set("words", ValueCell::plain(Val::Text("hello".into())));
+    g.value("words", ValueCell::plain(Val::Text("hello".into())));
     g.formula("bad", "w + 1").input("bad", "words", "w");
     assert!(error(&g, "bad").contains("+ needs numbers, not text and a number"), "{}", error(&g, "bad"));
     g.formula("reads_it", "b + 1").input("reads_it", "bad", "b");
     assert!(error(&g, "reads_it").contains("+ needs numbers"));
-    g.set("words", ValueCell::num(1.0));
+    g.value("words", ValueCell::num(1.0));
     assert_eq!(value(&g, "reads_it"), ValueCell::num(3.0), "and it heals");
 }
 
 #[test]
 fn changing_a_number_doesnt_rework_any_types_downstream() {
     let mut g = N::with(sheet);
-    g.set("a", ValueCell::num(1.0));
+    g.value("a", ValueCell::num(1.0));
     g.formula("b", "a + 1").input("b", "a", "a");
     g.formula("c", "b + 1").input("c", "b", "b");
     value(&g, "c");
     g.take_ran();
-    g.set("a", ValueCell::num(5.0));
+    g.value("a", ValueCell::num(5.0));
     assert_eq!(value(&g, "c"), ValueCell::num(7.0));
     let ran = g.ran_cells();
     assert_eq!(ran.iter().filter(|c| c.starts_with("value_type(")).collect::<Vec<_>>(), vec!["value_type(a)"], "{ran:?}");
@@ -506,7 +512,7 @@ fn a_loop_is_found_by_its_types_and_heals() {
     g.formula("a", "b + 1").input("a", "b", "b");
     g.formula("b", "a + 1").input("b", "a", "a");
     assert!(matches!(g.get::<ValueCell>("a"), Err(Error::Cycle(_))));
-    g.set("b", ValueCell::num(1.0));
+    g.value("b", ValueCell::num(1.0));
     assert_eq!(value(&g, "a"), ValueCell::num(2.0));
     g.assert_round_trips();
 }
@@ -514,10 +520,11 @@ fn a_loop_is_found_by_its_types_and_heals() {
 #[test]
 fn a_formula_can_only_go_on_a_cell_that_says_it_can_hold_one() {
     let mut g = N::with(plan::install);
-    let e = g.e("x");
-    g.g.set_rule(e, "task", recollect_systems::formulas::EXPR, json!({ "text": "true" }));
-    assert!(matches!(g.get::<Task>("x"), Err(Error::WrongRule { .. })));
-    g.g.set_rule(e, "estimate", recollect_systems::formulas::EXPR, json!({ "text": r#""soon""# }));
+    // Which option a decision took is only ever typed in.
+    g.add("x", DECISION).add("x", TASK).formula_on("x", "chosen", "true");
+    let e = g.id("x");
+    assert!(matches!(g.g.get_value(e, "chosen"), Err(Error::Failed(why)) if why.contains("chosen can't hold a formula")));
+    g.formula_on("x", Estimate::NAME, r#""soon""#);
     let Err(Error::Failed(why)) = g.get::<Estimate>("x") else { panic!() };
     assert!(why.contains("this cell holds a number, and this formula gives text"), "{why}");
 }
@@ -528,7 +535,7 @@ fn too_many_different_values_is_a_clear_error_and_not_a_hang() {
     let mut text = Vec::new();
     for i in 0..24 {
         let name = format!("c{i}");
-        g.set(&name, Domain(vec!["0".into(), (1u64 << i).to_string()]));
+        options(&mut g, &name, &["0", &(1u64 << i).to_string()]);
         g.input("total", &name, &name);
         text.push(name);
     }
@@ -542,7 +549,7 @@ fn too_many_different_values_is_a_clear_error_and_not_a_hang() {
     let mut text = Vec::new();
     for i in 0..24 {
         let name = format!("c{i}");
-        g.set(&name, Domain(vec!["0".into(), "1".into()]));
+        options(&mut g, &name, &["0", "1"]);
         g.input("all_on", &name, &name);
         text.push(format!("{name} = 1"));
     }
@@ -553,7 +560,7 @@ fn too_many_different_values_is_a_clear_error_and_not_a_hang() {
 // ---------- macros ----------
 
 fn macro_node(g: &mut N, name: &str, params: &[&str], body: &str) {
-    g.set(name, Macro { params: params.iter().map(|s| s.to_string()).collect(), body: body.to_string() });
+    g.add(name, MACRO).set(name, Macro { params: params.iter().map(|s| s.to_string()).collect(), body: body.to_string() });
 }
 
 #[test]
@@ -569,7 +576,7 @@ fn a_macro_means_what_it_expands_to() {
 #[test]
 fn an_argument_can_be_a_node_a_group_or_a_value() {
     let mut g = N::with(sheet);
-    g.set("a", ValueCell::num(2.0)).set("b", ValueCell::num(3.0));
+    g.value("a", ValueCell::num(2.0)).value("b", ValueCell::num(3.0));
     macro_node(&mut g, "double", &["x"], "x * 2");
     macro_node(&mut g, "total", &["things"], "sum(t in things: t)");
     g.formula("of_a_value", "double(1 + 1)").input("of_a_value", "double", "double");
@@ -610,7 +617,7 @@ fn a_macro_calling_itself_is_an_ordinary_loop() {
 #[test]
 fn a_macro_is_closed() {
     let mut g = N::with(sheet);
-    g.set("rate", ValueCell::num(2.0));
+    g.value("rate", ValueCell::num(2.0));
     macro_node(&mut g, "leaks", &["x"], "x * rate");
     g.input("leaks", "rate", "rate");
     g.formula("f", "leaks(1)").input("f", "leaks", "leaks").input("f", "rate", "rate");
@@ -624,13 +631,13 @@ fn a_macro_is_closed() {
 #[test]
 fn names_inside_a_macro_cant_clash_with_names_at_the_call() {
     let mut g = N::with(sheet);
-    g.set("y", ValueCell::num(10.0));
+    g.value("y", ValueCell::num(10.0));
     // The body's `x` and the caller's `x` are different things.
     macro_node(&mut g, "add_one", &["x"], "x + 1");
     g.formula("f", "add_one(x)").input("f", "add_one", "add_one").input("f", "y", "x");
     assert_eq!(value(&g, "f"), ValueCell::num(11.0));
     // And a binder inside one doesn't capture an argument with the same name.
-    g.set("a", ValueCell::num(1.0));
+    g.value("a", ValueCell::num(1.0));
     macro_node(&mut g, "scaled", &["things", "by"], "sum(x in things: x * by)");
     g.formula("h", "sum(x in line: scaled(line, x))").input("h", "scaled", "scaled").input("h", "a", "line");
     assert_eq!(value(&g, "h"), ValueCell::num(1.0));
@@ -656,7 +663,7 @@ fn wrong_numbers_of_arguments_are_errors() {
     assert!(just_error("if(true, 1)").contains("if takes 3 and was given 2"));
     assert!(just_error("nope(1)").contains("no function called nope"));
     let mut g = N::with(sheet);
-    g.set("a", ValueCell::num(1.0));
+    g.value("a", ValueCell::num(1.0));
     g.formula("f", "a(1)").input("f", "a", "a");
     assert!(error(&g, "f").contains("a isn't a macro"));
 }
@@ -669,11 +676,10 @@ fn a_formula_can_ask_which_way_a_decision_went_and_set_an_estimate() {
         plan::install(reg);
         schedule::install(reg);
     });
-    g.set("how", Decision::default());
-    g.link("gpu", "how", Alternative::default()).link("cpu", "how", Alternative::default());
-    g.set("train", Task {}).link("train", "how", PartOf);
-    let e = g.id("train");
-    g.g.set_rule(e, "estimate", recollect_systems::formulas::EXPR, json!({ "text": "if(chose(how, gpu), 3, 5)" }));
+    g.add("how", DECISION);
+    g.link("gpu", "how", ALTERNATIVE).link("cpu", "how", ALTERNATIVE);
+    g.add("train", TASK).link("train", "how", PART_OF);
+    g.formula_on("train", Estimate::NAME, "if(chose(how, gpu), 3, 5)");
     g.input("train", "how", "how").input("train", "gpu", "gpu");
 
     let (how, gpu, cpu) = (g.id("how").to_string(), g.id("gpu").to_string(), g.id("cpu").to_string());
@@ -682,12 +688,11 @@ fn a_formula_can_ask_which_way_a_decision_went_and_set_an_estimate() {
     assert_eq!((finish.at(&at(&gpu)), finish.at(&at(&cpu))), (&Some(3.0), &Some(5.0)));
 
     // A date that depends on itself through its own estimate is a loop.
-    let looped = g.id("train");
-    g.g.set_rule(looped, "estimate", recollect_systems::formulas::EXPR, json!({ "text": "self.finish" }));
+    g.formula_on("train", Estimate::NAME, "self.finish");
     assert!(matches!(g.get::<Finish>("train"), Err(Error::Cycle(_))));
 
     // And one a formula can't work out makes the date unknowable, not an error.
-    g.g.set_rule(looped, "estimate", recollect_systems::formulas::EXPR, json!({ "text": "if(chose(how, gpu), undefined, 5)" }));
+    g.formula_on("train", Estimate::NAME, "if(chose(how, gpu), undefined, 5)");
     let finish = g.get::<Finish>("train").unwrap().unwrap().0.0;
     assert_eq!((finish.at(&at(&gpu)), finish.at(&at(&cpu))), (&None, &Some(5.0)));
     g.assert_round_trips();
@@ -696,14 +701,14 @@ fn a_formula_can_ask_which_way_a_decision_went_and_set_an_estimate() {
 #[test]
 fn chose_needs_a_decision_and_pick_lands_on_nothing_for_a_gap() {
     let mut g = N::with(plan::install);
-    g.set("not_a_decision", ValueCell::num(1.0)).set("o", ValueCell::num(2.0));
+    g.value("not_a_decision", ValueCell::num(1.0)).value("o", ValueCell::num(2.0));
     g.formula("f", "chose(d, o)").input("f", "not_a_decision", "d").input("f", "o", "o");
     assert!(error(&g, "f").contains("chose needs a decision"));
 
-    g.set("d", Decision::default());
+    g.add("d", DECISION);
     g.formula("d", "pick(in.alternative)");
-    g.set("known", ValueCell::num(5.0)).link("known", "d", Alternative::default());
-    g.set("gap", Unknown).link("gap", "d", Alternative::default());
+    g.value("known", ValueCell::num(5.0)).link("known", "d", ALTERNATIVE);
+    g.add("gap", UNKNOWN).link("gap", "d", ALTERNATIVE);
     let v = value(&g, "d").0.0;
     let at = |o: &str| BTreeMap::from([(g.id("d").to_string(), g.id(o).to_string())]);
     assert_eq!((v.at(&at("known")), v.at(&at("gap"))), (&Val::Num(5.0), &Val::Undefined));
@@ -713,15 +718,15 @@ fn chose_needs_a_decision_and_pick_lands_on_nothing_for_a_gap() {
 #[test]
 fn effort_is_worked_out_across_a_plan_with_shared_work_counted_once() {
     let mut g = N::with(plan::install);
-    g.set("calib", Decision::default());
+    g.add("calib", DECISION);
     for o in ["cad", "free", "board"] {
-        g.link(o, "calib", Alternative::default());
+        g.link(o, "calib", ALTERNATIVE);
     }
-    g.set("else", Unknown).link("else", "calib", Alternative::default());
+    g.add("else", UNKNOWN).link("else", "calib", ALTERNATIVE);
     for (t, d, parents) in [("imu", 1.0, vec!["calib"]), ("static", 2.0, vec!["cad", "free"]), ("export", 3.0, vec!["cad"]), ("search", 5.0, vec!["free"]), ("detector", 4.0, vec!["board"])] {
-        g.set(t, Task {}).set(t, Estimate::days(d));
+        g.add(t, TASK).set(t, Estimate::days(d));
         for p in parents {
-            g.link(t, p, PartOf);
+            g.link(t, p, PART_OF);
         }
     }
     g.formula("effort", "effort()");
@@ -730,7 +735,7 @@ fn effort_is_worked_out_across_a_plan_with_shared_work_counted_once() {
     assert_eq!((v.at(&at("cad")), v.at(&at("free")), v.at(&at("board")), v.at(&at("else"))), (&Val::Num(6.0), &Val::Num(8.0), &Val::Num(5.0), &Val::Undefined));
 
     // A requirement rules worlds out, with a reason you can read.
-    g.formula("short", "e <= 6").input("short", "effort", "e").set("short", Requires);
+    g.formula("short", "e <= 6").input("short", "effort", "e").add("short", REQUIRES);
     assert_eq!(g.show(&truth(&value(&g, "short"))), "calib∈{cad,board}");
 }
 
@@ -750,7 +755,7 @@ fn any_formula_can_be_tried_on_a_node_with_nothing_changed() {
     assert_eq!(expansion, format!("if(({q} < 0), -{q}, {q})"), "and it says what that really means");
 
     assert!(matches!(try_formula(&g.g, e, "nope"), Err(Error::Failed(why)) if why.contains("no input called nope")));
-    assert!(matches!(try_formula(&g.g, e, "1 +"), Err(Error::Malformed { .. })));
+    assert!(matches!(try_formula(&g.g, e, "1 +"), Err(Error::Failed(why)) if why.contains("stops short")));
     assert_eq!(value(&g, "f"), whole);
     assert!(!g.g.has_own(e, "formula_try"), "the graph itself never heard about any of this");
 }

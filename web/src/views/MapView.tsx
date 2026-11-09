@@ -16,9 +16,9 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import ELK from "elkjs/lib/elk.bundled.js";
-import type { GraphNode, Link } from "../api";
+import type { GraphNode } from "../api";
 import type { Workspace } from "../workspace";
-import { GLYPH, compColor, dominant, factsOf, isDropped, isNote, label as labelOf, nodeColor } from "../theme";
+import { badgesOf, compColor, dominant, isDropped, isNote, label as labelOf, nodeColor } from "../theme";
 import { Brackets, CompBadges, edgeKey, parseEdgeKey, reading } from "../bits";
 import { type SummaryLine, summaryOf } from "../summary";
 import { DdItem, Dropdown } from "../Dropdown";
@@ -48,6 +48,7 @@ type Direction = "down" | "right";
 export const UNWRITTEN = "◇";
 
 type CardData = {
+  ws: Workspace;
   node: GraphNode;
   direction: Direction;
   selected: boolean;
@@ -74,7 +75,7 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
       {/* Links point child → parent, and parents come first: leave from that side. */}
       <Handle type="source" position={direction === "down" ? Position.Top : Position.Left} />
       <div className="card-top">
-        <CompBadges n={node} />
+        <CompBadges ws={data.ws} n={node} />
         {kinds.map((k) => (
           <span key={k} className="cbadge" title="What kind of thing it is">
             {k}
@@ -208,6 +209,12 @@ function saveLayoutPref(dir: string, pref: LayoutPref) {
 
 const LABEL_REL = "label:";
 
+/**
+ * A line the map draws: an edge, by the component that leads it (the first that gives the graph its shape,
+ * and otherwise its first), or a row a node reads by where it is. `value` is what a formula calls the end.
+ */
+type MapLink = { from: string; to: string; kind: string; value: unknown; key: string };
+
 /** What the Links menu filters a link by. */
 const relOf = (e: { kind: string; value: unknown }) => (e.kind === "label" ? `${LABEL_REL}${String(e.value)}` : e.kind);
 
@@ -234,10 +241,10 @@ type LinkDrop = { from: string; to: string; at: XY };
 let lastKind = "";
 
 /** Shown where a link was dropped: pick its kind, and flip its direction if needed. */
-function LinkMenu({ ws, drop, onSwap, onDone }: { ws: Workspace; drop: LinkDrop; onSwap: () => void; onDone: (edge?: { from: string; kind: string; to: string }) => void }) {
+function LinkMenu({ ws, drop, onSwap, onDone }: { ws: Workspace; drop: LinkDrop; onSwap: () => void; onDone: (kind?: string) => void }) {
   // A label needs a name to mean anything, so it's made from a formula, in the inspector.
-  const kinds = ws.view!.components.filter((c) => c.on === "link" && c.name !== "label");
-  const exists = (kind: string) => ws.view!.links.some((e) => e.from === drop.from && e.to === drop.to && e.kind === kind);
+  const kinds = ws.view!.components.filter((c) => c.place === "edge" && c.name !== "label");
+  const exists = (kind: string) => ws.view!.edges.some((e) => e.from === drop.from && e.to === drop.to && e.components.includes(kind));
   const first = kinds.findIndex((r) => r.name === lastKind && !exists(r.name));
   const [cursor, setCursor] = useState(first >= 0 ? first : Math.max(0, kinds.findIndex((r) => !exists(r.name))));
   const [err, setErr] = useState<string | null>(null);
@@ -246,10 +253,9 @@ function LinkMenu({ ws, drop, onSwap, onDone }: { ws: Workspace; drop: LinkDrop;
   const create = async (kind: string) => {
     if (exists(kind)) return;
     try {
-      const info = ws.info(kind);
-      await ws.apply([{ op: "link", from: drop.from, to: drop.to, kind, value: info?.initial ?? null }]);
+      await ws.apply([{ op: "link", from: drop.from, to: drop.to, component: kind }]);
       lastKind = kind;
-      onDone({ from: drop.from, kind, to: drop.to });
+      onDone(kind);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -329,8 +335,12 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
   // `Year[3]` do, which no link says. Each keeps the key of the link it came from.
   const links = useMemo(() => {
     const at = (id: string) => standsFor.get(id) ?? id;
-    const out: (Link & { key: string })[] = [];
-    for (const l of g.links) if (at(l.from) !== at(l.to)) out.push({ ...l, from: at(l.from), to: at(l.to), key: edgeKey(l) });
+    const out: MapLink[] = [];
+    for (const e of g.edges) {
+      if (at(e.from) === at(e.to)) continue;
+      const kind = e.components.find((c) => ws.arranging.includes(c)) ?? e.components[0];
+      out.push({ from: at(e.from), to: at(e.to), kind, value: e.cells.called?.value, key: edgeKey(e.id) });
+    }
     const byId = new Map(g.nodes.map((n) => [n.id, n]));
     for (const n of g.nodes)
       for (const to of n.reads ?? []) {
@@ -338,10 +348,10 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
         // The row before or after is called that, and anything further by its address.
         const by = a && b && a.table === b.table && typeof a.key === "number" && typeof b.key === "number" ? b.key - a.key : null;
         const value = by === -1 ? "prev" : by === 1 ? "next" : (byId.get(to)?.name ?? "");
-        if (byId.has(to) && at(n.id) !== at(to)) out.push({ from: at(n.id), to: at(to), kind: "label", value, key: `e:${n.id}|reads|${to}` });
+        if (byId.has(to) && at(n.id) !== at(to)) out.push({ from: at(n.id), to: at(to), kind: "label", value, key: `reads:${n.id}|${to}` });
       }
     return out;
-  }, [g.nodes, g.links, standsFor]);
+  }, [g.nodes, g.edges, standsFor, ws.arranging]);
   const [hiddenFacts, setHiddenFacts] = useState<Set<Filter>>(new Set());
   const [hiddenRels, setHiddenRels] = useState<Set<string>>(new Set());
   const [layoutPref, setLayoutPrefState] = useState<LayoutPref>(() => loadLayoutPref(g.workspace.dir));
@@ -600,7 +610,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
   }, [fitView, zoomTo, getZoom, onSelect, selectedNode, active]);
 
   const factsFor = (n: GraphNode): Filter[] => {
-    const f = factsOf(n);
+    const f = badgesOf(n);
     return f.length ? f : isNote(n) ? ["none"] : ["own"];
   };
   const present = useMemo(() => {
@@ -691,7 +701,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
     const others = new Set(links.filter((e) => e.kind !== "label" && shapes(relOf(e))).map((e) => `${e.from}|${e.to}`));
     // A formula taken from a kind reads what the kind labels, so that goes beneath the node it runs for too.
     const taken = g.nodes.flatMap((n) =>
-      [...new Set(Object.values(n.cells).filter((c) => !c.own && c.kind && c.formula).map((c) => c.kind!))].flatMap((k) =>
+      [...new Set(Object.values(n.cells).filter((c) => c.source === "kind" && c.kind && c.formula).map((c) => c.kind!))].flatMap((k) =>
         links.filter((l) => l.from === k && l.kind === "label").map((l) => ({ ...l, from: rep(n.id) })),
       ),
     );
@@ -708,7 +718,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
       JSON.stringify([
         [...visible].sort(),
         layoutEdges.map((e) => [e.from, e.to, e.kind]),
-        g.nodes.filter((n) => visible.has(n.id)).map((n) => [n.name.length, factsOf(n).length]),
+        g.nodes.filter((n) => visible.has(n.id)).map((n) => [n.name.length, badgesOf(n).length]),
         layoutPref.direction,
       ]),
     [visible, layoutEdges, g.nodes, layoutPref.direction],
@@ -732,7 +742,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
         },
         children: nodes.map((n) => ({ id: n.id, width: W, height: nodeHeight(n) })),
         edges: layoutEdges.map((e, i) => {
-          const { parent, child } = ws.ends(e);
+          const { parent, child } = ws.info(e.kind)?.reversed ? { parent: e.from, child: e.to } : { parent: e.to, child: e.from };
           return { id: `s${i}`, sources: [child], targets: [parent] };
         }),
       })
@@ -853,6 +863,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
             initialHeight: nodeHeight(node),
             selected: id === selected,
             data: {
+              ws,
               node,
               direction: layoutPref.direction,
               selected: id === selected,
@@ -867,9 +878,9 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
               title: node.row ? String(node.row.key) : node.name,
               kinds: [
                 ...[node, ...(node.parts ?? []).flatMap((p) => ws.byId.get(p) ?? [])].flatMap((n) => (n.row ? [n.row.table] : [])),
-                ...ws.view!.links.filter((l) => l.from === id && l.kind === "is_a").map((l) => ws.byId.get(l.to)?.name ?? ""),
+                ...ws.view!.edges.filter((l) => l.from === id && l.components.includes("is_a")).map((l) => ws.byId.get(l.to)?.name ?? ""),
                 // Something other things are a kind of, or a table something's a row of, says so.
-                ...(ws.view!.links.some((l) => l.to === id && l.kind === "is_a") || (!node.row && ws.view!.nodes.some((n) => n.row?.table === node.name)) ? ["kind"] : []),
+                ...(ws.view!.edges.some((l) => l.to === id && l.components.includes("is_a")) || (!node.row && ws.view!.nodes.some((n) => n.row?.table === node.name)) ? ["kind"] : []),
               ],
             },
           };
@@ -887,7 +898,8 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
           const isSel = key === selected;
           const hot = isSel || selected === e.from || selected === e.to;
           const arranges = ws.arranging.includes(e.kind);
-          const ends = ws.ends(e);
+          // Into what reads it or holds it, as the edge's leading component says.
+          const ends = ws.info(e.kind)?.reversed ? { parent: e.from, child: e.to } : { parent: e.to, child: e.from };
           return {
             id: key,
             source: ends.child,
@@ -901,7 +913,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
             zIndex: hot ? 10 : 0,
           };
         }),
-    [links, ws.arranging, ws.ends, visible, hiddenRels, selected],
+    [links, ws.arranging, ws.info, visible, hiddenRels, selected],
   );
 
   const shownCount = present.filter(([f]) => !hiddenFacts.has(f)).length;
@@ -970,7 +982,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
           </div>
           {present.map(([f, n]) => (
             <DdItem key={f} checked={!hiddenFacts.has(f)} onChange={() => setHiddenFacts(toggle(hiddenFacts, f))} color={compColor(f)}>
-              <span className="dd-label">{f === "none" ? "· notes" : f === "own" ? "· only their own cells" : `${GLYPH[f] ?? ""} ${labelOf(f)}`}</span>
+              <span className="dd-label">{f === "none" ? "· notes" : f === "own" ? "· only their own cells" : `${ws.info(f)?.icon ?? ""} ${labelOf(f)}`}</span>
               <span className="muted">{n}</span>
             </DdItem>
           ))}
@@ -1074,9 +1086,9 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
             }}
             onEdgeContextMenu={(e, edge) => {
               const parsed = parseEdgeKey(edge.id);
-              if (!parsed) return;
+              if (!parsed || !ws.edgeById.has(parsed)) return;
               e.preventDefault();
-              onContext({ kind: "edge", from: parsed.from, rel: parsed.kind, to: parsed.to, x: e.clientX, y: e.clientY });
+              onContext({ kind: "edge", edge: parsed, x: e.clientX, y: e.clientY });
             }}
             onPaneClick={() => onSelect(null)}
             nodesConnectable={false}
@@ -1132,15 +1144,14 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
               ws={ws}
               drop={linkDrop}
               onSwap={() => setLinkDrop({ ...linkDrop, from: linkDrop.to, to: linkDrop.from })}
-              onDone={(edge) => {
+              onDone={(kind) => {
                 setLinkDrop(null);
-                if (edge) {
+                if (kind) {
                   setHiddenRels((h) => {
                     const next = new Set(h);
-                    next.delete(edge.kind);
+                    next.delete(kind);
                     return next;
                   });
-                  onSelect(edgeKey(edge));
                 }
               }}
             />

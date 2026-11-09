@@ -6,26 +6,25 @@ mod support;
 
 use recollect_graph::worlds::{Cond, Worldly};
 use recollect_systems::expr::Val;
-use recollect_systems::formulas::{EXPR, ValueCell};
-use recollect_systems::plan::{self, Alternative, Decision};
+use recollect_systems::formulas::ValueCell;
+use recollect_systems::plan::{self, ALTERNATIVE, DECISION};
 use serde_json::{Value, json};
 use support::N;
 
 /// A formula on one of the workspace's own cells.
 fn column(g: &mut N, name: &str, component: &str, text: &str) {
-    let e = g.e(name);
-    g.g.set_rule(e, component, EXPR, json!({ "text": text }));
+    g.formula_on(name, component, text);
 }
 
 fn put(g: &mut N, name: &str, component: &str, v: Value) {
     let e = g.e(name);
-    g.g.set_runtime(e, component, v);
+    g.g.set_value(e, component, v);
 }
 
 /// What a cell is, in each world.
 fn cell(g: &N, name: &str, component: &str) -> Cond<Val> {
-    let r = g.g.get_runtime(g.id(name), component).unwrap().unwrap_or_else(|| panic!("{name} has no {component}"));
-    serde_json::from_value::<Worldly<Val>>(r.value).unwrap().0
+    let r = g.g.get_value(g.id(name), component).unwrap().unwrap_or_else(|| panic!("{name} has no {component}"));
+    serde_json::from_value::<Worldly<Val>>(r).unwrap().0
 }
 
 fn number(g: &N, name: &str, component: &str) -> f64 {
@@ -36,7 +35,7 @@ fn number(g: &N, name: &str, component: &str) -> f64 {
 }
 
 fn years(g: &mut N) {
-    g.set("Rate", ValueCell::num(0.05));
+    g.value("Rate", ValueCell::num(0.05));
     column(g, "Year", "balance", "prev.balance * (1 + rate)");
     g.input("Year", "Rate", "rate");
     put(g, "Year[0]", "balance", json!(1000));
@@ -53,7 +52,7 @@ fn a_tables_formula_runs_for_each_row_from_the_one_before() {
     assert!(cell(&g, "Year", "balance").cases().iter().all(|(_, v)| **v == Val::Undefined), "the table itself has no row before it");
 
     g.take_ran();
-    g.set("Rate", ValueCell::num(0.1));
+    g.value("Rate", ValueCell::num(0.1));
     assert!((number(&g, "Year[10]", "balance") - 2593.74246).abs() < 1e-3);
     assert_eq!(g.ran_cells().iter().filter(|c| c.starts_with("balance(")).count(), 10, "each row once");
 
@@ -95,20 +94,20 @@ fn prev_prev_next_row_and_rows() {
     assert_eq!(number(&g, "Countdown", "total"), 20.0, "a new row is counted");
 
     // A key that isn't a number is still which row this is.
-    column(&mut g, "Fruit", "called", "row");
+    column(&mut g, "Fruit", "which", "row");
     g.e("Fruit[apple]");
-    assert_eq!(cell(&g, "Fruit[apple]", "called").cases()[0].1, &Val::Text("apple".to_string()));
-    assert_eq!(cell(&g, "Fruit[apple]", "called").cases().len(), 1);
+    assert_eq!(cell(&g, "Fruit[apple]", "which").cases()[0].1, &Val::Text("apple".to_string()));
+    assert_eq!(cell(&g, "Fruit[apple]", "which").cases().len(), 1);
 }
 
 #[test]
 fn a_choice_part_way_down_a_table_changes_only_what_comes_after() {
     let mut g = N::with(plan::install);
     years(&mut g);
-    g.set("Top up?", Decision::default());
+    g.add("Top up?", DECISION);
     g.formula("Top up?", "pick(in.alternative)");
     for (option, amount) in [("No", 0.0), ("Yes", 500.0)] {
-        g.set(option, ValueCell::num(amount)).link(option, "Top up?", Alternative::default());
+        g.value(option, ValueCell::num(amount)).link(option, "Top up?", ALTERNATIVE);
     }
     // Year 5 says its own formula, with the top-up in it, and the rest follow on from it.
     column(&mut g, "Year[5]", "balance", "prev.balance * (1 + rate) + top_up");
@@ -129,12 +128,12 @@ fn a_formula_can_address_any_row_and_a_numbered_table_goes_on_by_itself() {
     // Year[100] was never written. Asking for it works out every year up to it from the table.
     g.formula("Far", "Year[100].balance");
     assert!((amount(&g, "Far") - 1000.0 * 1.05f64.powi(100)).abs() < 1e-6);
-    let saved = g.g.save().unwrap();
+    let saved = g.g.save();
     assert_eq!(saved.nodes.len(), g.g.entities().count(), "and none of those years is written down");
     g.take_ran();
     amount(&g, "Far");
     assert!(g.ran().is_empty(), "they're remembered");
-    g.set("Rate", ValueCell::num(0.1));
+    g.value("Rate", ValueCell::num(0.1));
     assert!((amount(&g, "Far") - 1000.0 * 1.1f64.powi(100)).abs() < 1e-3, "and changes reach them");
 
     // Year[row - 1] is the same as prev, and a key can be a name.

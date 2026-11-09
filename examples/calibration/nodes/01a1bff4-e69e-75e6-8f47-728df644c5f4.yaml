@@ -1,0 +1,10 @@
+id: 01a1bff4-e69e-75e6-8f47-728df644c5f4
+components:
+- task
+cells:
+  estimate: 4.0
+  name: Board detector
+links:
+- to: 01a1bff4-e69e-75e6-8f47-72872e524fb0
+  components:
+  - part_of

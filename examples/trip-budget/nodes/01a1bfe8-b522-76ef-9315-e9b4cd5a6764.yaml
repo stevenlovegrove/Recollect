@@ -1,8 +1,0 @@
-id: 01a1bfe8-b522-76ef-9315-e9b4cd5a6764
-components:
-- decision
-- value
-cells:
-  name: Stay
-formulas:
-  value: pick(in.alternative)

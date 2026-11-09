@@ -1,0 +1,6 @@
+id: 01a1bff4-e70f-7528-a2d2-42f8fa19d96f
+components:
+- value
+cells:
+  name: Tax rate
+  value: 0.2

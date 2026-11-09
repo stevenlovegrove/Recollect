@@ -1,0 +1,7 @@
+id: 01a1bff4-e9f4-733c-a970-1a5d75e2e5d5
+components:
+- value
+cells:
+  name: Kools are smoked in the yellow house
+formulas:
+  value: Smoke[Kools] = Colour[Yellow]

@@ -1,0 +1,16 @@
+id: 01a1bff4-e9f4-733c-a970-1a4bc0b4aad0
+components:
+- notes
+- options
+- value
+cells:
+  body: Each in a different house
+  name: Drink
+  options:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  - '5'
+formulas:
+  value: distinct(rows)

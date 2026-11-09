@@ -2,11 +2,11 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Op } from "./api";
 import type { Workspace } from "./workspace";
 import { edgeKey } from "./bits";
-import { GLYPH, compColor, isDropped, label } from "./theme";
+import { compColor, isDropped, label } from "./theme";
 
-export type CtxTarget = { x: number; y: number } & ({ kind: "node"; id: string } | { kind: "edge"; from: string; rel: string; to: string });
+export type CtxTarget = { x: number; y: number } & ({ kind: "node"; id: string } | { kind: "edge"; edge: string });
 
-/** Right-click menu for a node or link: change what it is, or delete it. */
+/** Right-click menu for a node or edge: change what it is, or delete it. */
 export function ContextMenu({ ws, target, selected, onSelect, onClose }: { ws: Workspace; target: CtxTarget; selected: string | null; onSelect: (id: string | null) => void; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: target.x, top: target.y });
@@ -57,8 +57,9 @@ export function ContextMenu({ ws, target, selected, onSelect, onClose }: { ws: W
     const id = target.id;
     const node = ws.byId.get(id);
     if (!node) return null;
-    const facts = view.components.filter((c) => c.on === "node" && !c.derived && !["name", "body", "sources", "dropped"].includes(c.name) && (c.initial === null || typeof c.initial === "object"));
-    const toggle = (c: string) => run([node.cells[c] ? { op: "set", id, component: c } : { op: "set", id, component: c, value: ws.info(c)?.initial ?? null }]);
+    const given = node.components.filter((c) => c.why === "given").map((c) => c.name);
+    const components = view.components.filter((c) => c.place === "node" && !c.everywhere);
+    const toggle = (c: string) => run([{ op: given.includes(c) ? "remove" : "add", id, component: c }]);
     const dropped = isDropped(node);
     body = (
       <>
@@ -66,22 +67,22 @@ export function ContextMenu({ ws, target, selected, onSelect, onClose }: { ws: W
           {node.name}
         </div>
         <div className="ctx-label">What it is: it can be several</div>
-        {facts.map((c) => (
-          <button key={c.name} className="ctx-item" role="menuitemcheckbox" aria-checked={!!node.cells[c.name]} title={c.about} onClick={() => toggle(c.name)}>
-            <span className="ctx-check">{node.cells[c.name] ? "✓" : ""}</span>
+        {components.map((c) => (
+          <button key={c.name} className="ctx-item" role="menuitemcheckbox" aria-checked={given.includes(c.name)} title={c.about} onClick={() => toggle(c.name)}>
+            <span className="ctx-check">{given.includes(c.name) ? "✓" : ""}</span>
             <span className="ctx-glyph" style={{ color: compColor(c.name) }}>
-              {GLYPH[c.name] ?? "·"}
+              {c.icon ?? "·"}
             </span>
             {label(c.name)}
           </button>
         ))}
         <div className="ctx-sep" />
-        {ws.info("dropped") && (
+        {node.cells.dropped && (
           <button
             className="ctx-item"
             title={dropped ? "Bring it back" : "Take it out of the picture, and keep it"}
             onClick={async () => {
-              if (await run([dropped ? { op: "set", id, component: "dropped" } : { op: "set", id, component: "dropped", value: true }])) onClose();
+              if (await run([dropped ? { op: "set", id, cell: "dropped" } : { op: "set", id, cell: "dropped", value: true }])) onClose();
             }}
           >
             <span className="ctx-check" />
@@ -101,46 +102,45 @@ export function ContextMenu({ ws, target, selected, onSelect, onClose }: { ws: W
       </>
     );
   } else {
-    const { from, rel, to } = target;
-    const link = view.links.find((l) => l.from === from && l.kind === rel && l.to === to);
+    const edge = ws.edgeById.get(target.edge);
+    if (!edge) return null;
+    const { from, to } = edge;
     const title = (n: string) => ws.byId.get(n)?.name ?? n;
-    // One change-set, so a refused change (say, a deadlock) leaves the original link in place.
-    const replace = async (next: { from: string; kind: string; to: string }) => {
-      const value = next.kind === rel ? link?.value : ws.info(next.kind)?.initial ?? null;
-      const ok = await run([
-        { op: "link", from, to, kind: rel },
-        { op: "link", ...next, value: value ?? null },
-      ]);
-      if (ok) {
-        if (selected === edgeKey({ from, kind: rel, to })) onSelect(edgeKey(next));
+    const toggle = (c: string) => run([{ op: edge.components.includes(c) ? "unlink" : "link", from, to, component: c } as Op]);
+    // One change-set, so a refused change (say, a deadlock) leaves the original edge in place. What it
+    // says in its cells goes with it.
+    const reverse = async () => {
+      const cells = Object.fromEntries(Object.entries(edge.cells).filter(([, c]) => c.source === "own").map(([k, c]) => [k, c.formula !== undefined ? { formula: c.formula } : c.value]));
+      const ops: Op[] = [...edge.components.map((c) => ({ op: "unlink", from, to, component: c }) as Op), ...edge.components.map((c, i) => ({ op: "link", from: to, to: from, component: c, cells: i === 0 ? cells : {} }) as Op)];
+      if (await run(ops)) {
+        if (selected === edgeKey(edge.id)) onSelect(null);
         onClose();
       }
     };
-    const taken = (k: string) => view.links.some((l) => l.from === from && l.to === to && l.kind === k);
     body = (
       <>
         <div className="ctx-title" title={`${title(from)} → ${title(to)}`}>
           {title(from)} → {title(to)}
         </div>
-        <div className="ctx-label">Kind</div>
+        <div className="ctx-label">What it is: it can be several</div>
         {view.components
-          .filter((c) => c.on === "link")
+          .filter((c) => c.place === "edge")
           .map((c) => (
-            <button key={c.name} className="ctx-item" role="menuitemradio" aria-checked={c.name === rel} disabled={c.name !== rel && taken(c.name)} title={c.about} onClick={() => (c.name === rel ? onClose() : replace({ from, kind: c.name, to }))}>
-              <span className="ctx-check">{c.name === rel ? "✓" : ""}</span>
+            <button key={c.name} className="ctx-item" role="menuitemcheckbox" aria-checked={edge.components.includes(c.name)} title={c.about} onClick={() => toggle(c.name)}>
+              <span className="ctx-check">{edge.components.includes(c.name) ? "✓" : ""}</span>
               <span className={`dd-swatch rel-${c.name}`} />
               {label(c.name)}
             </button>
           ))}
         <div className="ctx-sep" />
-        <button className="ctx-item" onClick={() => replace({ from: to, kind: rel, to: from })}>
+        <button className="ctx-item" onClick={reverse}>
           <span className="ctx-check" />
           Reverse direction
         </button>
         <button
           className="ctx-item danger"
           onClick={async () => {
-            if (await run([{ op: "link", from, to, kind: rel }])) onClose();
+            if (await run(edge.components.map((c) => ({ op: "unlink", from, to, component: c }) as Op))) onClose();
           }}
         >
           <span className="ctx-check" />

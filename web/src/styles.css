@@ -20,7 +20,7 @@
   --c-risk: #dc2626;
   --c-unknown: #a16207;
   --c-value: #2563eb;
-  --c-domain: #4f46e5;
+  --c-options: #4f46e5;
   --c-requires: #2f9e6a;
   --c-macro: #8a8a82;
   --c-none: #8a8a82;
@@ -60,7 +60,7 @@
     --c-risk: #f87171;
     --c-unknown: #eab308;
     --c-value: #60a5fa;
-    --c-domain: #818cf8;
+    --c-options: #818cf8;
     --c-requires: #4ade80;
     --c-macro: #a8a29e;
     --c-none: #a8a29e;
@@ -2952,4 +2952,38 @@ tr.pruned {
   color: var(--accent);
   font-style: normal;
   font-weight: 600;
+}
+
+/* ---------- component cards ---------- */
+
+.comp-head {
+  display: flex;
+  justify-content: flex-start;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.comp-fold {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  width: 16px;
+}
+.comp-origin {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--muted);
+  flex: 1;
+}
+.comp-head > .icon {
+  margin-left: auto;
+}
+.comp.collapsed {
+  padding-bottom: 8px;
+}
+.cbadge.clickable {
+  cursor: pointer;
 }

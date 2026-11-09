@@ -35,19 +35,20 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
       const k = todo.pop()!;
       if (seen.has(k)) continue;
       seen.add(k);
-      todo.push(...g.links.filter((l) => l.from === k && l.kind === "is_a").map((l) => l.to));
+      todo.push(...g.edges.filter((l) => l.from === k && l.components.includes("is_a")).map((l) => l.to));
     }
     return seen;
-  }, [g.links, head]);
+  }, [g.edges, head]);
   // A row's other parts say what's theirs to say, in their own tables.
   const columns = useMemo(() => {
-    const cs = new Set(Object.entries(head?.cells ?? {}).filter(([, c]) => c.workspace).map(([k]) => k));
-    for (const r of rows) for (const [k, c] of Object.entries(r.cells)) if (c.workspace && (c.own || (c.kind && lineage.has(c.kind)))) cs.add(k);
+    const free = (k: string) => !ws.cellInfo(k) && k !== "name";
+    const cs = new Set(Object.keys(head?.cells ?? {}).filter(free));
+    for (const r of rows) for (const [k, c] of Object.entries(r.cells)) if (free(k) && (c.source === "own" || (c.kind && lineage.has(c.kind)))) cs.add(k);
     // A table of choices: each row's choice, and the options, which the rows take from the table. The
     // table's own value is what it says about them, such as that no two are the same.
-    const choices = [head, ...rows].some((n) => n?.cells.domain);
-    return [...(choices ? ["value", "domain"] : []), ...[...cs].sort()];
-  }, [head, rows, lineage]);
+    const choices = [head, ...rows].some((n) => n?.cells.options);
+    return [...(choices ? ["value", "options"] : []), ...[...cs].sort()];
+  }, [head, rows, lineage, ws]);
   const numbered = rows.length > 0 && rows.every((r) => typeof r.row!.key === "number");
   // A numbered table goes on past its last written row, as far as it's asked: those rows are worked out
   // from the table, and nothing about them is saved.
@@ -60,7 +61,7 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
   const written = new Map(rows.map((r) => [r.id, r]));
   // Every row from the first to as far as asked, written or not, in order.
   const shown: { node: GraphNode; key: string | number; unwritten: boolean }[] = numbered
-    ? (run ?? []).map((r) => ({ node: written.get(r.id) ?? { id: r.id, name: `${table}[${r.key}]`, cells: r.cells, unwritten: true }, key: r.key, unwritten: !r.written }))
+    ? (run ?? []).map((r) => ({ node: written.get(r.id) ?? { id: r.id, name: `${table}[${r.key}]`, components: [], cells: r.cells, unwritten: true }, key: r.key, unwritten: !r.written }))
     : rows.map((r) => ({ node: r, key: r.row!.key, unwritten: false }));
 
   return (
@@ -81,7 +82,7 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
                 Every row
               </td>
               {columns.map((c) => (
-                <td key={c} className={`sheet-cell ${head.cells[c]?.source === "rule" ? "formula-cell" : ""}`}>
+                <td key={c} className={`sheet-cell ${head.cells[c]?.formula !== undefined ? "formula-cell" : ""}`}>
                   <TableCell ws={ws} node={head} c={c} cell={head.cells[c]} written />
                 </td>
               ))}
@@ -96,7 +97,7 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
               {columns.map((c) => {
                 const cell = r.cells[c];
                 // Taken from the table, or from another part of the same thing, rather than said here.
-                const taken = cell && !cell.own;
+                const taken = cell && cell.source !== "own";
                 return (
                   <td key={c} className={`sheet-cell ${taken ? "taken" : ""} ${cell?.error ? "err" : ""} ${ws.recentCells.has(`${r.id}|${c}`) ? "ran" : ""}`} title={taken && cell.kind ? `From ${ws.byId.get(cell.kind)?.name ?? "elsewhere"}` : undefined}>
                     <TableCell ws={ws} node={r} c={c} cell={cell} readOnly={unwritten} />
@@ -129,13 +130,13 @@ function NewRow({ ws, table, rows }: { ws: ViewProps["ws"]; table: string; rows:
   const [key, setKey] = useState<string | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
   const g = ws.view!;
-  const decisions = rows.map((r) => g.links.filter((l) => l.from === r.id && l.kind === "alternative").map((l) => l.to));
+  const decisions = rows.map((r) => g.edges.filter((l) => l.from === r.id && l.components.includes("alternative")).map((l) => l.to));
   const shared = decisions.length && decisions[0].length === 1 && decisions.every((d) => d.length === 1 && d[0] === decisions[0][0]) ? decisions[0][0] : null;
   const add = async () => {
     const k = (key ?? String(next)).trim();
     if (!k) return;
     try {
-      await ws.apply([{ op: "add_node", id: "new:row", name: `${table}[${k}]`, ...(shared ? { links: [{ to: shared, kind: "alternative", value: {} }] } : {}) }]);
+      await ws.apply([{ op: "add_node", id: "new:row", name: `${table}[${k}]`, ...(shared ? { links: [{ to: shared, component: "alternative" }] } : {}) }]);
       setKey(null);
       setRefused(null);
     } catch (e) {

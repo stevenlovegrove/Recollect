@@ -1,0 +1,18 @@
+id: 01a1bff4-e966-7096-9b71-a56ac3400a71
+components:
+- value
+cells:
+  name: A is a knight exactly when that's true
+formulas:
+  value: (speaker = "knight") = said
+links:
+- to: 01a1bff4-e966-7096-9b71-a5674dd7981e
+  components:
+  - label
+  cells:
+    called: speaker
+- to: 01a1bff4-e966-7096-9b71-a569215b0272
+  components:
+  - label
+  cells:
+    called: said

@@ -43,14 +43,14 @@ export function SweepChart({ ws, lines, inputs, title }: { ws: Workspace; lines:
   const [from, to] = range?.for === input ? [range.lo, range.hi] : [lo, hi];
   const xs = useMemo(() => Array.from({ length: STEPS + 1 }, (_, i) => from + ((to - from) * i) / STEPS), [from, to]);
   const [ys, setYs] = useState<(number | null)[][] | null>(null);
-  const key = `${ws.view?.last_seq}|${input}|${from}|${to}|${lines.map((l) => l.id + l.read.node + l.read.component + JSON.stringify(l.world)).join()}`;
+  const key = `${ws.view?.last_seq}|${input}|${from}|${to}|${lines.map((l) => l.id + l.read.node + l.read.cell + JSON.stringify(l.world)).join()}`;
 
   useEffect(() => {
     if (!input) return;
     let alive = true;
     setYs(null);
     const vars = ws.view!.worlds.vars;
-    Promise.all(lines.map((l) => api.sweep({ node: input, component: "value" }, xs, [l.read], l.world).then((r) => r.map((p) => numberOf(p.cells[0], vars)))))
+    Promise.all(lines.map((l) => api.sweep({ node: input, cell: "value" }, xs, [l.read], l.world).then((r) => r.map((p) => numberOf(p.cells[0], vars)))))
       .then((r) => alive && setYs(r))
       .catch(() => alive && setYs([]));
     return () => {

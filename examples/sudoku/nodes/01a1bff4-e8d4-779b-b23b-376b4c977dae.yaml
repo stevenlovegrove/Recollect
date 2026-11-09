@@ -1,0 +1,7 @@
+id: 01a1bff4-e8d4-779b-b23b-376b4c977dae
+components:
+- value
+cells:
+  name: Row C has each number once
+formulas:
+  value: distinct(Cell[C1], Cell[C2], Cell[C3], Cell[C4])

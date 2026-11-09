@@ -128,7 +128,7 @@ function worldFor(ws: ViewProps["ws"]) {
       const { drawing: _, ...cells } = n.cells;
       return { id: n.id, name: n.name, cells };
     }),
-    links: g.links,
+    edges: g.edges,
   };
 }
 

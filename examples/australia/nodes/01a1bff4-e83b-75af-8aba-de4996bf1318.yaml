@@ -1,0 +1,54 @@
+id: 01a1bff4-e83b-75af-8aba-de4996bf1318
+components:
+- requires
+- value
+cells:
+  name: A colouring
+formulas:
+  value: all(constraint)
+links:
+- to: 01a1bff4-e83b-75af-8aba-de52f4331479
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bff4-e83b-75af-8aba-de534ba06ec0
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bff4-e83b-75af-8aba-de549a085963
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bff4-e83b-75af-8aba-de55831be67c
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bff4-e83b-75af-8aba-de56c10b9ba4
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bff4-e83b-75af-8aba-de57afdbd47c
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bff4-e83b-75af-8aba-de582b1d0372
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bff4-e83b-75af-8aba-de59135f54a6
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1bff4-e83b-75af-8aba-de5af108edb3
+  components:
+  - label
+  cells:
+    called: constraint

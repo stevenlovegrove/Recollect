@@ -1,7 +1,7 @@
 //! Toy 3: combinatorial logic puzzles, as a graph of choices and constraints. Each answer here
 //! is known independently: published counts, or checked by plain enumeration in the test.
 //!
-//! A choice is a node with a `Domain`. A constraint is a node whose value is a formula over the
+//! A choice is a node with `options`. A constraint is a node whose value is a formula over the
 //! choices it has labelled, and the puzzle's value is `all(constraint)`. The worlds it's true in are
 //! the solutions.
 
@@ -11,12 +11,11 @@ use std::time::Instant;
 mod support;
 
 use recollect_graph::worlds::{Bool, Space, Var};
-use recollect_graph::{Entity, Registry};
-use recollect_systems::formulas::{Domain, EXPR, Label, Requires, ValueCell, install, truth};
-use serde_json::json;
+use recollect_graph::{CellType, Entity, Registry};
+use recollect_systems::formulas::{Called, LABEL, OPTIONS, Options, REQUIRES, VALUE, ValueCell, install, truth};
 use support::N;
 
-fn puzzle_rules(reg: &mut Registry) {
+fn puzzle_systems(reg: &mut Registry) {
     install(reg);
 }
 
@@ -28,16 +27,15 @@ struct Puzzle {
 
 impl Puzzle {
     fn new() -> Self {
-        let mut g = N::with(puzzle_rules);
+        let mut g = N::with(puzzle_systems);
         let puzzle = g.g.spawn();
-        g.g.set_rule(puzzle, "value", EXPR, json!({ "text": "all(constraint)" }));
-        g.g.set(puzzle, Requires);
+        g.g.add(puzzle, VALUE).add(puzzle, REQUIRES);
+        g.g.set_formula(puzzle, ValueCell::NAME, "all(constraint)");
         Puzzle { g, puzzle, vars: Vec::new() }
     }
 
     fn choice(&mut self, name: &str, options: &[&str]) {
-        self.g.set(name, Domain(options.iter().map(|s| s.to_string()).collect()));
-        let e = self.g.id(name);
+        let e = options_on(&mut self.g, name, options.iter().map(|s| s.to_string()).collect());
         self.vars.push(Space::global().uniform(&e.to_string(), options));
     }
 
@@ -54,13 +52,18 @@ impl Puzzle {
 
     fn constraint(&mut self, about: &[(&str, &str)], text: &str) -> Entity {
         let id = self.g.g.spawn();
-        self.g.g.set_rule(id, "value", EXPR, json!({ "text": text }));
+        self.g.g.add(id, VALUE).set_formula(id, ValueCell::NAME, text);
         for (name, a) in about {
             let a = self.g.id(a);
-            self.g.g.link(id, a, Label(name.to_string()));
+            label(&mut self.g, id, a, name);
         }
-        self.g.g.link(self.puzzle, id, Label("constraint".to_string()));
+        label(&mut self.g, self.puzzle, id, "constraint");
         id
+    }
+
+    /// Write a new formula for a constraint's value.
+    fn rewrite(&mut self, id: Entity, text: &str) {
+        self.g.g.set_formula(id, ValueCell::NAME, text);
     }
 
     fn valid(&self) -> Bool {
@@ -79,6 +82,18 @@ impl Puzzle {
     fn e(&self, name: &str) -> Entity {
         self.g.id(name)
     }
+}
+
+/// Give a node options, and so make it a choice.
+fn options_on(g: &mut N, name: &str, options: Vec<String>) -> Entity {
+    g.add(name, OPTIONS).set(name, Options(options));
+    g.id(name)
+}
+
+/// What a formula on `from` calls `to`, by handle.
+fn label(g: &mut N, from: Entity, to: Entity, name: &str) {
+    let edge = g.g.link(from, to, LABEL);
+    g.g.set(edge, Called(name.to_string()));
 }
 
 fn different(p: &mut Puzzle, a: &str, b: &str) {
@@ -177,10 +192,10 @@ fn n_queens_matches_the_known_counts() {
 fn queens_table(n: usize) -> Puzzle {
     let mut p = Puzzle::new();
     let cols: Vec<String> = (0..n).map(|c| c.to_string()).collect();
-    p.g.set("Queen", Domain(cols.clone()));
-    let head = p.g.id("Queen");
-    p.g.g.set_rule(head, "value", EXPR, json!({ "text": "distinct(rows) && distinct(q in rows: q + q.row) && distinct(q in rows: q - q.row)" }));
-    p.g.g.link(p.puzzle, head, Label("constraint".to_string()));
+    let head = options_on(&mut p.g, "Queen", cols.clone());
+    p.g.g.set_formula(head, ValueCell::NAME, "distinct(rows) && distinct(q in rows: q + q.row) && distinct(q in rows: q - q.row)");
+    let puzzle = p.puzzle;
+    label(&mut p.g, puzzle, head, "constraint");
     let cols: Vec<&str> = cols.iter().map(String::as_str).collect();
     for r in 0..n {
         let e = p.g.e(&format!("Queen[{r}]"));
@@ -201,16 +216,16 @@ fn n_queens_as_a_table_matches_the_known_counts() {
 #[test]
 fn a_tables_options_are_its_rows_choices_not_its_own() {
     let mut p = Puzzle::new();
-    p.g.set("Pet", Domain(vec!["1".into(), "2".into()]));
+    options_on(&mut p.g, "Pet", vec!["1".into(), "2".into()]);
     let (dog, cat) = (p.g.e("Pet[Dog]"), p.g.e("Pet[Cat]"));
     let value = |p: &Puzzle, e: Entity| p.g.g.get::<ValueCell>(e).unwrap().map(|v| v.0.0.cases().len());
     assert_eq!(value(&p, dog), Some(2), "a row chooses from its table's options");
     assert_eq!(value(&p, p.e("Pet")), None, "the table isn't a choice itself");
 
     // A row can say its own options, and the table's are taken again when it stops.
-    p.g.set("Pet[Cat]", Domain(vec!["1".into(), "2".into(), "3".into()]));
+    options_on(&mut p.g, "Pet[Cat]", vec!["1".into(), "2".into(), "3".into()]);
     assert_eq!(value(&p, cat), Some(3));
-    p.g.set("Pet", Domain(vec!["1".into(), "2".into(), "3".into(), "4".into()]));
+    options_on(&mut p.g, "Pet", vec!["1".into(), "2".into(), "3".into(), "4".into()]);
     assert_eq!(value(&p, dog), Some(4), "changing the table's options changes its rows'");
     assert_eq!(value(&p, cat), Some(3));
 
@@ -237,9 +252,9 @@ fn distinct_is_every_pair_differing() {
     }
     let all = q.constraint(&[("x", "x"), ("y", "y"), ("z", "z")], "distinct(x, y, z)");
     assert_eq!(q.count(), 6, "or the values listed out");
-    q.g.g.set_rule(all, "value", EXPR, json!({ "text": "distinct(x, y)" }));
+    q.rewrite(all, "distinct(x, y)");
     assert_eq!(q.count(), 18);
-    q.g.g.set_rule(all, "value", EXPR, json!({ "text": "true" }));
+    q.rewrite(all, "true");
     q.constraint(&[("v", "x"), ("v", "y"), ("v", "z")], "distinct(n in v: n * n - 4 * n)");
     // n² - 4n is -3, -4 and -3, so there are only two different values for three choices.
     assert_eq!(q.count(), 0);
@@ -250,7 +265,7 @@ fn a_clue_can_go_over_any_tables_rows_and_find_a_row_by_another_rows_key() {
     let mut p = Puzzle::new();
     let options = ["1", "2", "3"];
     for t in ["A", "B"] {
-        p.g.set(t, Domain(options.iter().map(|s| s.to_string()).collect()));
+        options_on(&mut p.g, t, options.iter().map(|s| s.to_string()).collect());
         for k in ["x", "y"] {
             let e = p.g.e(&format!("{t}[{k}]"));
             p.vars.push(Space::global().uniform(&e.to_string(), &options));
@@ -259,7 +274,7 @@ fn a_clue_can_go_over_any_tables_rows_and_find_a_row_by_another_rows_key() {
     // For each key, A's row is below B's: three ways for x and three for y.
     let clue = p.constraint(&[], "all(a in A.rows: a < B[a.row])");
     assert_eq!(p.count(), 9);
-    p.g.g.set_rule(clue, "value", EXPR, json!({ "text": "count(A.rows) = 2 && sum(B.rows) = 6" }));
+    p.rewrite(clue, "count(A.rows) = 2 && sum(B.rows) = 6");
     assert_eq!(p.count(), 9, "short forms too: B's two rows add to 6 only as 3 and 3, and A's are free");
 
     // A new row is part of the group.
@@ -267,10 +282,10 @@ fn a_clue_can_go_over_any_tables_rows_and_find_a_row_by_another_rows_key() {
     p.vars.push(Space::global().uniform(&z.to_string(), &options));
     assert_eq!(p.count(), 0, "now A has three rows");
 
-    p.g.g.set_rule(clue, "value", EXPR, json!({ "text": "A.rows + 1" }));
+    p.rewrite(clue, "A.rows + 1");
     let err = format!("{:?}", p.g.g.get::<ValueCell>(clue).unwrap_err());
     assert!(err.contains("A.rows is a group of rows"), "{err}");
-    p.g.g.set_rule(clue, "value", EXPR, json!({ "text": "all(a in A.rows: B[a.row] > 0)" }));
+    p.rewrite(clue, "all(a in A.rows: B[a.row] > 0)");
     let err = format!("{:?}", p.g.g.get::<ValueCell>(clue).unwrap_err());
     assert!(err.contains("no row B[z]"), "{err}");
 }
@@ -466,7 +481,7 @@ fn a_new_process_solves_the_zebra_puzzle_from_its_files() {
 #[ignore]
 fn solve_from_files_in_this_process() {
     let mut reg = Registry::new();
-    puzzle_rules(&mut reg);
+    puzzle_systems(&mut reg);
     let dir = std::env::var("ZEBRA_DIR").expect("run by a_new_process_solves_the_zebra_puzzle_from_its_files");
     let (g, problems) = recollect_graph::Graph::load_dir(std::path::Path::new(&dir), std::sync::Arc::new(reg)).unwrap();
     assert_eq!(problems, vec![]);
@@ -474,11 +489,11 @@ fn solve_from_files_in_this_process() {
 
     // Everything needed comes from the graph: which node is the puzzle, what the choices are, and
     // what they're called.
-    let puzzle = g.entities().find(|e| g.has_own(*e, "requires")).expect("a puzzle");
+    let puzzle = g.entities().find(|e| g.has(*e, REQUIRES)).expect("a puzzle");
     let mut vars = Vec::new();
     let mut names = BTreeMap::new();
     for e in g.entities() {
-        if let Some(Domain(options)) = g.get::<Domain>(e).unwrap() {
+        if let Some(Options(options)) = g.get::<Options>(e).unwrap() {
             let options: Vec<&str> = options.iter().map(String::as_str).collect();
             vars.push(Space::global().uniform(&e.to_string(), &options));
             names.insert(e.to_string(), g.get::<recollect_graph::Name>(e).unwrap().unwrap().0);

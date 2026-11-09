@@ -18,31 +18,38 @@ export function OpLine({ op, ws, onSelect, self, names }: { op: OpView; ws: Work
     case "set":
       return (
         <span className="op">
-          <span className="verb upd">set</span> {chip(op.node)} <b>{what}</b>
-          {op.value !== null && op.value !== undefined && <code className="op-patch">{valueText(op.value)}</code>}
+          <span className="verb upd">set</span> {chip(op.node)}
+          {op.other && (
+            <>
+              {" "}
+              <span className="muted">→</span> {chip(op.other)}
+            </>
+          )}{" "}
+          <b>{what}</b>
+          {op.value !== null && op.value !== undefined && <code className="op-patch">{op.formula ? `=${valueText(op.value)}` : valueText(op.value)}</code>}
         </span>
       );
-    case "set_rule":
+    case "clear":
       return (
         <span className="op">
-          <span className="verb upd">set</span> {chip(op.node)} <b>{what}</b> <span className="muted">from</span> <code className="op-patch">{valueText(op.value)}</code>
+          <span className="verb del">clear</span> {chip(op.node)}
+          {op.other && (
+            <>
+              {" "}
+              <span className="muted">→</span> {chip(op.other)}
+            </>
+          )}{" "}
+          <b>{what}</b>
         </span>
       );
+    case "add":
+      return <span className="op"><span className="verb add">add</span> <b>{what}</b>{op.node !== self && <> <span className="muted">to</span> {chip(op.node)}</>}</span>;
     case "remove":
-      return <span className="op"><span className="verb del">remove</span> {chip(op.node)} <b>{what}</b></span>;
+      return <span className="op"><span className="verb del">remove</span> <b>{what}</b>{op.node !== self && <> <span className="muted">from</span> {chip(op.node)}</>}</span>;
     case "link":
-      return (
-        <span className="op">
-          <span className="verb add">link</span> {chip(op.node)} <span className="rel">{what}</span> {chip(op.other)}
-          {op.value !== null && op.value !== undefined && <code className="op-patch">{valueText(op.value)}</code>}
-        </span>
-      );
+      return <span className="op"><span className="verb add">link</span> {chip(op.node)} <span className="rel">{what}</span> {chip(op.other)}</span>;
     case "unlink":
       return <span className="op"><span className="verb del">unlink</span> {chip(op.node)} <span className="rel">{what}</span> {chip(op.other)}</span>;
-    case "set_default":
-      return <span className="op"><span className="verb upd">default</span> <b>{what}</b></span>;
-    case "remove_default":
-      return <span className="op"><span className="verb del">default</span> <b>{what}</b></span>;
   }
 }
 

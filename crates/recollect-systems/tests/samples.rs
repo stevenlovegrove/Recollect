@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use recollect_graph::worlds::{Bool, Cond, Space, Var};
-use recollect_graph::{Component, Entity, Graph, Log, Name};
+use recollect_graph::{CellType, Entity, Graph, Log, Name};
 use recollect_systems::expr::Val;
-use recollect_systems::formulas::{Requires, ValueCell, options_of, truth};
+use recollect_systems::formulas::{REQUIRES, ValueCell, options_of, truth};
 use recollect_systems::plan::{self, Need, Pressure};
 use recollect_systems::samples::{SAMPLES, ops_of};
 use recollect_systems::schedule::{Finish, Slack};
@@ -43,7 +43,7 @@ impl Opened {
     fn id(&self, name: &str) -> Entity {
         *self.ids.get(name).unwrap_or_else(|| panic!("no node called {name}"))
     }
-    fn get<C: Component>(&self, name: &str) -> C {
+    fn get<C: CellType>(&self, name: &str) -> C {
         self.g().get::<C>(self.id(name)).unwrap().unwrap()
     }
     /// A value that's one number in every world.
@@ -62,8 +62,6 @@ fn open(name: &str) -> Opened {
     let systems: Vec<String> = sample.systems.iter().map(|s| s.to_string()).collect();
     let built = recollect_systems::build(&systems).unwrap();
     let (log, problems) = Log::open(dir.path(), built.registry, "test").unwrap();
-    // New rules since a sample was written are worth a mention, and don't matter here.
-    let problems: Vec<_> = problems.into_iter().filter(|p| !matches!(p, recollect_graph::LoadProblem::CodeChanged { .. })).collect();
     assert_eq!(problems, vec![], "{name} opens with nothing to report");
     let ids = log.graph().entities().filter_map(|e| Some((log.graph().get::<Name>(e).ok()??.0, e))).collect();
     Opened { _dir: dir, log, ids }
@@ -72,7 +70,7 @@ fn open(name: &str) -> Opened {
 /// The choices a puzzle's solutions range over, and its solutions by name.
 fn solutions(o: &Opened, limit: usize) -> (Bool, Vec<Var>, Vec<BTreeMap<String, String>>) {
     let g = o.g();
-    let puzzle = g.entities().find(|e| g.has_own(*e, Requires::NAME)).unwrap();
+    let puzzle = g.entities().find(|e| g.has(*e, REQUIRES)).unwrap();
     let valid = truth(&g.get::<ValueCell>(puzzle).unwrap().unwrap());
     let mut vars = Vec::new();
     for e in g.entities() {
@@ -133,7 +131,7 @@ fn compound_interest_and_fibonacci_reach_their_known_values() {
     let column = |o: &Opened, row: &str, c: &str| -> Value {
         let at = recollect_graph::table::row_of(row).unwrap();
         let e = o.g().row_at(&at.table, &at.key).unwrap_or_else(|| panic!("no row {row}"));
-        o.g().get_runtime(e, c).unwrap().unwrap_or_else(|| panic!("{row} has no {c}")).value
+        o.g().get_value(e, c).unwrap().unwrap_or_else(|| panic!("{row} has no {c}"))
     };
     let o = open("compound-interest");
     // With the top-up in year 5 still open, the last year is one of two balances.

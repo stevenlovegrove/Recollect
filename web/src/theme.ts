@@ -1,60 +1,44 @@
 import type { GraphNode } from "./api";
 
 // Colours are CSS variables (see styles.css) so they follow light/dark mode. A component a system
-// doesn't describe here still works: it just gets the neutral colour and no glyph.
-const COLOURED = ["goal", "decision", "task", "question", "risk", "unknown", "value", "domain", "requires", "macro"];
+// doesn't colour here still works: it just gets the neutral colour. Its icon comes from the system.
+const COLOURED = ["goal", "decision", "task", "question", "risk", "unknown", "value", "options", "requires", "macro"];
 
 export const compColor = (c: string) => (COLOURED.includes(c) ? `var(--c-${c})` : "var(--c-none)");
 
-export const GLYPH: Record<string, string> = {
-  goal: "◎",
-  decision: "⑂",
-  task: "▸",
-  question: "?",
-  risk: "!",
-  unknown: "…",
-  done: "✓",
-  dropped: "✕",
-  value: "=",
-  domain: "◇",
-  requires: "✦",
-  macro: "ƒ",
-  estimate: "⏱",
-  drawing: "✎",
-};
-
-/** Plain words for the components people deal with. Anything else reads by its name. */
+/** Plain words for the components and cells people deal with. Anything else reads by its name. */
 const LABEL: Record<string, string> = {
   part_of: "part of",
   depends_on: "depends on",
+  is_a: "is a",
   need: "Needed",
   blocked: "Waiting",
-  blockers: "Waits for",
   actionable: "Can start",
-  scope: "Inside",
-  domain: "Options",
+  wait_for: "Waits until",
+  ruled_out: "Ruled out",
+  called: "Called",
+  body: "Notes",
 };
 
 export const label = (c: string) => LABEL[c] ?? (c[0]?.toUpperCase() ?? "") + c.slice(1).replace(/_/g, " ");
 
-/** The stored facts that say what a node is, which is what its badges show. A price says nothing about that. */
-const IGNORED = ["name", "body", "sources", "estimate"];
+/** What a node can have that says nothing about what it is: words about it, and where it came from. */
+const ASIDES = ["notes", "sources"];
 
-export function factsOf(n: GraphNode): string[] {
-  return Object.entries(n.cells)
-    .filter(([c, cell]) => !IGNORED.includes(c) && !cell.workspace && (cell.own || cell.source === "stored"))
-    .map(([c]) => c);
+/** The components that say what a node is, which is what its badges show: what it was given, or takes from its kind. */
+export function badgesOf(n: GraphNode): string[] {
+  return n.components.filter((c) => (c.why === "given" || c.why === "kind") && !ASIDES.includes(c.name)).map((c) => c.name);
 }
 
-/** Says nothing but words: no facts, and no cells of the workspace's own, like a car's price or a kind's formula. */
-export const isNote = (n: GraphNode) => !factsOf(n).length && !Object.values(n.cells).some((c) => c.workspace && c.own);
+/** Says nothing but words: no components of its own, and no cells of the workspace's own. */
+export const isNote = (n: GraphNode) => !badgesOf(n).length && !n.components.some((c) => c.why === "edge");
 
-const ORDER = ["goal", "decision", "risk", "question", "unknown", "requires", "domain", "task", "macro", "value"];
+const ORDER = ["goal", "decision", "risk", "question", "unknown", "requires", "options", "task", "macro", "value"];
 
 /** The component that best characterises a node, for colouring. */
 export function dominant(n: GraphNode): string {
-  const facts = factsOf(n);
-  return ORDER.find((c) => facts.includes(c)) ?? "none";
+  const has = n.components.map((c) => c.name);
+  return ORDER.find((c) => has.includes(c)) ?? "none";
 }
 
 export const nodeColor = (n: GraphNode) => compColor(dominant(n));
