@@ -37,7 +37,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "12";
+pub const FORMAT: &str = "13";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -214,6 +214,10 @@ fn choosing_a_car(b: &mut Build) {
     // have an mpg, and only electric ones a kWh a mile. Petrol car[Hatchback] and Car[Hatchback] are two
     // parts of one car, and each reads what the other says.
     b.link("Petrol car", "Car", IS_A).link("Electric car", "Car", IS_A);
+    // Car says what every car has. It can't say what they come to, so each row says its own.
+    for cell in ["price", "insurance", "range"] {
+        b.formula_on("Car", cell, "undefined");
+    }
     let cars: [(&str, &str, &str, f64, f64, f64, f64); 4] = [
         ("Hatchback", "Petrol car", "mpg", 52.0, 18000.0, 500.0, 550.0),
         ("Estate", "Petrol car", "mpg", 44.0, 24000.0, 550.0, 600.0),

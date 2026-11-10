@@ -416,7 +416,7 @@ pre {
 
 /* inspector */
 .inspector {
-  width: 380px;
+  width: 440px;
   max-width: 45vw;
   border-left: 1px solid var(--border);
   background: var(--panel);
@@ -2012,7 +2012,6 @@ textarea.value-text {
 }
 .formula-read {
   grid-column: 1 / -1;
-  flex-basis: 100%;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -2092,7 +2091,6 @@ input.sheet-input {
 }
 .formula-edit {
   grid-column: 1 / -1;
-  flex-basis: 100%;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -2986,4 +2984,151 @@ tr.pruned {
 }
 .cbadge.clickable {
   cursor: pointer;
+}
+
+/* ---------- cells: what's written here, what's inherited, and formulas apart from what they come to ---------- */
+
+.derived {
+  padding-left: 8px;
+}
+/* Written on this node: a bar down its side. */
+.derived.here {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.derived.here > .derived-k,
+.derived.here > .cell-head > .derived-k {
+  color: var(--text);
+}
+/* Inherited from a kind: says where from, and reads quieter than what's written here. */
+.derived.inherited .derived-v .mono-value,
+.derived.inherited .result-value {
+  color: color-mix(in srgb, var(--text) 72%, var(--muted));
+}
+.cell-from {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.cell-from .chip {
+  font-style: normal;
+}
+.derived.stacked {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding-top: 6px;
+  padding-bottom: 8px;
+}
+.cell-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.cell-head > .grow {
+  flex: 1;
+}
+.derived.stacked .derived-k {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* The formula, as something written: a box of code. */
+.formula-box {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 40px 6px 8px;
+  cursor: text;
+}
+.formula-box.inherited {
+  background: transparent;
+  border-style: dashed;
+}
+.formula-box:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+.formula-box .formula-text {
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--text) 85%, var(--muted));
+}
+.formula-eq {
+  color: var(--muted);
+  margin-right: 3px;
+}
+.formula-edit-link {
+  position: absolute;
+  top: 5px;
+  right: 4px;
+}
+
+/* What it comes to: plain text, larger, under a small heading. */
+.formula-result {
+  width: 100%;
+}
+.formula-result::before {
+  content: "Comes to";
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 1px;
+}
+/* Each case a row: what it comes to, then the worlds where it does. */
+.formula-result .resolved {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 3px;
+  align-items: baseline;
+}
+.formula-result .resolved-row {
+  display: contents;
+}
+.result-value {
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.result-when {
+  font-size: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.formula-part {
+  width: 100%;
+  overflow-wrap: anywhere;
+}
+.formula-expand-link {
+  padding-left: 0;
+}
+.formula-input {
+  min-height: 4.5em;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+/* Taking something away and going back to what's inherited, told apart from closing (×). */
+button.icon.act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border-radius: 4px;
+  align-self: center;
+}
+button.icon.act svg {
+  display: block;
+}
+button.icon.act.remove:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+button.icon.act.revert:hover {
+  color: var(--accent);
+  background: var(--hl);
 }

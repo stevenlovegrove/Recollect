@@ -1,4 +1,4 @@
-id: 01a1c1e5-29ea-707b-87b9-8c89d0a98e2b
+id: 01a1c411-8265-77fc-80a6-5c7dd37801f3
 components:
 - value
 cells:
@@ -6,17 +6,17 @@ cells:
 formulas:
   value: car.chosen.price * (1 - 0.85 ^ years) / years + miles.chosen.value * car.chosen.cost_per_mile + car.chosen.insurance
 links:
-- to: 01a1c1e5-29ea-707b-87b9-8c763f4490fa
+- to: 01a1c411-8265-77fc-80a6-5c6a51cef856
   components:
   - label
   cells:
     called: years
-- to: 01a1c1e5-29ea-707b-87b9-8c7767d8f8e9
+- to: 01a1c411-8265-77fc-80a6-5c6b2cba85ed
   components:
   - label
   cells:
     called: miles
-- to: 01a1c1e5-29ea-707b-87b9-8c7f881fcf7d
+- to: 01a1c411-8265-77fc-80a6-5c73359af0f5
   components:
   - label
   cells:

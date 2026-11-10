@@ -3,7 +3,7 @@ import { api, type Cell, type Edge, type EventView, type GraphNode, type Has, ty
 import { edgesOf, labelsOf, type Workspace } from "./workspace";
 import { badgesOf, compColor, isDropped, isNote, label, nodeColor } from "./theme";
 import { DdItemButton, Dropdown } from "./Dropdown";
-import { Brackets, CellValue, CompBadge, NodeChip, Resolved, TickBox, casesOf, shownText } from "./bits";
+import { Brackets, CellValue, CompBadge, NodeChip, RemoveButton, Resolved, RevertButton, TickBox, casesOf, edgeText, shownText } from "./bits";
 import { entryText, parseEntry } from "./cellEntry";
 import { beliefLines } from "./summary";
 import { Key } from "./Shortcuts";
@@ -381,7 +381,7 @@ function ComponentCard({ ws, node, has, run, onSelect, onShowDecisions }: { ws: 
   // A tick with nothing to say, such as done on something with nothing to finish, isn't worth showing.
   const silent = (x: string) => !!ws.cellInfo(x)?.truth && node.cells[x].source !== "own" && casesOf(node.cells[x]).every((v) => v === null);
   const cells = (info?.cells ?? []).filter((x) => node.cells[x] && !ws.cellInfo(x)?.internal && (!ws.cellInfo(x)?.quiet || node.cells[x].source === "own") && !silent(x));
-  const beliefs = beliefLines(ws, node).filter((l) => l.component === c);
+  const beliefs = beliefLines(ws, node, true).filter((l) => l.component === c);
   // A choice is settled when what it lands on is written on it, rather than worked out.
   const chosen = node.cells.chosen;
   const settled = c === "choice" && chosen?.source === "own" && chosen.shown?.kind === "named" ? chosen.shown.items[0]?.node : undefined;
@@ -397,9 +397,7 @@ function ComponentCard({ ws, node, has, run, onSelect, onShowDecisions }: { ws: 
         </span>
         <Why ws={ws} has={has} self={id} onSelect={onSelect} />
         {has.why === "given" && (
-          <button className="icon small" title={`Take ${label(c).toLowerCase()} away`} onClick={() => run([{ op: "remove", id, component: c }])}>
-            ×
-          </button>
+          <RemoveButton title={`Take ${label(c).toLowerCase()} away`} onClick={() => run([{ op: "remove", id, component: c }])} />
         )}
       </div>
       {!collapsed && (
@@ -481,58 +479,83 @@ function CellsCard({ ws, id, home, cells, onSelect }: { ws: Workspace; id: strin
 /**
  * One cell: what it comes to, where that's from, and a way to write over it. A true-or-false cell on a node
  * is a box to tick. Taking away what's written here goes back to the kind's, or the default.
+ *
+ * What's written on this node has a bar down its side, and what it inherits says where from. A formula
+ * written here or on a kind takes the whole width, with what it comes to set apart beneath it.
  */
 function CellRow({ ws, target, c, cell, onSelect, own }: { ws: Workspace; target: Target; c: string; cell: Cell; onSelect: (id: string) => void; own?: boolean }) {
   const [editing, setEditing] = useState(false);
   const info = ws.cellInfo(c);
   const settable = !info || info.settable;
   const here = cell.source === "own";
+  const inherited = cell.source === "kind" && !!cell.kind;
   const ownFormula = cell.formula !== undefined && here;
+  const shownFormula = cell.formula !== undefined && (here || inherited);
   const tick = info?.truth && "id" in target;
   const back = cell.beneath ?? cell.kind;
   const clear = () => ws.apply([entryOp(target, c, parseEntry(""), undefined, ownFormula)]).catch((e) => alert(String(e)));
-  return (
-    <div className="derived">
-      <span className={`derived-k ${own ? "own-cell-k" : ""}`} title={info?.about ?? "What a formula calls it"}>
-        {tick ? (
-          <label className="tick-k">
-            <TickBox ws={ws} id={(target as { id: string }).id} c={c} /> {label(c)}
-          </label>
-        ) : own ? (
-          <code>{c}</code>
-        ) : (
-          label(c)
-        )}
-      </span>
-      <span className="derived-v">
-        {ownFormula ? (
-          <CellEditor key={cell.formula} ws={ws} target={target} c={c} cell={cell} onSelect={onSelect} />
-        ) : editing ? (
+  const name = (
+    <span className={`derived-k ${own ? "own-cell-k" : ""}`} title={info?.about ?? "What a formula calls it"}>
+      {tick ? (
+        <label className="tick-k">
+          <TickBox ws={ws} id={(target as { id: string }).id} c={c} /> {label(c)}
+        </label>
+      ) : own ? (
+        <code>{c}</code>
+      ) : (
+        label(c)
+      )}
+    </span>
+  );
+  const from = inherited && (
+    <span className="cell-from" title={`Inherited: ${ws.byId.get(cell.kind!)?.name ?? "its kind"} says this, and nothing's written here`}>
+      from <NodeChip ws={ws} id={cell.kind!} onSelect={onSelect} />
+    </span>
+  );
+  const undo =
+    here && (info?.computed || back || !info) ? (
+      back ? (
+        <RevertButton title={`Go back to ${ws.byId.get(back)?.name ?? "its kind"}’s`} onClick={clear} />
+      ) : info?.computed ? (
+        <RevertButton title="Go back to working this out" onClick={clear} />
+      ) : (
+        <RemoveButton title={`Take ${c} away`} onClick={clear} />
+      )
+    ) : null;
+  const where = here ? "here" : inherited ? "inherited" : "";
+
+  if (shownFormula || editing) {
+    return (
+      <div className={`derived stacked ${where}`}>
+        <div className="cell-head">
+          {name}
+          {from}
+          <span className="grow" />
+          {undo}
+        </div>
+        {editing ? (
           <CellEditor ws={ws} target={target} c={c} cell={cell} onSelect={onSelect} opening onClosed={() => setEditing(false)} />
         ) : (
-          <span className="cell-line">
-            <CellValue ws={ws} cell={cell} onSelect={onSelect} component={c} />
-            {cell.source === "kind" && cell.kind && (
-              <span className="muted small">
-                {" "}
-                from <NodeChip ws={ws} id={cell.kind} onSelect={onSelect} />
-              </span>
-            )}
-            {settable && (
-              <button className="link small" title={cell.formula ? `Worked out by =${cell.formula}` : undefined} onClick={() => setEditing(true)}>
-                edit
-              </button>
-            )}
-          </span>
+          <CellEditor key={cell.formula} ws={ws} target={target} c={c} cell={cell} onSelect={onSelect} />
         )}
+      </div>
+    );
+  }
+  return (
+    <div className={`derived ${where}`}>
+      {name}
+      <span className="derived-v">
+        <span className="cell-line">
+          <CellValue ws={ws} cell={cell} onSelect={onSelect} component={c} />
+          {from}
+          {settable && (
+            <button className="link small" title={cell.formula ? `Worked out by =${cell.formula}` : undefined} onClick={() => setEditing(true)}>
+              edit
+            </button>
+          )}
+        </span>
       </span>
-      {here && (info?.computed || back || !info) ? (
-        <button className="icon small" title={back ? `Go back to ${ws.byId.get(back)?.name ?? "its kind"}’s` : info?.computed ? "Go back to working this out" : `Take ${c} away`} onClick={clear}>
-          ×
-        </button>
-      ) : (
-        <span />
-      )}
+      {undo ?? <span />}
     </div>
   );
 }
@@ -607,7 +630,7 @@ function CellEditor({ ws, target, c, cell, onSelect, opening, onClosed }: { ws: 
     setOpenDraft(d);
     if (!d) onClosed?.();
   };
-  const [part, setPart] = useState<{ text: string; reads: string } | null>(null);
+  const [part, setPart] = useState<{ text: string; reads: string; error?: boolean } | null>(null);
   const [expansion, setExpansion] = useState<string | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
   const asked = useRef(0);
@@ -620,7 +643,7 @@ function CellEditor({ ws, target, c, cell, onSelect, opening, onClosed }: { ws: 
     setTimeout(() => {
       if (n !== asked.current) return;
       api.tryFormula(id, text, ws.world).then((t) => {
-        if (n === asked.current) setPart({ text, reads: t.error ?? (t.shown ? shownText(t.shown, name) : "") });
+        if (n === asked.current) setPart(t.error ? { text, reads: t.error, error: true } : { text, reads: t.shown ? shownText(t.shown, name) : "" });
       }).catch(() => {});
     }, 150);
   };
@@ -641,10 +664,9 @@ function CellEditor({ ws, target, c, cell, onSelect, opening, onClosed }: { ws: 
     };
     return (
       <div className="formula-edit">
-        <textarea
+        <AutoText
           autoFocus
           className="formula-input"
-          rows={2}
           aria-label={`${label(c)}: a value, or = and a formula`}
           value={draft.text}
           onFocus={(e) => e.currentTarget.setSelectionRange(e.currentTarget.value.length, e.currentTarget.value.length)}
@@ -668,9 +690,7 @@ function CellEditor({ ws, target, c, cell, onSelect, opening, onClosed }: { ws: 
               {(draft.labels[n] ?? []).map((to) => (
                 <span key={to} className="edge-chip">
                   <NodeChip ws={ws} id={to} onSelect={onSelect} />
-                  <button className="icon small" title="Take this out" onClick={() => setDraft({ ...draft, labels: { ...draft.labels, [n]: draft.labels[n].filter((x) => x !== to) } })}>
-                    ×
-                  </button>
+                  <RemoveButton title="Take this out" onClick={() => setDraft({ ...draft, labels: { ...draft.labels, [n]: draft.labels[n].filter((x) => x !== to) } })} />
                 </span>
               ))}
               <input
@@ -728,31 +748,42 @@ function CellEditor({ ws, target, c, cell, onSelect, opening, onClosed }: { ws: 
 
   return (
     <div className="formula-read">
-      <span className="cell-line">
-        <code className="formula-text" title="Click to edit" onClick={edit}>
-          <span className="resolved-eq">=</span>
+      <div className={`formula-box ${cell.source === "own" ? "" : "inherited"}`} title="Click to edit" onClick={edit}>
+        <code className="formula-text">
+          <span className="formula-eq">=</span>
           <Brackets text={formula} onHeld={hold} renderText={(t) => <FormulaRefs text={t} labels={existing} ws={ws} onSelect={onSelect} />} />
         </code>
-        <button className="link small" onClick={edit}>
+        <button
+          className="link small formula-edit-link"
+          onClick={(e) => {
+            e.stopPropagation();
+            edit();
+          }}
+        >
           edit
         </button>
-      </span>
-      <Resolved ws={ws} cell={cell} component={c} />
+      </div>
       {part && (
         <div className="formula-part small">
-          <code>{part.text}</code> <span className="muted">is</span> {part.reads}
+          <code>{part.text}</code> {part.error ? <span className="cell-error">can't be worked out alone: {part.reads}</span> : <><span className="muted">comes to</span> {part.reads}</>}
+        </div>
+      )}
+      {/* What a formula comes to, unless that's only the formula again, as with =undefined. */}
+      {!(cell.shown && !cell.error && shownText(cell.shown, name) === formula.trim()) && (
+        <div className="formula-result">
+          <Resolved ws={ws} cell={cell} component={c} />
         </div>
       )}
       {id && (
         <button
-          className="link small"
+          className="link small formula-expand-link"
           onClick={async () => {
             if (expansion !== null) return setExpansion(null);
             const t = await api.tryFormula(id, formula, ws.world);
             setExpansion(t.expansion ?? t.error ?? "");
           }}
         >
-          {expansion === null ? "what it expands to" : "hide"}
+          {expansion === null ? "what it expands to" : "hide what it expands to"}
         </button>
       )}
       {expansion !== null && (
@@ -791,14 +822,6 @@ function FormulaRefs({ text, labels, ws, onSelect }: { text: string; labels: Lab
   return <>{parts}</>;
 }
 
-/** What an edge holds, in a few words: each cell that has something in it. A label says its name. */
-export function edgeText(e: Edge): string {
-  return Object.entries(e.cells)
-    .filter(([c, cell]) => c !== "called" && cell.source !== "default" && cell.value !== undefined)
-    .map(([c, cell]) => `${label(c).toLowerCase()} ${typeof cell.value === "string" ? cell.value : JSON.stringify(cell.value)}`)
-    .join(" · ");
-}
-
 /**
  * A node's edges, grouped by what they are. What each holds, such as an option's weight, shows beside it,
  * and clicking that opens its cells, so it reads the same from either end.
@@ -835,9 +858,7 @@ function EdgeList({ title, id, edges, ws, onSelect, run }: { title: string; id: 
                         {holds || "…"}
                       </button>
                     )}
-                    <button className="icon small" title="Take this edge away" onClick={() => run(e.components.map((c) => ({ op: "unlink", from: e.from, to: e.to, component: c }) as Op))}>
-                      ×
-                    </button>
+                    <RemoveButton title="Take this edge away" onClick={() => run(e.components.map((c) => ({ op: "unlink", from: e.from, to: e.to, component: c }) as Op))} />
                   </span>
                   {open === e.id && (
                     <div className="link-holds-edit">
@@ -1017,9 +1038,7 @@ function EdgeCard({ ws, edge, c, run, onSelect }: { ws: Workspace; edge: Edge; c
         <span className="comp-name" title={info?.about}>
           {info?.icon && <span className="glyph">{info.icon}</span>} {label(c)}
         </span>
-        <button className="icon small" title={`Take ${label(c).toLowerCase()} away`} onClick={() => run([{ op: "unlink", from: edge.from, to: edge.to, component: c }])}>
-          ×
-        </button>
+        <RemoveButton title={`Take ${label(c).toLowerCase()} away`} onClick={() => run([{ op: "unlink", from: edge.from, to: edge.to, component: c }])} />
       </div>
       <div className="comp-body">
         {info?.about && <span className="muted small">{info.about}</span>}

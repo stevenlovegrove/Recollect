@@ -1,4 +1,4 @@
-id: 01a1c1e5-29ea-707b-87b9-8c8ba47e8895
+id: 01a1c411-8265-77fc-80a6-5c7f468c8098
 components:
 - value
 cells:
@@ -6,12 +6,12 @@ cells:
 formulas:
   value: car.chosen.range >= miles
 links:
-- to: 01a1c1e5-29ea-707b-87b9-8c7f881fcf7d
+- to: 01a1c411-8265-77fc-80a6-5c73359af0f5
   components:
   - label
   cells:
     called: car
-- to: 01a1c1e5-29ea-707b-87b9-8c8a6ddd2164
+- to: 01a1c411-8265-77fc-80a6-5c7ed057fb77
   components:
   - label
   cells:

@@ -14,6 +14,20 @@ export function pairText(text: string, runs: BracketRun[], open: number): string
   return text.slice(open);
 }
 
+/**
+ * What a pair of brackets holds as a part that means something on its own. Round brackets do already. A
+ * row's address, `Pet[Fox]`, means nothing without its table, and what's read through it, `.chosen.value`,
+ * is usually what's wanted, so square brackets take in the name before them and the fields after.
+ */
+export function partText(text: string, runs: BracketRun[], open: number): string {
+  const pair = pairText(text, runs, open);
+  if (text[open] !== "[") return pair;
+  const before = /[\p{L}\p{N}_.]*$/u.exec(text.slice(0, open))?.[0] ?? "";
+  if (!before) return pair;
+  const after = /^(?:\.[\p{L}_][\p{L}\p{N}_]*)*/u.exec(text.slice(open + pair.length))?.[0] ?? "";
+  return before.replace(/^\./, "") + pair + after;
+}
+
 /** Text cut up by its brackets. One with no partner, say in somebody's name, is only text. */
 export function bracketRuns(text: string): BracketRun[] {
   const open: number[] = [];

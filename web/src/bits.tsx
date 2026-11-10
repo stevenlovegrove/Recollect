@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import type { Cell, GraphNode, Op, Reading, Shown } from "./api";
-import { bracketRuns, pairText } from "./brackets";
+import type { Cell, Edge, GraphNode, Op, Reading, Shown } from "./api";
+import { bracketRuns, partText } from "./brackets";
 import type { Workspace } from "./workspace";
 import { badgesOf, compColor, isDropped, isNote, label, nodeColor } from "./theme";
 
@@ -118,7 +118,7 @@ export function Brackets({ text, onHeld, renderText }: { text: string; /** The i
   const point = (i: number | null) => {
     setOver(i);
     const open = i === null ? undefined : runs[i]?.held[runs[i].held.length - 1];
-    onHeld?.(open === undefined ? null : pairText(text, runs, open));
+    onHeld?.(open === undefined ? null : partText(text, runs, open));
   };
   return (
     <span onMouseLeave={() => point(null)}>
@@ -235,12 +235,11 @@ export function Resolved({ ws, cell, component }: { ws: Workspace; cell: Cell; c
   const read = (v: unknown) => (v === null ? "undefined" : (meaning?.(v) ?? displayValue(v, name)));
   const row = (key: number, value: string, when?: Reading) => (
     <div key={key} className="resolved-row">
-      <span className="resolved-eq">→</span> <span className="mono-value">{value}</span>
+      <span className="result-value">{value}</span>
       {when && (
-        <>
-          {" "}
+        <span className="result-when">
           <span className="muted">when</span> <Formula r={when} />
-        </>
+        </span>
       )}
     </div>
   );
@@ -295,6 +294,39 @@ export function TickBox({ ws, id, c }: { ws: Workspace; id: string; c: string })
       onChange={() => ws.apply([tickOp(id, c, cell)]).catch((e) => alert(String(e)))}
     />
   );
+}
+
+/**
+ * Buttons that change something, drawn so they can't be mistaken for one another or for closing a panel,
+ * which is always ×. Taking something away is a bin, and going back to what's inherited is an arrow back.
+ */
+export function RemoveButton({ title, onClick }: { title: string; onClick: () => void }) {
+  return (
+    <button className="icon small act remove" title={title} aria-label={title} onClick={onClick}>
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9.5h6.6L12 4M6.75 6.5v4.5M9.25 6.5v4.5" />
+      </svg>
+    </button>
+  );
+}
+
+export function RevertButton({ title, onClick }: { title: string; onClick: () => void }) {
+  return (
+    <button className="icon small act revert" title={title} aria-label={title} onClick={onClick}>
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M3 3v4h4" />
+        <path d="M3.4 7A5 5 0 1 1 4.5 11.5" />
+      </svg>
+    </button>
+  );
+}
+
+/** What an edge holds, in a few words: each cell that has something in it. A label says its name. */
+export function edgeText(e: Edge): string {
+  return Object.entries(e.cells)
+    .filter(([c, cell]) => c !== "called" && cell.source !== "default" && cell.value !== undefined)
+    .map(([c, cell]) => `${label(c).toLowerCase()} ${typeof cell.value === "string" ? cell.value : JSON.stringify(cell.value)}`)
+    .join(" · ");
 }
 
 /** Selection keys: a node is its handle, and an edge is "e:" and its handle. */

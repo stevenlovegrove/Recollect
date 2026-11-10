@@ -17,13 +17,14 @@ export interface SummaryLine {
 /**
  * How strongly each answer to something uncertain is believed, and how strongly it was before the evidence
  * where that's moved it, for an uncertain decision or one of its options. A belief depends on what's
- * pinned, so it's the view's to work out, not a cell's.
+ * pinned, so it's the view's to work out, not a cell's. `prior` shows the prior even where nothing has
+ * moved it, as a node's own card does.
  */
-export function beliefLines(ws: Workspace, n: GraphNode): SummaryLine[] {
+export function beliefLines(ws: Workspace, n: GraphNode, prior = false): SummaryLine[] {
   const nameOf = (s: string) => ws.byId.get(s)?.name ?? s;
   const vars = ws.view!.worlds.vars;
   const out: SummaryLine[] = [];
-  const moved = (o: { chance: number; weight: number }) => beliefText(o.chance) !== beliefText(o.weight);
+  const moved = (o: { chance: number; weight: number }) => prior || beliefText(o.chance) !== beliefText(o.weight);
   // The percentage comes first, so a long answer cut short still reads as one.
   const asked = vars.find((v) => v.id === n.id && v.uncertain);
   if (asked) {
@@ -61,6 +62,8 @@ export function cellLine(ws: Workspace, n: GraphNode, c: string): SummaryLine | 
 function summaryLines(ws: Workspace, n: GraphNode): SummaryLine[] {
   const beliefs = beliefLines(ws, n);
   const out = [...beliefs];
+  // Cells it says every node of its kind has, without saying what they come to, are listed by name.
+  const declared: string[] = [];
   for (const c of Object.keys(n.cells)) {
     const info = ws.cellInfo(c);
     const r = reading(n.cells[c]);
@@ -73,11 +76,13 @@ function summaryLines(ws: Workspace, n: GraphNode): SummaryLine[] {
       // The workspace's own cells that are worked out are what it's for, so they say something too. A kind's
       // own, with nothing of its own to work them out from, don't.
       const cell = n.cells[c];
+      if (cell.source === "own" && cell.formula !== undefined && !cell.error && casesOf(cell).every((v) => v === null)) declared.push(c);
       if (cell.formula === undefined || cell.error || casesOf(cell).every((v) => v === null)) continue;
     }
     const line = cellLine(ws, n, c);
     if (line) out.push(line);
   }
+  if (declared.length) out.push({ name: "cells", text: declared.join(", "), about: "Cells every node of this kind has, which come to something only on each of them", trivial: false });
   return out;
 }
 

@@ -1,4 +1,4 @@
-id: 01a1c1e5-29ea-707b-87b9-8c7e1abca3b9
+id: 01a1c411-8265-77fc-80a6-5c72dccbba92
 components:
 - notes
 cells:
@@ -7,11 +7,11 @@ cells:
 formulas:
   cost_per_mile: power * self.kwh_per_mile
 links:
-- to: 01a1c1e5-29ea-707b-87b9-8c7cb0721451
+- to: 01a1c411-8265-77fc-80a6-5c70633538c4
   components:
   - label
   cells:
     called: power
-- to: 01a1c1e5-29ea-707b-87b9-8c809ab7d45c
+- to: 01a1c411-8265-77fc-80a6-5c74679e9bb3
   components:
   - is_a

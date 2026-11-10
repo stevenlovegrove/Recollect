@@ -19,7 +19,7 @@ import ELK from "elkjs/lib/elk.bundled.js";
 import type { GraphNode } from "../api";
 import type { Workspace } from "../workspace";
 import { badgesOf, compColor, dominant, isDropped, isNote, label as labelOf, nodeColor } from "../theme";
-import { Brackets, CompBadges, edgeKey, parseEdgeKey, reading } from "../bits";
+import { Brackets, CompBadges, edgeKey, edgeText, parseEdgeKey, reading } from "../bits";
 import { type SummaryLine, summaryOf } from "../summary";
 import { DdItem, Dropdown } from "../Dropdown";
 import { Key, isTyping } from "../Shortcuts";
@@ -213,7 +213,7 @@ const LABEL_REL = "label:";
  * A line the map draws: an edge, by the component that leads it (the first that gives the graph its shape,
  * and otherwise its first), or a row a node reads by where it is. `value` is what a formula calls the end.
  */
-type MapLink = { from: string; to: string; kind: string; value: unknown; key: string };
+type MapLink = { from: string; to: string; kind: string; value: unknown; key: string; holds?: string };
 
 /** What the Links menu filters a link by. */
 const relOf = (e: { kind: string; value: unknown }) => (e.kind === "label" ? `${LABEL_REL}${String(e.value)}` : e.kind);
@@ -339,7 +339,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
     for (const e of g.edges) {
       if (at(e.from) === at(e.to)) continue;
       const kind = e.components.find((c) => ws.arranging.includes(c)) ?? e.components[0];
-      out.push({ from: at(e.from), to: at(e.to), kind, value: e.cells.called?.value, key: edgeKey(e.id) });
+      out.push({ from: at(e.from), to: at(e.to), kind, value: e.cells.called?.value, key: edgeKey(e.id), holds: edgeText(e) });
     }
     const byId = new Map(g.nodes.map((n) => [n.id, n]));
     for (const n of g.nodes)
@@ -904,7 +904,8 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
             id: key,
             source: ends.child,
             target: ends.parent,
-            label: e.kind === "label" ? String(e.value) : arranges ? undefined : labelOf(e.kind),
+            // What it is, and what it holds, such as an option's weight. A label says what a formula calls it.
+            label: [e.kind === "label" ? String(e.value) : labelOf(e.kind), e.holds].filter(Boolean).join(" · "),
             className: `edge rel-${e.kind} ${arranges ? "" : "free"} ${hot ? "hot" : ""} ${isSel ? "picked" : ""}`,
             animated: e.kind === "depends_on" && hot,
             // Into what reads it or holds it: where it sits on the map doesn't say which way a formula reads.
