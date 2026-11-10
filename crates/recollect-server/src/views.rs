@@ -3,7 +3,7 @@
 //! consistent with those picks, worked out here by the same code, so a what-if and the real thing
 //! can't disagree.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use recollect_graph::worlds::{Bool, Picks, Space, Var};
 use recollect_graph::{Backed, CellDef, ComponentDef, ComponentType, Entity, Error, Event, Graph, Log, Named, On, Op, Origin, Shown, Source, Stored, Violation};
@@ -399,12 +399,25 @@ fn node_view(g: &Graph, e: Entity, name: String, cells: BTreeMap<String, CellVie
             recollect_graph::table::Key::Text(t) => json!(t),
         },
     });
-    // What its cells read last time they ran, which they just did.
-    let mut reads: Vec<Entity> = cells
-        .keys()
-        .flat_map(|c| g.reads_of(e, c))
+    // What its cells read last time they ran, which they just did. A row reached through a reference,
+    // as car.chosen.price reaches Car[Hatchback], isn't read by where it is: what it read the reference
+    // from says so already, through its own edge.
+    let deps: Vec<recollect_graph::Dep> = cells.keys().flat_map(|c| g.reads_of(e, c)).collect();
+    let through: HashSet<Entity> = deps
+        .iter()
         .filter_map(|d| match d {
-            recollect_graph::Dep::Cell((x, _)) if x != e && g.row_of(x).is_some() && !g.linked(e, x, LABEL) => Some(x),
+            recollect_graph::Dep::Cell((y, c)) => match shown_of(g, *y, c) {
+                Some(Ok(Some(Shown::Named(items)))) => Some(items.into_iter().map(|(x, _)| x)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let mut reads: Vec<Entity> = deps
+        .into_iter()
+        .filter_map(|d| match d {
+            recollect_graph::Dep::Cell((x, _)) if x != e && g.row_of(x).is_some() && !g.linked(e, x, LABEL) && !through.contains(&x) => Some(x),
             _ => None,
         })
         .collect();

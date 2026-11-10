@@ -1080,7 +1080,8 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
               onSelect(n.id);
               centreOn(n.id);
             }}
-            onEdgeClick={(_, e) => onSelect(e.id)}
+            // A row read by where it is has no edge of its own to show, so the node whose formula reads it is shown.
+            onEdgeClick={(_, e) => onSelect(e.id.startsWith("reads:") ? e.id.slice("reads:".length).split("|")[0] : e.id)}
             onNodeContextMenu={(e, n) => {
               e.preventDefault();
               onContext({ kind: "node", id: n.id, x: e.clientX, y: e.clientY });

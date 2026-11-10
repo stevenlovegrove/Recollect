@@ -877,6 +877,18 @@ async fn held_out_tables_of_cars_and_years() {
     assert_eq!(cell(&v, "Year[10]", "balance")["vars"], json!([ids_of(&done, "new:top")]));
 }
 
+/// A row read through a reference, as car.chosen.price reads Car[Hatchback], isn't read by where it is:
+/// the label to what holds the reference already shows it, so the map draws no line of its own for it.
+#[tokio::test]
+async fn rows_read_through_a_reference_are_not_read_by_where_they_are() {
+    let c = Client::new();
+    c.open("choosing-a-car").await;
+    let v = c.view(json!({})).await;
+    for n in ["Yearly cost", "Gets to Edinburgh without stopping", "Which car?"] {
+        assert!(node(&v, n)["reads"].is_null(), "{n} reads {}", node(&v, n)["reads"]);
+    }
+}
+
 /// A numbered table goes on past its last row, worked out and never saved, and a row nobody wrote says
 /// what it's missing by name.
 #[tokio::test]
