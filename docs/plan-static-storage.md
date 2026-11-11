@@ -107,7 +107,7 @@ Move what isn't HTTP into a crate with no `tokio`, `axum`, `notify` or `std::fs`
 
 - New crate `recollect-wasm`, a `wasm-bindgen` façade over `recollect-core` with JSON in and out, one function per current endpoint: `open(files)`, `view(world)`, `plan(world)`, `apply(ops, why)`, `try`, `sweep`, `rows`, `history`, `proposals`, `accept`, `reject`, `undo`. It's built with `wasm-pack --target web` into `web/src/engine/pkg`, and run from `npm run build`.
 - `web/src/engine/worker.ts`: loads the wasm, holds the open workspace and its `FileStore`, and handles messages. Each mutation applies in memory and then awaits `store.commit(writes)`. Commits are queued so they land in order.
-- `api.ts`: put a `Backend` interface under the existing `api` object, with a `WorkerBackend` that does request/response over `postMessage`. The method names and types stay the same, so the views don't change. `subscribe()` becomes events posted by the worker: `graph_changed`, `proposals_changed` and `workspace_changed` keep their meanings.
+- `api.ts`: put a `Backend` interface under the existing `api` object, with a `WorkerBackend` that does request/response over `postMessage`, and an `HttpBackend` that calls `POST /api/call/{method}` on the server (see "Agents"). The method names and types stay the same, so the views don't change. `subscribe()` becomes events posted by the worker: `graph_changed`, `proposals_changed` and `workspace_changed` keep their meanings.
 - Samples: each is a BrowserStore workspace with id `sample:<name>`, made from `Workspace::sample_files`. "Start again" deletes it and remakes it. `FORMAT` still decides when an old copy is out of date.
 - Remember the last workspace in `localStorage` in place of `~/.recollect/last`.
 - `vite.config.ts`: `base: "./"` so `dist/` works under any path, as on GitHub Pages. Routing is already by `location.hash`.
@@ -147,25 +147,33 @@ Every MCP tool works through the engine, and none of them reads or writes files:
 
 An agent that only edited the YAML would lose all of that. It couldn't answer a what-if, and its mistakes would land as hand edits, which can't be refused. So agents need the engine as well as the files.
 
-**Recommended:** the `recollect` binary becomes a **stdio MCP server over a folder** (`recollect mcp <dir>`), built on `recollect-core` with a native file store. There's no web serving, REST or WebSocket. The static app is the UI, and the two meet in the folder:
+**Decided: keep `recollect serve`**, with MCP over HTTP at `/mcp`, rebuilt on `recollect-core`. That gives two ways to run the same UI:
 
-```
-Claude ──stdio──▶ recollect mcp <dir> ──writes──▶ folder ◀──watches/writes── browser tab (static app)
-```
+| | Static site | `recollect serve` |
+|---|---|---|
+| Engine | wasm in a Web Worker | native, in the server |
+| UI backend | `WorkerBackend` | `HttpBackend` (REST and the WebSocket, as now) |
+| Storage | BrowserStore or FolderStore | `FsStore`: native files, written atomically, with the `notify` watcher |
+| Agents | none directly, but see below | MCP at `/mcp`, as now |
 
-- `propose` writes `proposals/<id>.json`, and the tab's Inbox picks it up through file changes. Accepting it writes the nodes, and the agent's next call sees them.
-- Two writers share the folder with no log between them, so each rereads the folder before acting. The MCP process reconciles at the start of every tool call, which is cheap: it diffs metadata and reads only what changed. The tab reconciles on every file change. If both write one node file at the same moment, the last write wins, and the other side records the difference as an edit.
-- `get_history` shows that process's session only, as the tab's History does.
-- This replaces keeping `recollect serve`. If you'd rather keep a URL Claude can reach over HTTP, the same core can sit under the old axum server instead, but that brings back a second UI backend.
+**One dispatch, so the two backends can't drift.** `recollect-core` gets `dispatch(&mut Workspace, method, args: Value) -> Result<(Value, Writes), Error>`, covering `view`, `plan`, `apply`, `try`, `sweep`, `rows`, `history`, `undo`, `redo`, `proposals`, `accept` and `reject`. The wasm façade is that one function. The server's REST becomes one route, `POST /api/call/{method}`, around it, plus its own routes for opening, making and listing workspaces, which differ by host. MCP tools call the same `Workspace` methods. `api.ts` sends the same method names whichever backend is in use. Contract tests run the same calls through both backends and compare the JSON.
+
+**Choosing the backend at load:** the server adds `<meta name="recollect-backend" content="http">` to the `index.html` it serves. With no such tag, as on a static host, the app uses the worker. A query flag can override it for testing.
+
+**Server and static tab on one folder.** This needs nothing extra. If a static tab has a folder open while `recollect serve` (and Claude through it) works on the same folder, each sees the other's writes as file changes and reconciles them as `disk` edits: the server through `notify`, and the tab through observing or polling. Each rereads before it writes. If both write one node file at the same moment, the last write wins, and the other side records the difference. That's the same "hand edit" path as today, now without a log.
+
+**What changes in the server:**
+- `app.rs`: `Open` becomes a `recollect-core` `Workspace` plus an `FsStore` and the watcher. `Log::open` and `log.lock` go. One process per folder is still enforced, with an advisory lock on a `.recollect.lock` file that isn't written into the workspace's data or `.gitignore`. Samples are made from `Workspace::sample_files` in place of copying `examples/`, so `--samples` goes.
+- `api.rs`: the generic call route, workspace routes, `/api/events` and the Files routes. `/api/checkout` goes.
+- `mcp.rs`: unchanged apart from `o.log` becoming `o.workspace`, and `get_history` now covering the session.
+- `main.rs`: `serve` and `init` stay.
+- `tests.rs`: the logic moves to `recollect-core` (phase 2), and the HTTP and MCP tests stay here.
 
 ## Decided
 
+- **Server:** kept, as above.
 - **History:** kept, for undo and redo within a session (phase 1 and phase 5).
 - **Old `log.jsonl` files:** removed in one change, with no migration code. Delete `log.jsonl` and `log.applied` from `examples/*`, update `write_samples` to write through the new path, drop `log.lock` and `log.applied` from `.gitignore` handling, and drop the "made by an older version" check in `app.rs::load`.
-
-## Open questions
-
-1. **Agents over stdio MCP** in place of the HTTP server, as described in "Agents" above.
 
 ## Risks
 
