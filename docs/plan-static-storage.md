@@ -17,7 +17,7 @@ So a static site needs more than a new storage layer. **The engine has to run in
 ### What already works in our favour
 
 - **The engine compiles to wasm.** `cargo check -p recollect-systems --target wasm32-unknown-unknown` passes once `uuid` gets its `js` feature. I tried that with a temporary edit and reverted it. `Mutex` is harmless single-threaded, and `stacker` does nothing on wasm (see risks).
-- **The YAML files are the full state.** `nodes/*.yaml` is a complete projection, so dropping the log loses history and nothing else. A folder written by the new code can still be read by the old server, and the other way round.
+- **The YAML files are the full state.** `nodes/*.yaml` is a complete projection, so dropping the log loses history and nothing else, and the file format doesn't change.
 - **`Log::new` already runs in memory only**, with commit, invariant checks, what-if and undo. `Log::reconcile` already turns "files differ from the graph" into ops.
 - **Samples are code.** `samples::ops_of` builds each sample from scratch, so the browser can create one with no files to fetch.
 - **`api.ts` is already a narrow async RPC surface.** If it keeps its shape and only its transport changes, the views barely change.
@@ -86,6 +86,7 @@ Each phase leaves the app working and the tests passing.
 - `uuid`: add the `js` feature for `wasm32`, through a target-specific dependency.
 - Replace `SystemTime::now()` (`log.rs:523`, `log.rs:591`), which panics on `wasm32-unknown-unknown`, with `web-time`, or take the time from the caller.
 - **Remove the on-disk log**: `Disk`, `Log::open*`, `read_log`, `take_lock`, `crash_after`, `reload`, `log.applied`, `log.jsonl`, and from `saved.rs` `save_dir`, `load_dir`, `write_files`, `write_atomically`, `sync_dir` and `remove_temp_files`. The YAML (de)serialisation of `SavedNode` stays.
+- **History becomes linear and lasts only for the session**, kept for undo and redo. Remove `parent`, `Record::Head`, `checkout`, `newest_after`, `state_at` and branch handling. Undo commits the inverse of the newest event not yet undone, and redo commits the inverse of that undo, so both are ordinary events, can be checked, and write files like any other change. A new change clears the redo stack.
 - Add `Log::from_saved(SavedGraph, registry) -> (Log, Vec<LoadProblem>)`, which starts with the loaded graph and an empty history.
 - Make the touched entities from `record` available (for example `Log::take_dirty() -> BTreeSet<Entity>`) so the caller knows which node files to rewrite. `write_only` already works this out, so the logic moves rather than being written fresh.
 - Tests: `crash.rs` (10) and `concurrency.rs` (5) go, since they test a process crashing or racing on the log file. The disk parts of `saving.rs` and `log.rs` move to the new load-and-write path. The in-memory tests stay unchanged.
@@ -116,7 +117,11 @@ Move what isn't HTTP into a crate with no `tokio`, `axum`, `notify` or `std::fs`
 
 - "Open folder…" and "New in folder…" in `Welcome.tsx` and the workspace menu, replacing the typed path.
 - Recent folders, from kept handles. On reopen, `queryPermission`, and then `requestPermission` from a click if needed.
-- Hand edits: on window focus, and from a "Reload from disk" action, reread `nodes/` and `proposals/` and reconcile. That replaces the `notify` watcher. `FileSystemObserver` could make it live later, but it's still experimental.
+- **Live file changes**, so that an agent or editor working on the folder shows up as it happens. Behind a `watch(onChange)` method on `FolderStore`:
+  - Where `FileSystemObserver` exists (feature-detected), observe `nodes/` and `proposals/` recursively. It ran as a Chrome origin trial (129–134) and isn't in a spec yet, so it can't be the only way.
+  - Otherwise, poll while the tab is visible: about every second, list `nodes/` and `proposals/` and compare each file's `lastModified` and `size` with what was last seen. That only reads metadata, and it reads a file's text only when the file has changed. On focus, poll at once.
+  - Changed files go to `Workspace::reconcile`. It diffs against the graph, so the app's own writes are never mistaken for edits, and other people's changes become an event under `disk`, with the same debounce as the server's 150 ms. That replaces the `notify` watcher.
+  - BrowserStore workspaces are out of reach of anything outside the page, so agent work needs a folder workspace.
 - One writer per workspace: take a Web Lock (`navigator.locks`) named for the workspace, in place of `log.lock`. A second tab says the workspace is open elsewhere and shows it read-only. `BroadcastChannel` tells the other tabs to refresh after a change.
 - Write a `.gitignore` only when making a folder workspace, and not with `log.lock` and `log.applied` any more.
 
@@ -124,7 +129,7 @@ Move what isn't HTTP into a crate with no `tokio`, `axum`, `notify` or `std::fs`
 
 - `workspace.dir` is used as a key for remembered choices (`MapView.tsx:357`, `WorldsView.tsx:55`), so use the workspace id instead.
 - The status dot (`App.tsx:227`) means "connected" now. It becomes saved, saving, or couldn't save, with the reason (such as folder permission revoked), and a `beforeunload` warning while writes are pending.
-- History and checkout: depends on open question 2.
+- History: the History tab lists this session's events, with Undo and Redo (and ⌘Z / ⇧⌘Z in `Shortcuts.tsx`). The "you've gone back" banner (`App.tsx:230`), checkout and the branch graph in `HistoryView.tsx` go. Per-node history in the Inspector stays, limited to the session.
 - Files tab: unchanged apart from the backend, through `FileStore.list` and `read`.
 - Import and export, for browsers without folder access and for moving a browser workspace into a folder: export as a `.zip` of the same layout, and import a `.zip` or a folder through `<input webkitdirectory>`.
 - Rewrite DESIGN.md's "Workspaces and systems", "Claude, over MCP", "Layout" and "Not built yet", and the README's way to run it.
@@ -133,13 +138,34 @@ Move what isn't HTTP into a crate with no `tokio`, `axum`, `notify` or `std::fs`
 
 - A GitHub Actions workflow that builds the wasm and the web app and publishes `web/dist` to Pages.
 
+## Agents
+
+Every MCP tool works through the engine, and none of them reads or writes files:
+
+- **Reads are worked out:** `read_world`, `get_work`, `get_decisions` and `get_tree` narrow everything to a world, and `get_node` shows where each cell's value comes from.
+- **Writes are checked:** `propose` and `apply` resolve names and `new:x`, expand `table` and `formula`-with-`labels`, refuse formulas with type errors, and refuse anything that newly breaks an invariant.
+
+An agent that only edited the YAML would lose all of that. It couldn't answer a what-if, and its mistakes would land as hand edits, which can't be refused. So agents need the engine as well as the files.
+
+**Recommended:** the `recollect` binary becomes a **stdio MCP server over a folder** (`recollect mcp <dir>`), built on `recollect-core` with a native file store. There's no web serving, REST or WebSocket. The static app is the UI, and the two meet in the folder:
+
+```
+Claude ──stdio──▶ recollect mcp <dir> ──writes──▶ folder ◀──watches/writes── browser tab (static app)
+```
+
+- `propose` writes `proposals/<id>.json`, and the tab's Inbox picks it up through file changes. Accepting it writes the nodes, and the agent's next call sees them.
+- Two writers share the folder with no log between them, so each rereads the folder before acting. The MCP process reconciles at the start of every tool call, which is cheap: it diffs metadata and reads only what changed. The tab reconciles on every file change. If both write one node file at the same moment, the last write wins, and the other side records the difference as an edit.
+- `get_history` shows that process's session only, as the tab's History does.
+- This replaces keeping `recollect serve`. If you'd rather keep a URL Claude can reach over HTTP, the same core can sit under the old axum server instead, but that brings back a second UI backend.
+
+## Decided
+
+- **History:** kept, for undo and redo within a session (phase 1 and phase 5).
+- **Old `log.jsonl` files:** removed in one change, with no migration code. Delete `log.jsonl` and `log.applied` from `examples/*`, update `write_samples` to write through the new path, drop `log.lock` and `log.applied` from `.gitignore` handling, and drop the "made by an older version" check in `app.rs::load`.
+
 ## Open questions
 
-1. **What happens to the server and MCP?** A static site can't host an MCP endpoint, so Claude can't reach a purely static app.
-   - **(a) Recommended:** keep `recollect serve` as an optional local host, rebuilt on `recollect-core` with a native filesystem store and the same `Writes`. MCP keeps working on a folder workspace, and the UI gets an `HttpBackend` next to `WorkerBackend`. The two can share a folder: changes from one show up in the other as hand edits.
-   - (b) Drop the server for now. The Inbox only fills from proposals already in a folder, and MCP comes back later.
-2. **History once versioning is gone.** Since `Log` runs in memory, undo and blame within a session cost nothing. Either keep the History tab as "this session" with undo, and remove checkout, branches and the "you've gone back" banner, or remove the History tab and the per-node history entirely.
-3. **Existing workspaces with `log.jsonl`.** The plan reads them through their YAML and leaves the log files alone. They go stale, but the old server would read later changes as hand edits, so nothing is lost. Alternatively, delete or move aside `log.*` the first time a workspace is opened.
+1. **Agents over stdio MCP** in place of the HTTP server, as described in "Agents" above.
 
 ## Risks
 
