@@ -27,7 +27,7 @@ pub struct FileText {
     pub truncated: bool,
 }
 
-/// Everything there is to read, by path. Git's own files and the lock aren't the workspace's data,
+/// Everything there is to read, by path. Git's own files, the lock and half-written files aren't the workspace's data,
 /// and a symlink could lead anywhere.
 pub fn list(dir: &Path) -> Result<Vec<FileInfo>> {
     fn walk(dir: &Path, prefix: &str, out: &mut Vec<FileInfo>) -> Result<()> {
@@ -37,7 +37,7 @@ pub fn list(dir: &Path) -> Result<Vec<FileInfo>> {
             let meta = std::fs::symlink_metadata(entry.path())?;
             if meta.is_dir() && name != ".git" {
                 walk(&entry.path(), &format!("{prefix}{name}/"), out)?;
-            } else if meta.is_file() && name != "log.lock" {
+            } else if meta.is_file() && name != crate::app::LOCK && !(name.starts_with('.') && name.ends_with(".tmp")) {
                 out.push(FileInfo { path: format!("{prefix}{name}"), size: meta.len() });
             }
         }

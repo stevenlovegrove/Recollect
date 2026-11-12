@@ -9,8 +9,11 @@ use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::app::{App, Open};
-use crate::views::{self, World};
+use recollect_core::Workspace as Open;
+use recollect_core::views::{self, World};
+use serde_json::json;
+
+use crate::app::App;
 
 const INSTRUCTIONS: &str = "\
 Recollect holds a graph the user develops with your help. A node and an edge (from one node to another) are both entities. Each has \
@@ -110,7 +113,7 @@ impl RecollectMcp {
     }
 
     fn read<T: Serialize>(&self, f: impl FnOnce(&Open) -> Result<T, String>) -> Result<String, String> {
-        let v = self.app.with(|o| f(o).map_err(crate::app::AppError::Refused)).map_err(|e| e.to_string())?;
+        let v = self.app.with(|o| f(&o.ws).map_err(crate::app::AppError::Refused)).map_err(|e| e.to_string())?;
         serde_json::to_string_pretty(&v).map_err(|e| e.to_string())
     }
 }
@@ -264,7 +267,7 @@ impl RecollectMcp {
         self.read(|o| Ok(views::view(o, &World::new()).checks))
     }
 
-    #[tool(description = "The log: who changed what, when and why, newest first.")]
+    #[tool(description = "What's changed since the workspace was opened: who changed what, when and why, newest first.")]
     async fn get_history(&self, Parameters(p): Parameters<HistoryParams>) -> Result<String, String> {
         self.read(|o| {
             let node = p.node.as_deref().map(|n| node_of(o, n)).transpose()?;
@@ -276,22 +279,22 @@ impl RecollectMcp {
 
     #[tool(description = "Submit a change-set for the user to review in the inbox. It's checked now as if committed, and refused if it wouldn't apply or would break an invariant. Returns the proposal's id.")]
     async fn propose(&self, Parameters(p): Parameters<ProposeParams>) -> Result<String, String> {
-        let prop = self.app.propose(p.title, p.rationale, p.ops, "claude").map_err(|e| e.to_string())?;
-        Ok(format!("Proposal `{}` queued with {} op(s). The user will review it in the Recollect inbox.", prop.id, prop.ops.len()))
+        let prop = self.app.call("propose", json!({ "title": p.title, "rationale": p.rationale, "ops": p.ops }), "claude").map_err(|e| e.to_string())?;
+        Ok(format!("Proposal `{}` queued with {} op(s). The user will review it in the Recollect inbox.", prop["id"].as_str().unwrap_or_default(), prop["ops"].as_array().map_or(0, Vec::len)))
     }
 
     #[tool(description = "Commit ops directly, without review. Only allowed when the workspace sets llm_direct_writes = true. Otherwise use `propose`.")]
     async fn apply(&self, Parameters(p): Parameters<ApplyParams>) -> Result<String, String> {
-        if !self.app.with(|o| Ok(o.config.llm_direct_writes)).map_err(|e| e.to_string())? {
+        if !self.app.with(|o| Ok(o.ws.config.llm_direct_writes)).map_err(|e| e.to_string())? {
             return Err("direct writes are off for this workspace: use `propose`".to_string());
         }
-        let done = self.app.apply(p.ops, "claude", &p.why).map_err(|e| e.to_string())?;
+        let done = self.app.call("apply", json!({ "ops": p.ops, "why": p.why }), "claude").map_err(|e| e.to_string())?;
         serde_json::to_string_pretty(&done).map_err(|e| e.to_string())
     }
 
     #[tool(description = "Pending proposals, and whether each still applies.")]
     async fn list_proposals(&self) -> Result<String, String> {
-        let list = self.app.proposals().map_err(|e| e.to_string())?;
+        let list = self.app.with(|o| Ok(o.ws.proposal_views())).map_err(|e| e.to_string())?;
         let list: Vec<Value> = list
             .into_iter()
             .map(|p| serde_json::json!({ "id": p.proposal.id, "title": p.proposal.title, "rationale": p.proposal.rationale, "ops": p.proposal.ops.len(), "error": p.error }))

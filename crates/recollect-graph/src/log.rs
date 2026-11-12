@@ -7,36 +7,28 @@
 //! # use serde_json::json;
 //! let mut log = Log::new(Arc::new(Registry::new()));
 //! let a = Entity::new();
-//! let seq = log.commit("steven", "first thoughts", vec![Op::Spawn { id: a }, Op::Set { on: On::Node { id: a }, cell: "note".into(), to: Some(Stored::Value(json!("hello"))) }]).unwrap();
+//! log.commit("steven", "first thoughts", vec![Op::Spawn { id: a }, Op::Set { on: On::Node { id: a }, cell: "note".into(), to: Some(Stored::Value(json!("hello"))) }]).unwrap();
 //! assert_eq!(log.graph().get_value(a, "note"), Ok(Some(json!("hello"))));
-//! log.undo(seq, "steven", "changed my mind").unwrap();
+//! log.undo_last("steven").unwrap();
 //! assert!(!log.graph().contains(a));
+//! log.redo("steven").unwrap();
+//! assert!(log.graph().contains(a));
 //! ```
 //!
-//! On disk the log is what's true, and the YAML files are a projection of it. A commit appends one
-//! line to `log.jsonl` and flushes it, which is the moment it happens, and then brings the files
-//! up to date and records in `log.applied` how far they've got. So after a crash, `open` knows from
-//! the log exactly what's committed, and from `log.applied` which files might merely be behind
-//! rather than edited by hand.
-//!
-//! History is a tree. Every event has a parent, and the log has a head, which is where it is now and
-//! what the files show. Going back to an earlier event only moves the head, so the next commit starts
-//! a branch from there, and everything that came after is still in the log to go back to. Nothing is
-//! ever rewritten. Events are numbered in the order they happened, whichever branch they're on.
+//! The log lives in memory, for as long as a workspace is open, and is what undo and redo work from.
+//! It isn't saved: what's saved is the graph, as files, and the log says which of them each change
+//! touched (`take_changes`), so whoever holds it can write just those. History is a line: undoing
+//! appends the inverse, and so does redoing, so both are ordinary checked changes with an author.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::graph::{Backed, Entity, Error, Graph};
 use crate::registry::{Place, Registry, Severity};
-use crate::saved::{DirError, LoadProblem, SavedEdge, SavedGraph, SavedNode, node_path, read_files, remove_temp_files, sync_dir, write_atomically, write_files, write_if_changed};
+use crate::saved::{LoadProblem, SavedEdge, SavedGraph, SavedNode};
 
 /// What's written in a cell.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -166,9 +158,6 @@ pub struct Violation {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Event {
     pub seq: u64,
-    /// The event this one follows. Only the first event has none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent: Option<u64>,
     /// Milliseconds since 1970.
     pub at: u64,
     pub author: String,
@@ -177,29 +166,17 @@ pub struct Event {
     pub ops: Vec<Op>,
     /// Exactly undoes `ops`, applied in order.
     pub inverse: Vec<Op>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "record", rename_all = "snake_case")]
-enum Record {
-    Event(Event),
-    /// The head moved here, with no new event.
-    Head { seq: u64, at: u64, author: String, why: String },
+    /// The event this one takes back, if it's an undo or a redo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reverts: Option<u64>,
 }
 
 #[derive(Debug)]
 pub enum CommitError {
     /// Nothing changed: these checks would be newly broken, or the ops don't apply.
     Refused(Vec<Violation>),
-    /// Nothing changed: the log couldn't be written.
-    Io(std::io::Error),
-    /// It did happen: the event is safely in the log, but the files couldn't be brought up to date.
-    /// The next commit or open tries again.
-    FilesBehind { seq: u64, error: DirError },
     /// There's no such event.
     NoSuchEvent(u64),
-    /// This event isn't part of where the log is now, so it can't be undone from here.
-    NotOnThisBranch(u64),
 }
 
 impl CommitError {
@@ -212,194 +189,67 @@ impl CommitError {
     }
 }
 
-#[derive(Debug)]
-pub enum OpenError {
-    /// Another process has this directory open.
-    Locked,
-    /// A complete line in the log is unreadable, or doesn't replay. A crash can't cause this.
-    Corrupt { line: usize, detail: String },
-    Dir(DirError),
+/// The node files a change needs written: these nodes as they are now, and these gone.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Changes {
+    pub nodes: Vec<SavedNode>,
+    pub gone: Vec<Entity>,
 }
 
-impl From<std::io::Error> for OpenError {
-    fn from(e: std::io::Error) -> Self {
-        OpenError::Dir(DirError::Io(e))
+impl Changes {
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty() && self.gone.is_empty()
     }
 }
 
-impl From<DirError> for OpenError {
-    fn from(e: DirError) -> Self {
-        OpenError::Dir(e)
+/// Milliseconds since 1970. `SystemTime` panics on the web, so there it's the browser's clock.
+pub fn now_ms() -> u64 {
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    {
+        js_sys::Date::now() as u64
     }
-}
-
-/// The exit status of a process that died at a chosen step.
-#[doc(hidden)]
-pub const CRASHED: i32 = 86;
-
-/// Testing: die here, as a crash would, once this many steps have passed.
-fn step(crash_after: &mut Option<u32>) {
-    if let Some(n) = crash_after {
-        if *n == 0 {
-            // No destructors or flushing run, and nothing here buffers, so the disk is left as a
-            // crash would leave it. Losing power is a different test, which this can't do.
-            std::process::exit(CRASHED);
-        }
-        *n -= 1;
-    }
-}
-
-struct Disk {
-    dir: PathBuf,
-    log: File,
-    /// Held for its lock, so two processes can't write one log.
-    _lock: File,
-    /// A write of the files failed, so the next one does all of them.
-    stale: bool,
-    crash_after: Option<u32>,
-}
-
-impl Disk {
-    fn append(&mut self, records: &[Record]) -> std::io::Result<()> {
-        let mut text = String::new();
-        for r in records {
-            text.push_str(&serde_json::to_string(r).expect("records serialise"));
-            text.push('\n');
-        }
-        let good = self.log.metadata()?.len();
-        step(&mut self.crash_after);
-        let written = self.log.write_all(text.as_bytes());
-        step(&mut self.crash_after);
-        let synced = written.and_then(|()| self.log.sync_all());
-        if synced.is_err() {
-            // Best effort: anything left over is an unfinished line, which open cuts off.
-            let _ = self.log.set_len(good);
-        }
-        synced?;
-        step(&mut self.crash_after);
-        Ok(())
-    }
-
-    fn mark_applied(&mut self, seq: Option<u64>) -> std::io::Result<()> {
-        let text = seq.map_or(String::new(), |s| format!("{s}\n"));
-        let crash = &mut self.crash_after;
-        write_atomically(&self.dir.join("log.applied"), &text, &mut || step(crash))?;
-        sync_dir(&self.dir)
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
     }
 }
 
 /// A graph whose only way to change is a commit.
 pub struct Log {
     graph: Graph,
+    /// What the graph was before the first event.
+    base: SavedGraph,
     events: Vec<Event>,
-    /// Where the log is now. `None` only before anything has happened.
-    head: Option<u64>,
-    disk: Option<Disk>,
+    /// Events undo would take back, newest last.
+    undoable: Vec<u64>,
+    /// Undos redo would take back, newest last. Any other change clears it.
+    redoable: Vec<u64>,
+    /// Nodes whose files are out of date since `take_changes` was last called.
+    dirty: BTreeSet<Entity>,
 }
 
 impl Log {
-    /// A log that lives only in memory.
+    /// An empty graph.
     pub fn new(registry: Arc<Registry>) -> Self {
-        Log { graph: Graph::with_registry(registry), events: Vec::new(), head: None, disk: None }
+        Log { graph: Graph::with_registry(registry), base: SavedGraph::default(), events: Vec::new(), undoable: Vec::new(), redoable: Vec::new(), dirty: BTreeSet::new() }
     }
 
-    /// Open a directory, creating what's missing and repairing what a crash left. If the files
-    /// differ from the log for any reason other than a crash, that's an edit made outside the log,
-    /// and it's recorded under `author`. What needs attention comes back with it.
-    pub fn open(dir: &Path, registry: Arc<Registry>, author: &str) -> Result<(Log, Vec<LoadProblem>), OpenError> {
-        Self::open_inner(dir, registry, author, None)
-    }
-
-    /// Testing: `open` that dies after this many steps of its repair, as a crash would.
-    #[doc(hidden)]
-    pub fn open_crashing_after(dir: &Path, registry: Arc<Registry>, author: &str, steps: u32) -> Result<(Log, Vec<LoadProblem>), OpenError> {
-        Self::open_inner(dir, registry, author, Some(steps))
-    }
-
-    /// Testing: die after this many more steps of writing, as a crash would.
-    #[doc(hidden)]
-    pub fn crash_after_steps(&mut self, steps: u32) {
-        self.disk.as_mut().expect("a log on disk").crash_after = Some(steps);
-    }
-
-    fn open_inner(dir: &Path, registry: Arc<Registry>, author: &str, crash_after: Option<u32>) -> Result<(Log, Vec<LoadProblem>), OpenError> {
-        fs::create_dir_all(dir.join("nodes"))?;
-        let lock = OpenOptions::new().create(true).truncate(false).write(true).open(dir.join("log.lock"))?;
-        take_lock(&lock)?;
-        remove_temp_files(dir)?;
-        remove_temp_files(&dir.join("nodes"))?;
+    /// Start from a saved graph, with no history. A node that's only an edge's target gets an empty
+    /// node, as a load gives it, and so does its file the next time changes are taken.
+    pub fn from_saved(saved: SavedGraph, registry: Arc<Registry>) -> (Log, Vec<LoadProblem>) {
+        let mut saved = saved;
         let mut problems = Vec::new();
-
-        let path = dir.join("log.jsonl");
-        let (records, torn) = read_log(&path)?;
-        if torn > 0 {
-            problems.push(LoadProblem::TornLog { bytes: torn });
-        }
-        let applied: Option<u64> = fs::read_to_string(dir.join("log.applied")).ok().and_then(|s| s.trim().parse().ok());
-
-        let mut log = Log::new(registry.clone());
-        let mut lines = BTreeMap::new();
-        for (line, record) in records.into_iter().enumerate() {
-            match record {
-                Record::Head { seq, .. } => log.head = Some(seq),
-                Record::Event(ev) => {
-                    if ev.seq != log.events.len() as u64 || ev.parent.is_some_and(|p| p >= ev.seq) {
-                        return Err(OpenError::Corrupt { line: line + 1, detail: format!("event {} is out of order", ev.seq) });
-                    }
-                    lines.insert(ev.seq, line + 1);
-                    log.head = Some(ev.seq);
-                    log.events.push(ev);
-                }
-            }
-        }
-        if let Some(head) = log.head
-            && head as usize >= log.events.len()
-        {
-            return Err(OpenError::Corrupt { line: 0, detail: format!("the head is at {head}, which isn't an event") });
-        }
-        // Replay what leads here. The other branches aren't part of what's true now.
-        for seq in log.head.map_or(Vec::new(), |h| log.ancestors(h)) {
-            for op in log.events[seq as usize].ops.clone() {
-                apply(&mut log.graph, &op).map_err(|detail| OpenError::Corrupt { line: lines[&seq], detail })?;
-            }
-        }
-        let replayed = log.graph.save();
-        // The files may be as old as the state at `applied`, which can even be on another branch.
-        let base = match applied {
-            None => SavedGraph::default(),
-            Some(a) if Some(a) != log.head && (a as usize) < log.events.len() => log.state_at(a).save(),
-            Some(_) => replayed.clone(),
-        };
-        let last = log.last_seq();
-
-        // A file that matches what it should be, or what it last was, isn't an edit. It's at most
-        // behind. Anything else was changed by someone else, so it stands.
-        let on_disk = read_files(dir)?;
-        let intended = merge(&on_disk, &base, &replayed, &mut problems);
-
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
-        log.disk = Some(Disk { dir: dir.to_path_buf(), log: file, _lock: lock, stale: false, crash_after });
-        if let Some(ops) = Some(diff(&replayed, &intended)).filter(|ops| !ops.is_empty()) {
-            let seq = log.record_unchecked(author, "external edit", ops).map_err(|e| match e {
-                CommitError::Io(e) => OpenError::Dir(DirError::Io(e)),
-                CommitError::FilesBehind { error, .. } => OpenError::Dir(error),
-                other => unreachable!("{other:?}"),
-            })?;
-            problems.push(LoadProblem::ExternalEdit { seq });
-        }
-
-        // Anything still out of step is only behind.
-        let now = log.graph.save();
-        if applied != log.last_seq() || last != log.last_seq() || !same_graph(&on_disk, &now) {
-            log.write_all_files().map_err(OpenError::Dir)?;
-        }
-
-        problems.extend(log.graph.broken().into_iter().map(|(key, error)| LoadProblem::BrokenFormula(key, error)));
+        let dangling = fill_dangling(&mut saved, &mut problems);
+        let (graph, more) = Graph::load(saved, registry);
+        // `load` reports the same dangling links, so only its own problems are added.
+        problems.extend(more.into_iter().filter(|p| !matches!(p, LoadProblem::DanglingLink { .. })));
+        let base = graph.save();
+        let log = Log { graph, base, events: Vec::new(), undoable: Vec::new(), redoable: Vec::new(), dirty: dangling };
         let standing = log.violations();
         if !standing.is_empty() {
             problems.push(LoadProblem::Standing(standing));
         }
-        Ok((log, problems))
+        (log, problems)
     }
 
     // ---------- reading ----------
@@ -409,65 +259,45 @@ impl Log {
         &self.graph
     }
 
+    /// Every event since it was opened, oldest first.
     pub fn events(&self) -> &[Event] {
         &self.events
     }
 
-    /// Where the log is now, which is what the files show.
+    /// The newest event, if there's been one.
     pub fn last_seq(&self) -> Option<u64> {
-        self.head
+        self.events.last().map(|e| e.seq)
     }
 
-    /// The events leading to this one, oldest first, ending with it.
-    fn ancestors(&self, seq: u64) -> Vec<u64> {
-        let mut out = vec![seq];
-        let mut at = seq;
-        while let Some(parent) = self.events[at as usize].parent {
-            out.push(parent);
-            at = parent;
-        }
-        out.reverse();
-        out
+    /// The event undo would take back.
+    pub fn undo_next(&self) -> Option<u64> {
+        self.undoable.last().copied()
     }
 
-    /// The events that led to where the log is now, oldest first.
-    pub fn path(&self) -> Vec<&Event> {
-        self.head.map_or(Vec::new(), |h| self.ancestors(h)).into_iter().map(|s| &self.events[s as usize]).collect()
-    }
-
-    /// The newest event that follows from this one, if any does: where to go to return from having
-    /// gone back. Events are numbered in order, so the newest is the last one found.
-    pub fn newest_after(&self, seq: u64) -> Option<u64> {
-        let mut reached = BTreeSet::from([seq]);
-        let mut newest = None;
-        for ev in &self.events[seq as usize + 1..] {
-            if ev.parent.is_some_and(|p| reached.contains(&p)) {
-                reached.insert(ev.seq);
-                newest = Some(ev.seq);
-            }
-        }
-        newest
+    /// The undo redo would take back.
+    pub fn redo_next(&self) -> Option<u64> {
+        self.redoable.last().copied()
     }
 
     /// The graph as it was just after event `seq`, worked out by the code running now.
     pub fn state_at(&self, seq: u64) -> Graph {
-        let mut g = Graph::with_registry(self.graph.registry.clone());
-        for s in self.ancestors(seq) {
-            for op in &self.events[s as usize].ops {
+        let (mut g, _) = Graph::load(self.base.clone(), self.graph.registry.clone());
+        for ev in &self.events[..=seq as usize] {
+            for op in &ev.ops {
                 apply(&mut g, op).expect("logged ops replay");
             }
         }
         g
     }
 
-    /// Every event leading here that touched a target, oldest first.
+    /// Every event that touched a target, oldest first.
     pub fn history(&self, target: Target) -> Vec<&Event> {
-        self.path().into_iter().filter(|ev| ev.ops.iter().any(|op| op.target() == target)).collect()
+        self.events.iter().filter(|ev| ev.ops.iter().any(|op| op.target() == target)).collect()
     }
 
-    /// Who last wrote in a cell on the way here, and why, if anyone has.
+    /// Who last wrote in a cell, and why, if anyone has since it was opened.
     pub fn blame(&self, on: On, cell: &str) -> Option<&Event> {
-        self.path().into_iter().rev().find(|ev| ev.ops.iter().any(|op| matches!(op, Op::Set { on: o, cell: c, to: Some(_) } if *o == on && c == cell)))
+        self.events.iter().rev().find(|ev| ev.ops.iter().any(|op| matches!(op, Op::Set { on: o, cell: c, to: Some(_) } if *o == on && c == cell)))
     }
 
     /// Every invariant that doesn't hold now, such as after a hand edit.
@@ -491,216 +321,110 @@ impl Log {
         Ok(hypothetical)
     }
 
+    /// The node files that need writing since this was last asked, and forgets them.
+    pub fn take_changes(&mut self) -> Changes {
+        let ids = std::mem::take(&mut self.dirty);
+        let nodes = self.graph.save_only(ids.iter().copied().filter(|e| self.graph.contains(*e))).nodes;
+        let gone = ids.into_iter().filter(|e| !self.graph.contains(*e)).collect();
+        Changes { nodes, gone }
+    }
+
     // ---------- writing ----------
 
     /// Apply `ops` atomically, or refuse them and change nothing. Checks already broken, such as by a
     /// hand edit, don't block a commit unless it breaks them in a new way.
     pub fn commit(&mut self, author: &str, why: &str, ops: Vec<Op>) -> Result<u64, CommitError> {
         let inverse = try_apply(&mut self.graph, &ops).map_err(CommitError::Refused)?;
-        self.record(author, why, ops, inverse)
-    }
-
-    /// Undo by appending the inverse. History is never rewritten, so the undo is itself audited.
-    pub fn undo(&mut self, seq: u64, author: &str, why: &str) -> Result<u64, CommitError> {
-        let event = self.events.get(seq as usize).ok_or(CommitError::NoSuchEvent(seq))?;
-        let inverse = event.inverse.clone();
-        if !self.head.is_some_and(|h| self.ancestors(h).contains(&seq)) {
-            return Err(CommitError::NotOnThisBranch(seq));
-        }
-        self.commit(author, why, inverse)
-    }
-
-    /// Go to any event, on any branch. Nothing is lost, and the next commit follows from here, which
-    /// starts a new branch if this isn't the end of one. Going takes the shortest way, back to where
-    /// the two branches split and on from there, so only what differs has to run again.
-    pub fn checkout(&mut self, seq: u64, author: &str, why: &str) -> Result<(), CommitError> {
-        if seq as usize >= self.events.len() {
-            return Err(CommitError::NoSuchEvent(seq));
-        }
-        if self.head == Some(seq) {
-            return Ok(());
-        }
-        let at = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
-        // This is the moment it happens, as for a commit.
-        if let Some(disk) = &mut self.disk {
-            disk.append(&[Record::Head { seq, at, author: author.to_string(), why: why.to_string() }]).map_err(CommitError::Io)?;
-        }
-        let from = self.head.map_or(Vec::new(), |h| self.ancestors(h));
-        let to = self.ancestors(seq);
-        let shared = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
-        for s in from[shared..].iter().rev() {
-            for op in self.events[*s as usize].inverse.clone() {
-                apply(&mut self.graph, &op).expect("an inverse applies");
-            }
-        }
-        for s in &to[shared..] {
-            for op in self.events[*s as usize].ops.clone() {
-                apply(&mut self.graph, &op).expect("logged ops replay");
-            }
-        }
-        self.head = Some(seq);
-        self.write_all_files().map_err(|error| {
-            if let Some(disk) = &mut self.disk {
-                disk.stale = true;
-            }
-            CommitError::FilesBehind { seq, error }
-        })
-    }
-
-    /// Bring in a graph edited outside the log, such as by hand or `git pull`. The files are what
-    /// they are, so this always records, as ordinary ops worked out by diffing, and reports any
-    /// checks the edit now breaks rather than refusing it.
-    pub fn reconcile(&mut self, disk: &SavedGraph, author: &str) -> Result<Vec<Violation>, CommitError> {
-        let ops = diff(&self.graph.save(), disk);
-        if !ops.is_empty() {
-            self.record_unchecked(author, "external edit", ops)?;
-        }
-        Ok(self.violations())
-    }
-
-    /// Look at the files again, and record any difference as an edit made outside the log. Returns
-    /// the event if there was one. Files this log wrote itself never differ, so it's cheap to call
-    /// whenever something on disk may have changed.
-    pub fn reload(&mut self, author: &str) -> Result<Option<u64>, DirError> {
-        let Some(dir) = self.disk.as_ref().map(|d| d.dir.clone()) else { return Ok(None) };
-        let ops = diff(&self.graph.save(), &read_files(&dir)?);
-        if ops.is_empty() {
-            return Ok(None);
-        }
-        match self.record_unchecked(author, "external edit", ops) {
-            Ok(seq) => Ok(Some(seq)),
-            Err(CommitError::FilesBehind { seq, .. }) => Ok(Some(seq)),
-            Err(CommitError::Io(e)) => Err(DirError::Io(e)),
-            Err(other) => unreachable!("{other:?}"),
-        }
-    }
-
-    fn record_unchecked(&mut self, author: &str, why: &str, ops: Vec<Op>) -> Result<u64, CommitError> {
-        let mut inverse = Vec::new();
-        for op in &ops {
-            let mut undo = apply(&mut self.graph, op).expect("a diff applies");
-            undo.extend(std::mem::take(&mut inverse));
-            inverse = undo;
-        }
-        self.record(author, why, ops, inverse)
-    }
-
-    /// The graph already holds these ops. Make them permanent, or take them back out.
-    fn record(&mut self, author: &str, why: &str, ops: Vec<Op>, inverse: Vec<Op>) -> Result<u64, CommitError> {
-        let seq = self.events.len() as u64;
-        let at = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
-        let event = Event { seq, parent: self.head, at, author: author.to_string(), why: why.to_string(), ops, inverse };
-
-        // This is the moment it happens.
-        if let Some(disk) = &mut self.disk
-            && let Err(e) = disk.append(&[Record::Event(event.clone())])
-        {
-            for op in &event.inverse {
-                apply(&mut self.graph, op).expect("an inverse applies");
-            }
-            return Err(CommitError::Io(e));
-        }
-        let touched: BTreeSet<Target> = event.ops.iter().map(Op::target).collect();
-        self.events.push(event);
-        self.head = Some(seq);
-        self.write_touched(&touched).map_err(|error| CommitError::FilesBehind { seq, error })?;
+        let seq = self.record(author, why, ops, inverse, None);
+        self.undoable.push(seq);
+        self.redoable.clear();
         Ok(seq)
     }
 
-    fn write_touched(&mut self, touched: &BTreeSet<Target>) -> Result<(), DirError> {
-        let Some(disk) = &self.disk else { return Ok(()) };
-        if disk.stale {
-            return self.write_all_files();
-        }
-        let result = self.write_only(touched);
-        if result.is_err()
-            && let Some(disk) = &mut self.disk
-        {
-            disk.stale = true;
-        }
-        result
+    /// Take back any one event, by appending its inverse. It's a change like any other, so it can be
+    /// undone in turn.
+    pub fn undo(&mut self, seq: u64, author: &str, why: &str) -> Result<u64, CommitError> {
+        let inverse = self.events.get(seq as usize).ok_or(CommitError::NoSuchEvent(seq))?.inverse.clone();
+        let applied = try_apply(&mut self.graph, &inverse).map_err(CommitError::Refused)?;
+        let new = self.record(author, why, inverse, applied, Some(seq));
+        self.undoable.retain(|s| *s != seq);
+        self.undoable.push(new);
+        self.redoable.clear();
+        Ok(new)
     }
 
-    /// Just the files these changes affect, which is what keeps a commit from costing the whole
-    /// graph. An edge lives with its source.
-    fn write_only(&mut self, touched: &BTreeSet<Target>) -> Result<(), DirError> {
-        let last = self.last_seq();
-        let ids: BTreeSet<Entity> = touched
-            .iter()
-            .map(|t| match *t {
-                Target::Node(e) | Target::Edge(e, _) => e,
-            })
-            .collect();
-        let saved = self.graph.save_only(ids.iter().copied().filter(|e| self.graph.contains(*e)));
-        let disk = self.disk.as_mut().expect("checked by the caller");
-        let (dir, crash) = (disk.dir.clone(), &mut disk.crash_after);
-        let mut tick = || step(crash);
-        for node in &saved.nodes {
-            write_if_changed(&node_path(&dir, node.id), &serde_yaml_ng::to_string(node)?, &mut tick)?;
-        }
-        let kept: BTreeSet<Entity> = saved.nodes.iter().map(|n| n.id).collect();
-        for gone in ids.difference(&kept) {
-            let path = node_path(&dir, *gone);
-            if path.exists() {
-                fs::remove_file(path)?;
-                tick();
+    /// Take back the newest change that hasn't been, if there is one.
+    pub fn undo_last(&mut self, author: &str) -> Result<Option<u64>, CommitError> {
+        let Some(seq) = self.undoable.last().copied() else { return Ok(None) };
+        let inverse = self.events[seq as usize].inverse.clone();
+        let applied = try_apply(&mut self.graph, &inverse).map_err(CommitError::Refused)?;
+        self.undoable.pop();
+        let new = self.record(author, &format!("undo #{seq}"), inverse, applied, Some(seq));
+        self.redoable.push(new);
+        Ok(Some(new))
+    }
+
+    /// Take back the newest undo, if nothing else has changed since.
+    pub fn redo(&mut self, author: &str) -> Result<Option<u64>, CommitError> {
+        let Some(seq) = self.redoable.last().copied() else { return Ok(None) };
+        let inverse = self.events[seq as usize].inverse.clone();
+        let applied = try_apply(&mut self.graph, &inverse).map_err(CommitError::Refused)?;
+        self.redoable.pop();
+        let new = self.record(author, &format!("redo #{}", self.events[seq as usize].reverts.unwrap_or(seq)), inverse, applied, Some(seq));
+        self.undoable.push(new);
+        Ok(Some(new))
+    }
+
+    /// Bring in a graph edited outside the log, such as by hand, by another program or `git pull`.
+    /// The files are what they are, so this always records, as ordinary ops worked out by diffing,
+    /// and reports any checks the edit now breaks rather than refusing it. Returns the event if there
+    /// was a difference.
+    pub fn reconcile(&mut self, disk: &SavedGraph, author: &str) -> (Option<u64>, Vec<Violation>) {
+        let mut disk = disk.clone();
+        let filled = fill_dangling(&mut disk, &mut Vec::new());
+        let ops = diff(&self.graph.save(), &disk);
+        let seq = (!ops.is_empty()).then(|| {
+            let mut inverse = Vec::new();
+            for op in &ops {
+                let mut undo = apply(&mut self.graph, op).expect("a diff applies");
+                undo.extend(std::mem::take(&mut inverse));
+                inverse = undo;
             }
-        }
-        // Everything has to be durable before anything says it's applied.
-        sync_dir(&dir.join("nodes"))?;
-        disk.mark_applied(last)?;
-        Ok(())
+            let seq = self.record(author, "external edit", ops, inverse, None);
+            self.undoable.push(seq);
+            self.redoable.clear();
+            seq
+        });
+        // A node made for a dangling edge has no file yet.
+        self.dirty.extend(filled);
+        (seq, self.violations())
     }
 
-    fn write_all_files(&mut self) -> Result<(), DirError> {
-        let (saved, last) = (self.graph.save(), self.last_seq());
-        let Some(disk) = &mut self.disk else { return Ok(()) };
-        let dir = disk.dir.clone();
-        let crash = &mut disk.crash_after;
-        write_files(&saved, &dir, &mut || step(crash))?;
-        disk.mark_applied(last)?;
-        disk.stale = false;
-        Ok(())
+    /// The graph already holds these ops. Make them an event.
+    fn record(&mut self, author: &str, why: &str, ops: Vec<Op>, inverse: Vec<Op>, reverts: Option<u64>) -> u64 {
+        let seq = self.events.len() as u64;
+        // An edge lives in its source's file.
+        self.dirty.extend(ops.iter().map(|op| match op.target() {
+            Target::Node(e) | Target::Edge(e, _) => e,
+        }));
+        self.events.push(Event { seq, at: now_ms(), author: author.to_string(), why: why.to_string(), ops, inverse, reverts });
+        seq
     }
 }
 
-/// A lock belongs to the open file, so a process being spawned elsewhere in this program holds a
-/// copy for an instant until it execs, even for a log that was just closed. Only someone who keeps
-/// holding it is really using it.
-fn take_lock(lock: &File) -> Result<(), OpenError> {
-    let give_up = Instant::now() + Duration::from_millis(500);
-    loop {
-        match lock.try_lock() {
-            Ok(()) => return Ok(()),
-            Err(fs::TryLockError::Error(e)) => return Err(e.into()),
-            Err(fs::TryLockError::WouldBlock) if Instant::now() >= give_up => return Err(OpenError::Locked),
-            Err(fs::TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(2)),
+/// Give every node that's only an edge's target an empty node, saying so. Returns which.
+fn fill_dangling(saved: &mut SavedGraph, problems: &mut Vec<LoadProblem>) -> BTreeSet<Entity> {
+    let known: BTreeSet<Entity> = saved.nodes.iter().map(|n| n.id).collect();
+    let mut dangling = BTreeSet::new();
+    for n in &saved.nodes {
+        for link in n.links.iter().filter(|l| !known.contains(&l.to)) {
+            problems.push(LoadProblem::DanglingLink { from: n.id, to: link.to });
+            dangling.insert(link.to);
         }
     }
-}
-
-/// The log's text, and how much of the end had to be cut off. A line only counts once its newline
-/// is there, so an unfinished write is never mistaken for a commit.
-fn read_log(path: &Path) -> Result<(Vec<Record>, u64), OpenError> {
-    let text = match fs::read(path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((Vec::new(), 0)),
-        Err(e) => return Err(e.into()),
-    };
-    let good = text.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
-    let torn = (text.len() - good) as u64;
-    if torn > 0 {
-        let file = OpenOptions::new().write(true).open(path)?;
-        file.set_len(good as u64)?;
-        file.sync_all()?;
-    }
-    let mut records = Vec::new();
-    for (i, line) in text[..good].split(|b| *b == b'\n').enumerate() {
-        if !line.is_empty() {
-            records.push(serde_json::from_slice(line).map_err(|e| OpenError::Corrupt { line: i + 1, detail: e.to_string() })?);
-        }
-    }
-    Ok((records, torn))
+    saved.nodes.extend(dangling.iter().copied().map(SavedNode::empty));
+    saved.nodes.sort_by_key(|n| n.id);
+    dangling
 }
 
 // ---------- applying ----------
@@ -905,35 +629,6 @@ fn check_rules(g: &Graph, severity: Severity) -> Vec<Violation> {
 
 fn by_id(g: &SavedGraph) -> BTreeMap<Entity, &SavedNode> {
     g.nodes.iter().map(|n| (n.id, n)).collect()
-}
-
-fn same_graph(a: &SavedGraph, b: &SavedGraph) -> bool {
-    by_id(a) == by_id(b)
-}
-
-/// What the files are saying, given the state they might still be catching up from and the state
-/// they should now be in. `disk` may also mention nodes only as edge targets, which get an empty
-/// node, as a load would.
-fn merge(disk: &SavedGraph, base: &SavedGraph, current: &SavedGraph, problems: &mut Vec<LoadProblem>) -> SavedGraph {
-    let (d, b, c) = (by_id(disk), by_id(base), by_id(current));
-    let ids: BTreeSet<Entity> = d.keys().chain(b.keys()).chain(c.keys()).copied().collect();
-    let mut nodes = Vec::new();
-    for id in ids {
-        let (on_disk, was, is) = (d.get(&id).copied(), b.get(&id).copied(), c.get(&id).copied());
-        let chosen = if on_disk == was || on_disk == is { is } else { on_disk };
-        nodes.extend(chosen.cloned());
-    }
-    let known: BTreeSet<Entity> = nodes.iter().map(|n| n.id).collect();
-    let mut dangling = BTreeSet::new();
-    for n in &nodes {
-        for link in n.links.iter().filter(|l| !known.contains(&l.to)) {
-            problems.push(LoadProblem::DanglingLink { from: n.id, to: link.to });
-            dangling.insert(link.to);
-        }
-    }
-    nodes.extend(dangling.into_iter().map(SavedNode::empty));
-    nodes.sort_by_key(|n| n.id);
-    SavedGraph { nodes }
 }
 
 fn cells_of(cells: &BTreeMap<String, Value>, formulas: &BTreeMap<String, String>) -> BTreeMap<String, Stored> {

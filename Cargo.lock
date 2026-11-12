@@ -1032,9 +1032,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
+name = "recollect-core"
+version = "0.1.0"
+dependencies = [
+ "recollect-graph",
+ "recollect-systems",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "recollect-graph"
 version = "0.1.0"
 dependencies = [
+ "js-sys",
  "recollect-graph-macros",
  "recollect-systems",
  "serde",
@@ -1063,6 +1075,7 @@ dependencies = [
  "clap",
  "http-body-util",
  "notify",
+ "recollect-core",
  "recollect-graph",
  "recollect-systems",
  "rmcp",
@@ -1087,6 +1100,17 @@ dependencies = [
  "serde_json",
  "stacker",
  "tempfile",
+]
+
+[[package]]
+name = "recollect-wasm"
+version = "0.1.0"
+dependencies = [
+ "recollect-core",
+ "recollect-systems",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]

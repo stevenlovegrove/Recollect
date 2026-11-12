@@ -13,7 +13,7 @@ use recollect_systems::plan::{self, Matrix, UNCERTAIN, WorkItem};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::app::Open;
+use crate::workspace::Workspace;
 
 pub type World = BTreeMap<String, String>;
 
@@ -196,7 +196,10 @@ pub struct CheckView {
 pub struct WorkspaceView {
     pub name: String,
     pub about: Option<String>,
-    pub dir: String,
+    /// What the host knows it by.
+    pub id: String,
+    /// Where it is, for a person to read.
+    pub location: String,
     pub systems: Vec<String>,
     pub sample: Option<String>,
     pub direct_writes: bool,
@@ -244,10 +247,12 @@ fn cell_info(d: &CellDef) -> CellInfo {
 #[derive(Serialize)]
 pub struct View {
     pub workspace: WorkspaceView,
-    /// Where the log is now.
+    /// The newest event, which changes with every change.
     pub last_seq: Option<u64>,
-    /// If it's gone back: the newest event that follows from here, to return to.
-    pub latest: Option<u64>,
+    /// The event undo would take back.
+    pub undo: Option<u64>,
+    /// The undo redo would take back.
+    pub redo: Option<u64>,
     pub nodes: Vec<NodeView>,
     /// Rows nobody wrote that a node here reads, so a map can show them: see `NodeView::unwritten`.
     pub unwritten: Vec<NodeView>,
@@ -540,7 +545,7 @@ fn relabel(text: &str, labels: &Labels) -> String {
 }
 
 /// The whole graph, narrowed to `world`.
-pub fn view(o: &Open, world: &World) -> View {
+pub fn view(o: &Workspace, world: &World) -> View {
     let g: &Graph = o.log.graph();
     let labels = Labels(recollect_systems::labels(g));
     let picks = Space::global().picks(world);
@@ -569,9 +574,10 @@ pub fn view(o: &Open, world: &World) -> View {
     let worlds = worlds(g, world, &picks, &labels, vars);
     let ran = g.take_ran().into_iter().filter(|(_, c)| !internal(g, c)).map(|(node, cell)| RanView { node, cell }).collect();
     View {
-        workspace: WorkspaceView { name: o.config.name.clone(), about: o.config.about.clone(), dir: o.dir.display().to_string(), systems: o.built.names.clone(), sample: o.sample.clone(), direct_writes: o.config.llm_direct_writes },
+        workspace: WorkspaceView { name: o.config.name.clone(), about: o.config.about.clone(), id: o.id.clone(), location: o.location.clone(), systems: o.built.names.clone(), sample: o.sample.clone(), direct_writes: o.config.llm_direct_writes },
         last_seq: o.log.last_seq(),
-        latest: o.log.last_seq().and_then(|h| o.log.newest_after(h)),
+        undo: o.log.undo_next(),
+        redo: o.log.redo_next(),
         nodes,
         unwritten,
         constants,
@@ -593,7 +599,7 @@ pub struct Tried {
     pub error: Option<String>,
 }
 
-pub fn try_formula(o: &Open, e: Entity, text: &str, world: &World) -> Tried {
+pub fn try_formula(o: &Workspace, e: Entity, text: &str, world: &World) -> Tried {
     let g = o.log.graph();
     let labels = Labels(recollect_systems::labels(g));
     match recollect_systems::formulas::try_formula(g, e, text) {
@@ -623,7 +629,7 @@ pub struct Swept {
 /// What these cells would be with `set` typed in as each of these values in turn, with nothing changed.
 /// It's the same as typing each one in: a copy of the graph is changed, and it keeps the memos, so each
 /// value only reruns what it reaches.
-pub fn sweep(o: &Open, set: &CellRef, values: &[f64], read: &[CellRef], world: &World) -> Result<Vec<Swept>, String> {
+pub fn sweep(o: &Workspace, set: &CellRef, values: &[f64], read: &[CellRef], world: &World) -> Result<Vec<Swept>, String> {
     let g = o.log.graph();
     if !g.entities().any(|e| e == set.node) {
         return Err(format!("there's no node {}", set.node));
@@ -655,7 +661,7 @@ pub struct RowCells {
 
 /// A numbered table's rows from one key to another, narrowed to `world`. Rows nobody wrote are there too,
 /// as far as the table goes on: see `Graph::row_at`.
-pub fn rows(o: &Open, table: &str, from: i64, to: i64, world: &World) -> Vec<RowCells> {
+pub fn rows(o: &Workspace, table: &str, from: i64, to: i64, world: &World) -> Vec<RowCells> {
     let g = o.log.graph();
     let labels = Labels(recollect_systems::labels(g));
     let picks = Space::global().picks(world);
@@ -677,7 +683,7 @@ pub struct PlanView {
     pub decisions: Vec<Matrix>,
 }
 
-pub fn planning(o: &Open, world: &World) -> Result<PlanView, String> {
+pub fn planning(o: &Workspace, world: &World) -> Result<PlanView, String> {
     if !o.built.names.iter().any(|n| n == "plan") {
         return Ok(PlanView { work: vec![], decisions: vec![] });
     }
@@ -731,28 +737,40 @@ pub fn op_view(op: &Op) -> OpView {
 #[derive(Debug, Serialize)]
 pub struct EventView {
     pub seq: u64,
-    /// The event this one follows.
-    pub parent: Option<u64>,
-    /// Whether it's part of what led to where the log is now.
-    pub here: bool,
+    /// The event this one takes back, if it's an undo or a redo.
+    pub reverts: Option<u64>,
     pub at: u64,
     pub author: String,
     pub why: String,
     pub ops: Vec<OpView>,
 }
 
-pub fn event_view(ev: &Event, here: bool) -> EventView {
-    EventView { seq: ev.seq, parent: ev.parent, here, at: ev.at, author: ev.author.clone(), why: ev.why.clone(), ops: ev.ops.iter().map(op_view).collect() }
+pub fn event_view(ev: &Event) -> EventView {
+    EventView { seq: ev.seq, reverts: ev.reverts, at: ev.at, author: ev.author.clone(), why: ev.why.clone(), ops: ev.ops.iter().map(op_view).collect() }
 }
 
-/// Everything on every branch, newest first. For one node, only what led to how it is now.
-pub fn history(o: &Open, node: Option<Entity>) -> Vec<EventView> {
-    let path: Vec<u64> = o.log.path().iter().map(|ev| ev.seq).collect();
-    let here = |ev: &&Event| path.contains(&ev.seq);
-    match node {
-        None => o.log.events().iter().rev().map(|ev| event_view(ev, here(&ev))).collect(),
-        Some(n) => o.log.path().into_iter().rev().filter(|ev| ev.ops.iter().any(|op| op.target().nodes().contains(&n))).map(|ev| event_view(ev, true)).collect(),
-    }
+/// What's happened since it was opened, newest first, or only what touched one node.
+pub fn history(o: &Workspace, node: Option<Entity>) -> Vec<EventView> {
+    o.log.events().iter().rev().filter(|ev| node.is_none_or(|n| ev.ops.iter().any(|op| op.target().nodes().contains(&n)))).map(event_view).collect()
+}
+
+/// A proposal as the inbox shows it.
+#[derive(Debug, Serialize)]
+pub struct ProposalBrief {
+    pub id: String,
+    pub title: String,
+    pub rationale: String,
+    pub author: String,
+    pub created: u64,
+    pub error: Option<String>,
+    pub ops: Vec<OpView>,
+}
+
+pub fn proposals(o: &Workspace) -> Vec<ProposalBrief> {
+    o.proposal_views()
+        .into_iter()
+        .map(|p| ProposalBrief { ops: p.proposal.ops.iter().map(op_view).collect(), id: p.proposal.id, title: p.proposal.title, rationale: p.proposal.rationale, author: p.proposal.author, created: p.proposal.created, error: p.error })
+        .collect()
 }
 
 // ---------- for reading in smaller pieces, as Claude does ----------
@@ -764,17 +782,17 @@ pub struct Brief {
     pub components: Vec<String>,
 }
 
-fn brief(o: &Open, e: Entity) -> Brief {
+fn brief(o: &Workspace, e: Entity) -> Brief {
     let g = o.log.graph();
     Brief { id: e, name: recollect_systems::label_of(g, e), components: g.components_of(e).keys().filter(|c| *c != Named::NAME).cloned().collect() }
 }
 
-pub fn list(o: &Open, component: Option<&str>) -> Vec<Brief> {
+pub fn list(o: &Workspace, component: Option<&str>) -> Vec<Brief> {
     let g = o.log.graph();
     g.entities().filter(|e| component.is_none_or(|c| g.has(*e, c))).map(|e| brief(o, e)).collect()
 }
 
-pub fn search(o: &Open, query: &str, limit: usize) -> Vec<Brief> {
+pub fn search(o: &Workspace, query: &str, limit: usize) -> Vec<Brief> {
     let g = o.log.graph();
     let terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
     let mut hits: Vec<(usize, Entity)> = g
@@ -808,7 +826,7 @@ pub struct EdgeBrief {
     pub cells: BTreeMap<String, CellView>,
 }
 
-pub fn node(o: &Open, e: Entity, world: &World) -> NodeDetail {
+pub fn node(o: &Workspace, e: Entity, world: &World) -> NodeDetail {
     let g = o.log.graph();
     let labels = Labels(recollect_systems::labels(g));
     let picks = Space::global().picks(world);
@@ -837,10 +855,10 @@ pub struct TreeNode {
 }
 
 /// What's beneath a node, over the kinds of link that give the graph its shape.
-pub fn tree(o: &Open, root: Entity, depth: usize) -> TreeNode {
+pub fn tree(o: &Workspace, root: Entity, depth: usize) -> TreeNode {
     let kinds = o.log.graph().registry().components().filter(|c| c.arranges).map(|c| c.name.clone()).collect::<Vec<_>>();
     let labels = Labels(recollect_systems::labels(o.log.graph()));
-    fn walk(o: &Open, kinds: &[String], labels: &Labels, e: Entity, depth: usize, seen: &mut Vec<Entity>) -> TreeNode {
+    fn walk(o: &Workspace, kinds: &[String], labels: &Labels, e: Entity, depth: usize, seen: &mut Vec<Entity>) -> TreeNode {
         let g = o.log.graph();
         let shared = seen.contains(&e);
         seen.push(e);
@@ -871,7 +889,7 @@ pub struct Overview {
     pub events: usize,
 }
 
-pub fn overview(o: &Open) -> Overview {
+pub fn overview(o: &Workspace) -> Overview {
     let v = view(o, &World::new());
     Overview {
         nodes: v.nodes.len(),

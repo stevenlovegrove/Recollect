@@ -1,5 +1,5 @@
 //! The sample workspaces, as committed in `examples/`, still mean what the example problems say they
-//! mean. Each is opened the way the app opens one, from a copy so nothing here changes them.
+//! mean. Each is opened the way the app opens a workspace, from its files.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -13,25 +13,11 @@ use recollect_systems::samples::{SAMPLES, ops_of};
 use recollect_systems::schedule::{Finish, Slack};
 use serde_json::Value;
 
-fn copy(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap() {
-        let path = entry.unwrap().path();
-        let dest = to.join(path.file_name().unwrap());
-        if path.is_dir() {
-            copy(&path, &dest);
-        } else {
-            std::fs::copy(&path, &dest).unwrap();
-        }
-    }
-}
-
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples")
 }
 
 struct Opened {
-    _dir: tempfile::TempDir,
     log: Log,
     ids: BTreeMap<String, Entity>,
 }
@@ -57,14 +43,14 @@ impl Opened {
 
 fn open(name: &str) -> Opened {
     let sample = SAMPLES.iter().find(|s| s.name == name).unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    copy(&root().join(name), dir.path());
     let systems: Vec<String> = sample.systems.iter().map(|s| s.to_string()).collect();
     let built = recollect_systems::build(&systems).unwrap();
-    let (log, problems) = Log::open(dir.path(), built.registry, "test").unwrap();
+    let (g, problems) = Graph::load_dir(&root().join(name), built.registry.clone()).unwrap();
+    assert_eq!(problems, vec![], "{name} loads with nothing to report");
+    let (log, problems) = Log::from_saved(g.save(), built.registry);
     assert_eq!(problems, vec![], "{name} opens with nothing to report");
     let ids = log.graph().entities().filter_map(|e| Some((log.graph().get::<Name>(e).ok()??.0, e))).collect();
-    Opened { _dir: dir, log, ids }
+    Opened { log, ids }
 }
 
 /// The choices a puzzle's solutions range over, and its solutions by name.
@@ -88,10 +74,18 @@ fn solutions(o: &Opened, limit: usize) -> (Bool, Vec<Var>, Vec<BTreeMap<String, 
 fn every_sample_is_there_and_is_what_its_generator_makes() {
     for s in SAMPLES {
         let o = open(s.name);
-        assert_eq!(o.log.events().len(), 1, "{}: one event, which made it", s.name);
-        // Handles are minted fresh each time, so compare what's made of them, by name.
-        let ops = ops_of(s);
-        assert_eq!(o.log.events()[0].ops.len(), ops.len(), "{}", s.name);
+        // Handles are minted fresh each time, so compare what's made of them.
+        let names: Vec<String> = s.systems.iter().map(|n| n.to_string()).collect();
+        let mut fresh = Log::new(recollect_systems::build(&names).unwrap().registry);
+        fresh.commit("t", "", ops_of(s)).unwrap();
+        let shape = |g: &Graph| {
+            let mut out: Vec<(Option<String>, Vec<String>, usize)> = g.save().nodes.into_iter().map(|n| (g.get::<Name>(n.id).ok().flatten().map(|n| n.0), n.components, n.links.len())).collect();
+            out.sort();
+            out
+        };
+        assert_eq!(shape(o.g()), shape(fresh.graph()), "{}", s.name);
+        let files = std::fs::read_dir(root().join(s.name)).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(files, ["nodes".to_string(), "recollect.toml".to_string()].into(), "{}: only the files a workspace has", s.name);
         assert!(o.log.violations().is_empty(), "{}: {:?}", s.name, o.log.violations());
         let text = std::fs::read_to_string(root().join(s.name).join("recollect.toml")).unwrap();
         assert_eq!(text, recollect_systems::samples::config_text(s), "{}", s.name);

@@ -2,18 +2,17 @@ mod api;
 mod app;
 mod files;
 mod mcp;
-mod ops;
 #[cfg(test)]
 mod tests;
-mod views;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use axum::response::{Html, IntoResponse};
 use clap::{Parser, Subcommand};
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager};
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 
 use crate::app::App;
 
@@ -46,9 +45,6 @@ enum Cmd {
         /// Built web UI to serve (default: web/dist in the source tree).
         #[arg(long)]
         web: Option<PathBuf>,
-        /// The sample workspaces (default: examples/ in the source tree).
-        #[arg(long)]
-        samples: Option<PathBuf>,
     },
 }
 
@@ -68,18 +64,17 @@ async fn main() -> Result<()> {
         .init();
     match Cli::parse().cmd {
         Cmd::Init { dir, name, systems } => {
-            recollect_systems::build(&systems).map_err(anyhow::Error::msg)?;
             let name = name.or_else(|| dir.file_name().map(|n| n.to_string_lossy().to_string())).unwrap_or_else(|| "Untitled".to_string());
-            app::init(&dir, &name, systems)?;
+            app::init(&dir, &name, systems).map_err(|e| anyhow::anyhow!("{e}"))?;
             println!("workspace ready at {}", dir.display());
             Ok(())
         }
-        Cmd::Serve { workspace, port, web, samples } => serve(workspace, port, web, samples).await,
+        Cmd::Serve { workspace, port, web } => serve(workspace, port, web).await,
     }
 }
 
-async fn serve(workspace: Option<PathBuf>, port: u16, web: Option<PathBuf>, samples: Option<PathBuf>) -> Result<()> {
-    let app = App::new(home(), samples.unwrap_or_else(|| source_tree("examples")));
+async fn serve(workspace: Option<PathBuf>, port: u16, web: Option<PathBuf>) -> Result<()> {
+    let app = App::new(home());
     match workspace {
         Some(dir) => app.open_dir(&dir, None).map_err(|e| anyhow::anyhow!("{e}"))?,
         None => app.reopen_last(),
@@ -93,17 +88,30 @@ async fn serve(workspace: Option<PathBuf>, port: u16, web: Option<PathBuf>, samp
     );
 
     let dist = web.unwrap_or_else(|| source_tree("web/dist"));
-    // Asked about every time, so a page from an older build isn't kept after a rebuild.
-    let static_files = tower_http::set_header::SetResponseHeader::overriding(
-        ServeDir::new(&dist).fallback(ServeFile::new(dist.join("index.html"))),
-        axum::http::header::CACHE_CONTROL,
-        axum::http::HeaderValue::from_static("no-cache"),
-    );
     if !dist.join("index.html").exists() {
         tracing::warn!("no built UI at {} (run `npm run build` in web/, or use the Vite dev server)", dist.display());
     }
+    // The page is read each time, so one from an older build isn't kept after a rebuild, and it says
+    // it's served by this. Everything else is a file from the build.
+    let page_dir = dist.clone();
+    let page = move || {
+        let dist = page_dir.clone();
+        async move {
+            let mut res = match api::index_html(&dist) {
+                Some(html) => Html(html).into_response(),
+                None => (axum::http::StatusCode::NOT_FOUND, "no built UI: run `npm run build` in web/").into_response(),
+            };
+            res.headers_mut().insert(axum::http::header::CACHE_CONTROL, axum::http::HeaderValue::from_static("no-cache"));
+            res
+        }
+    };
+    let assets = tower_http::set_header::SetResponseHeader::overriding(
+        ServeDir::new(&dist).append_index_html_on_directories(false).fallback(axum::routing::get(page.clone())),
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
 
-    let router = api::router(app.clone()).nest_service("/mcp", mcp).fallback_service(static_files);
+    let router = api::router(app.clone()).route("/", axum::routing::get(page.clone())).route("/index.html", axum::routing::get(page)).nest_service("/mcp", mcp).fallback_service(assets);
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("binding {addr}"))?;
     tracing::info!("UI http://{addr}/   MCP http://{addr}/mcp");

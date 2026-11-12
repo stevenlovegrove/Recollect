@@ -15,10 +15,10 @@ pub mod table;
 pub mod worlds;
 
 pub use graph::{Backed, Cell, CellType, ComponentType, Computed, Cx, Dep, Entity, Error, Graph, Key, Origin, Source};
-pub use log::{CommitError, Event, Log, On, Op, OpenError, Stored, Target, Violation};
+pub use log::{Changes, CommitError, Event, Log, On, Op, Stored, Target, Violation, now_ms};
 pub use name::{Name, Named};
 pub use recollect_graph_macros::{cell, component};
 pub use registry::{Advice, CellBuilder, CellDef, Compile, ComponentDef, Place, Registry, Severity};
-pub use saved::{DirError, LoadProblem, SavedEdge, SavedGraph, SavedNode};
+pub use saved::{DirError, LoadProblem, SavedEdge, SavedGraph, SavedNode, is_node_path, node_of_path, node_path, node_text, parse_node, path_of};
 pub use serde;
 pub use shown::Shown;

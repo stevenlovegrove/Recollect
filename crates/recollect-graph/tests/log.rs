@@ -1,9 +1,9 @@
 //! The log and invariants: who changed what and why, what gets refused, and what happens when the
-//! files change underneath it. Crashes are in `tests/crash.rs`.
+//! files change underneath it.
 
 use std::sync::Arc;
 
-use recollect_graph::{Cell, CellType, Cx, Entity, Error, Graph, LoadProblem, Log, Name, On, Op, OpenError, Registry, SavedGraph, Severity, Stored, Target, cell};
+use recollect_graph::{Cell, CellType, Cx, Entity, Error, Graph, LoadProblem, Log, Name, On, Op, Registry, SavedGraph, Severity, Stored, Target, cell};
 use recollect_systems::formulas::LABEL;
 use recollect_systems::formulas::Chosen;
 use recollect_systems::plan::{self, ALTERNATIVE, DECISION, DEPENDS_ON, Done, Dropped, Estimate, GOAL, PART_OF, RuledOut, TASK};
@@ -337,7 +337,7 @@ fn external_edits_are_audited_not_lost() {
     disk.nodes.iter_mut().find(|n| n.id == c.free).unwrap().links.clear();
     disk.nodes.retain(|n| n.id != c.free);
 
-    assert_eq!(log.reconcile(&disk, "git pull").unwrap(), vec![]);
+    assert_eq!(log.reconcile(&disk, "git pull").1, vec![]);
     assert_eq!(log.graph().save(), disk, "the graph now matches the files");
 
     let ev = log.blame(node(c.imu), Done::NAME).unwrap();
@@ -352,7 +352,7 @@ fn external_edits_are_audited_not_lost() {
 
     let events = log.events().len();
     let same = log.graph().save();
-    assert_eq!(log.reconcile(&same, "noop").unwrap(), vec![]);
+    assert_eq!(log.reconcile(&same, "noop"), (None, vec![]));
     assert_eq!(log.events().len(), events, "no change, no event");
 }
 
@@ -365,7 +365,7 @@ fn an_external_edit_that_breaks_a_check_is_recorded_reported_and_doesnt_block_ot
     let calib = disk.nodes.iter_mut().find(|n| n.id == c.calib).unwrap();
     calib.cells.insert(Chosen::NAME.into(), json!({ "ref": c.imu }));
 
-    let issues = log.reconcile(&disk, "hand edit").unwrap();
+    let (_, issues) = log.reconcile(&disk, "hand edit");
     assert_eq!(issues.iter().map(|v| v.rule.as_str()).collect::<Vec<_>>(), ["chosen_must_be_a_live_option"]);
     assert_eq!(log.events().len(), events + 1);
 
@@ -381,88 +381,58 @@ fn an_external_edit_that_breaks_a_check_is_recorded_reported_and_doesnt_block_ot
     assert_eq!(log.violations(), vec![]);
 }
 
-// ---------- on disk ----------
+// ---------- loading and what to write ----------
 
 #[test]
-fn a_log_survives_being_closed_and_opened() {
-    let dir = tempfile::tempdir().unwrap();
+fn a_saved_graph_opens_with_no_history_and_what_it_was_is_known() {
     let reg = plan_registry();
-    let (saved, c, events) = {
-        let (mut log, problems) = Log::open(dir.path(), reg.clone(), "ext").unwrap();
-        assert_eq!(problems, vec![]);
-        let c = calibration(&mut log);
-        let seq = log.commit("steven", "why", vec![choose(c.calib, c.cad)]).unwrap();
-        log.undo(seq, "steven", "no").unwrap();
-        (log.graph().save(), c, log.events().to_vec())
-    };
-    let (log, problems) = Log::open(dir.path(), reg.clone(), "ext").unwrap();
+    let mut first = Log::new(reg.clone());
+    let c = calibration(&mut first);
+    let saved = first.graph().save();
+
+    let (mut log, problems) = Log::from_saved(saved.clone(), reg);
     assert_eq!(problems, vec![]);
     assert_eq!(log.graph().save(), saved);
-    assert_eq!(log.events(), events, "with its history");
-    // The undo cleared the choice, and clearing a cell isn't writing in it, so what last wrote there
-    // is the choice.
-    assert_eq!(log.blame(node(c.calib), Chosen::NAME).unwrap().why, "why");
-    drop(log);
+    assert_eq!(log.events().len(), 0, "history is only for while it's open");
+    assert_eq!(log.take_changes(), recollect_graph::Changes::default(), "and nothing needs writing");
 
-    // The files are a plain graph in their own right.
-    let (plain, problems) = Graph::load_dir(dir.path(), reg).unwrap();
-    assert_eq!(problems, vec![]);
-    assert_eq!(plain.save(), saved);
+    let seq = log.commit("steven", "why", vec![choose(c.calib, c.cad)]).unwrap();
+    assert_eq!(log.state_at(seq).save(), log.graph().save());
+    assert_eq!(log.undo_last("steven").unwrap(), Some(seq + 1));
+    assert_eq!(log.graph().save(), saved, "undo goes back to where it was opened");
+    assert_eq!(log.undo_last("steven").unwrap(), None, "and no further");
 }
 
 #[test]
-fn two_processes_cant_hold_one_log() {
-    let dir = tempfile::tempdir().unwrap();
-    let first = Log::open(dir.path(), plan_registry(), "ext").unwrap();
-    assert!(matches!(Log::open(dir.path(), plan_registry(), "ext"), Err(OpenError::Locked)));
-    drop(first);
-    Log::open(dir.path(), plan_registry(), "ext").unwrap();
-}
+fn only_the_files_a_change_touched_need_writing() {
+    let mut log = plan_log();
+    let c = calibration(&mut log);
+    let all = log.take_changes();
+    assert_eq!(all.nodes.len(), 4);
+    assert!(log.take_changes().is_empty(), "once");
 
-#[test]
-fn a_hand_edit_to_a_file_is_recorded_when_its_opened() {
-    let dir = tempfile::tempdir().unwrap();
-    let reg = plan_registry();
-    let (mut log, _) = Log::open(dir.path(), reg.clone(), "ext").unwrap();
-    let a = Entity::new();
-    let mut ops = task(a).to_vec();
-    ops.push(Op::set(a, Estimate::days(1.0)));
-    ok(&mut log, ops);
-    drop(log);
+    ok(&mut log, vec![choose(c.calib, c.cad)]);
+    let changes = log.take_changes();
+    assert_eq!(changes.nodes.iter().map(|n| n.id).collect::<Vec<_>>(), vec![c.calib]);
 
-    let path = dir.path().join("nodes").join(format!("{a}.yaml"));
-    let text = std::fs::read_to_string(&path).unwrap();
-    std::fs::write(&path, text.replace("estimate: 1.0", "estimate: 5.0")).unwrap();
+    // An edge lives in its source's file.
+    ok(&mut log, vec![Op::Set { on: On::Edge { from: c.imu, to: c.cad }, cell: "note".into(), to: Some(Stored::Value(json!(1))) }]);
+    assert_eq!(log.take_changes().nodes.iter().map(|n| n.id).collect::<Vec<_>>(), vec![c.imu]);
 
-    let (log, problems) = Log::open(dir.path(), reg.clone(), "me, by hand").unwrap();
-    assert_eq!(problems, vec![LoadProblem::ExternalEdit { seq: 1 }]);
-    assert_eq!(log.graph().get(a), Ok(Some(Estimate::days(5.0))));
-    assert_eq!(log.blame(node(a), Estimate::NAME).unwrap().author, "me, by hand");
-    assert_eq!(log.state_at(0).get(a), Ok(Some(Estimate::days(1.0))), "and what it was before is still known");
-    drop(log);
-
-    let (_, problems) = Log::open(dir.path(), reg, "ext").unwrap();
-    assert_eq!(problems, vec![], "once");
+    ok(&mut log, vec![Op::Unlink { from: c.imu, to: c.cad, component: PART_OF.into() }, Op::Despawn { id: c.imu }]);
+    let changes = log.take_changes();
+    assert_eq!((changes.nodes, changes.gone), (vec![], vec![c.imu]));
 }
 
 #[test]
 fn a_hand_edit_can_break_things_without_losing_them() {
-    let dir = tempfile::tempdir().unwrap();
     let reg = plan_registry();
-    let (mut log, _) = Log::open(dir.path(), reg.clone(), "ext").unwrap();
     let (a, b) = (Entity::new(), Entity::new());
-    let mut ops = task(a).to_vec();
-    ops.push(Op::set(a, Estimate::days(1.0)));
-    ops.extend(task(b));
-    ok(&mut log, ops);
-    drop(log);
+    let text = format!("id: {a}\ncomponents:\n- task\ncells:\n  estimate: soon\nformulas:\n  x: 1 +\n");
+    let mut saved = SavedGraph::from_files([(format!("nodes/{a}.yaml").as_str(), text.as_str())]).unwrap();
+    saved.nodes.push(recollect_graph::SavedNode { components: vec![TASK.into()], ..recollect_graph::SavedNode::empty(b) });
 
-    let path = dir.path().join("nodes").join(format!("{a}.yaml"));
-    let text = std::fs::read_to_string(&path).unwrap();
-    std::fs::write(&path, text.replace("estimate: 1.0", "estimate: soon") + "formulas:\n  x: 1 +\n").unwrap();
-
-    let (mut log, problems) = Log::open(dir.path(), reg, "ext").unwrap();
-    assert!(problems.contains(&LoadProblem::ExternalEdit { seq: 1 }), "{problems:?}");
+    let (mut log, problems) = Log::from_saved(saved, reg);
     assert!(problems.iter().any(|p| matches!(p, LoadProblem::BrokenFormula((e, c), Error::Failed(_)) if *e == a && c == "x")), "{problems:?}");
     assert!(problems.iter().any(|p| matches!(p, LoadProblem::Standing(v) if v.iter().any(|v| v.rule == "malformed_cell"))), "{problems:?}");
 
@@ -473,41 +443,60 @@ fn a_hand_edit_can_break_things_without_losing_them() {
 
 #[test]
 fn a_new_file_and_a_removed_file_are_edits_too() {
-    let dir = tempfile::tempdir().unwrap();
-    let reg = plan_registry();
-    let (mut log, _) = Log::open(dir.path(), reg.clone(), "ext").unwrap();
+    let mut log = plan_log();
     let (a, b) = (Entity::new(), Entity::new());
     let mut ops = task(a).to_vec();
     ops.push(Op::set(a, Done::yes()));
     ops.extend(task(b));
     ops.push(Op::set(b, Done::yes()));
     ok(&mut log, ops);
-    drop(log);
+    log.take_changes();
 
     let new = Entity::new();
-    std::fs::write(dir.path().join("nodes").join(format!("{new}.yaml")), format!("id: {new}\ncomponents:\n- task\ncells:\n  done: true\nlinks:\n- to: {b}\n  components:\n  - part_of\n")).unwrap();
-    std::fs::remove_file(dir.path().join("nodes").join(format!("{a}.yaml"))).unwrap();
+    let mut files = log.graph().save().to_files();
+    files.insert(format!("nodes/{new}.yaml"), format!("id: {new}\ncomponents:\n- task\ncells:\n  done: true\nlinks:\n- to: {b}\n  components:\n  - part_of\n"));
+    files.remove(&format!("nodes/{a}.yaml"));
+    let disk = SavedGraph::from_files(files.iter().map(|(p, t)| (p.as_str(), t.as_str()))).unwrap();
 
-    let (log, problems) = Log::open(dir.path(), reg, "ext").unwrap();
-    assert_eq!(problems, vec![LoadProblem::ExternalEdit { seq: 1 }]);
+    let (seq, _) = log.reconcile(&disk, "ext");
+    assert_eq!(log.events()[seq.unwrap() as usize].author, "ext");
     let ids: Vec<Entity> = log.graph().entities().collect();
     assert!(ids.contains(&new) && ids.contains(&b) && !ids.contains(&a), "{ids:?}");
     log.graph().get::<Done>(new).unwrap().unwrap();
+    let changes = log.take_changes();
+    assert!(changes.gone.contains(&a), "{changes:?}");
 }
 
 #[test]
-fn a_directory_of_plain_files_becomes_a_logged_one() {
+fn an_edge_to_a_node_with_no_file_gets_an_empty_node_and_a_file() {
+    let reg = plan_registry();
+    let (a, gone) = (Entity::new(), Entity::new());
+    let text = format!("id: {a}\nlinks:\n- to: {gone}\n  components:\n  - part_of\n");
+    let saved = SavedGraph::from_files([(format!("nodes/{a}.yaml").as_str(), text.as_str())]).unwrap();
+    let (mut log, problems) = Log::from_saved(saved, reg);
+    assert!(problems.contains(&LoadProblem::DanglingLink { from: a, to: gone }), "{problems:?}");
+    assert!(log.graph().contains(gone));
+    assert_eq!(log.take_changes().nodes.iter().map(|n| n.id).collect::<Vec<_>>(), vec![gone]);
+
+    // The same from a hand edit.
+    let other = Entity::new();
+    let mut disk = log.graph().save();
+    disk.nodes.iter_mut().find(|n| n.id == a).unwrap().links.push(recollect_graph::SavedEdge { to: other, components: vec![PART_OF.into()], cells: Default::default(), formulas: Default::default() });
+    log.reconcile(&disk, "ext");
+    assert!(log.graph().contains(other));
+    assert!(log.take_changes().nodes.iter().any(|n| n.id == other));
+}
+
+#[test]
+fn files_are_a_plain_graph_in_their_own_right() {
     let dir = tempfile::tempdir().unwrap();
     let reg = plan_registry();
-    let mut g = Graph::with_registry(reg.clone());
-    let a = g.spawn();
-    g.add(a, TASK).set(a, Done::yes());
-    g.save_dir(dir.path()).unwrap();
-
-    let (log, problems) = Log::open(dir.path(), reg, "first import").unwrap();
-    assert_eq!(problems, vec![LoadProblem::ExternalEdit { seq: 0 }]);
-    assert_eq!(log.events()[0].author, "first import");
-    assert_eq!(log.graph().save(), g.save());
+    let mut log = plan_log();
+    calibration(&mut log);
+    log.graph().save_dir(dir.path()).unwrap();
+    let (plain, problems) = Graph::load_dir(dir.path(), reg).unwrap();
+    assert_eq!(problems, vec![]);
+    assert_eq!(plain.save(), log.graph().save());
 }
 
 // ---------- scale ----------
@@ -555,23 +544,7 @@ fn what_a_commit_costs() {
         }
         let memory = start.elapsed() / edits as u32;
 
-        let dir = tempfile::tempdir().unwrap();
-        let (mut log, _) = Log::open(dir.path(), plan_registry(), "ext").unwrap();
-        let start = std::time::Instant::now();
-        log.commit("t", "import", ops).unwrap();
-        let import_disk = start.elapsed();
-        let start = std::time::Instant::now();
-        for i in 0..edits {
-            log.commit("t", "edit", vec![Op::set(ids[i * 7 % n], Done::yes())]).unwrap();
-        }
-        let disk = start.elapsed() / edits as u32;
-        drop(log);
-        let start = std::time::Instant::now();
-        let (log, problems) = Log::open(dir.path(), plan_registry(), "ext").unwrap();
-        let reopen = start.elapsed();
-        assert_eq!(problems, vec![]);
-        assert_eq!(log.events().len(), edits + 1);
-        println!("{n} tasks: import {import:?} in memory, {import_disk:?} on disk; each edit {memory:?} in memory, {disk:?} on disk; reopen {reopen:?}");
+        println!("{n} tasks: import {import:?}; each edit {memory:?}");
     }
 }
 
@@ -592,7 +565,7 @@ fn a_very_deep_plan_is_checked_without_running_out_of_stack() {
     assert_eq!(log.violations(), vec![]);
 }
 
-// ---------- history is a tree ----------
+// ---------- undo and redo ----------
 
 fn note(log: &mut Log, e: Entity, n: f64) -> u64 {
     ok(log, vec![Op::set(e, Estimate::days(n))])
@@ -603,107 +576,58 @@ fn days(log: &Log, e: Entity) -> Option<Estimate> {
 }
 
 #[test]
-fn a_change_after_going_back_is_a_branch_and_loses_nothing() {
+fn undo_and_redo_walk_back_and_forward_and_a_change_ends_redo() {
     let mut log = plan_log();
     let t = Entity::new();
-    let first = ok(&mut log, task(t).to_vec());
-    let second = note(&mut log, t, 1.0);
-    let third = note(&mut log, t, 2.0);
+    ok(&mut log, task(t).to_vec());
+    let one = note(&mut log, t, 1.0);
+    let two = note(&mut log, t, 2.0);
 
-    log.checkout(second, "t", "go back").unwrap();
+    let u = log.undo_last("t").unwrap().unwrap();
     assert_eq!(days(&log, t), Some(Estimate::days(1.0)));
-    assert_eq!(log.last_seq(), Some(second));
-    assert_eq!(log.events().len(), 3, "going back adds no event");
-    assert_eq!(log.newest_after(second), Some(third));
+    assert_eq!(log.events()[u as usize].reverts, Some(two));
+    log.undo_last("t").unwrap();
+    assert_eq!(days(&log, t), None);
+    assert_eq!(log.redo_next(), Some(u + 1));
 
-    let fork = note(&mut log, t, 9.0);
-    assert_eq!(log.events()[fork as usize].parent, Some(second), "it follows from where the log is");
-    assert_eq!(log.path().iter().map(|e| e.seq).collect::<Vec<_>>(), vec![first, second, fork]);
-    assert_eq!(days(&log, t), Some(Estimate::days(9.0)));
-
-    // Both ends are still there, and going between them is exact.
-    assert_eq!(log.state_at(third).get(t), Ok(Some(Estimate::days(2.0))));
-    assert_eq!(log.state_at(fork).get(t), Ok(Some(Estimate::days(9.0))));
-    log.checkout(third, "t", "the other way").unwrap();
+    let r = log.redo("t").unwrap().unwrap();
+    assert_eq!(days(&log, t), Some(Estimate::days(1.0)));
+    assert_eq!(log.events()[r as usize].why, format!("redo #{one}"));
+    log.redo("t").unwrap();
     assert_eq!(days(&log, t), Some(Estimate::days(2.0)));
-    assert_eq!(log.path().iter().map(|e| e.seq).collect::<Vec<_>>(), vec![first, second, third]);
+    assert_eq!(log.redo("t").unwrap(), None, "nothing left to redo");
 
-    assert!(matches!(log.checkout(99, "t", ""), Err(recollect_graph::CommitError::NoSuchEvent(99))));
-    assert_eq!(log.last_seq(), Some(third), "and that changed nothing");
-}
-
-#[test]
-fn blame_and_history_only_look_at_what_led_here() {
-    let mut log = plan_log();
-    let t = Entity::new();
-    ok(&mut log, task(t).to_vec());
-    let base = note(&mut log, t, 1.0);
-    let other = log.commit("someone else", "on the other branch", vec![Op::set(t, Estimate::days(5.0))]).unwrap();
-    log.checkout(base, "t", "").unwrap();
-    assert_eq!(log.blame(node(t), Estimate::NAME).unwrap().seq, base);
-    assert_eq!(log.history(Target::Node(t)).len(), 2);
-    log.checkout(other, "t", "").unwrap();
-    assert_eq!(log.blame(node(t), Estimate::NAME).unwrap().author, "someone else");
-    assert_eq!(log.history(Target::Node(t)).len(), 3);
-}
-
-#[test]
-fn only_what_led_here_can_be_undone() {
-    let mut log = plan_log();
-    let t = Entity::new();
-    ok(&mut log, task(t).to_vec());
-    let base = note(&mut log, t, 1.0);
-    let other = note(&mut log, t, 5.0);
-    log.checkout(base, "t", "").unwrap();
-    assert!(matches!(log.undo(other, "t", ""), Err(recollect_graph::CommitError::NotOnThisBranch(_))));
+    // A redo can itself be undone.
+    log.undo_last("t").unwrap();
     assert_eq!(days(&log, t), Some(Estimate::days(1.0)));
-    log.undo(base, "t", "").unwrap();
-    assert_eq!(days(&log, t), None, "and undoing is on this branch like anything else");
+    note(&mut log, t, 7.0);
+    assert_eq!(log.redo_next(), None, "a new change ends what could be redone");
+    assert_eq!(log.events().len(), 9, "and every step is an event");
 }
 
 #[test]
-fn branches_and_where_it_is_survive_being_closed_and_opened() {
-    let dir = tempfile::tempdir().unwrap();
-    let reg = plan_registry();
-    let t = Entity::new();
-    let (base, other, fork);
-    {
-        let (mut log, _) = Log::open(dir.path(), reg.clone(), "ext").unwrap();
-        ok(&mut log, task(t).to_vec());
-        base = note(&mut log, t, 1.0);
-        other = note(&mut log, t, 5.0);
-        log.checkout(base, "t", "").unwrap();
-        fork = note(&mut log, t, 9.0);
-        log.checkout(base, "t", "").unwrap();
-    }
-    let path = dir.path().join("nodes").join(format!("{t}.yaml"));
-    assert!(std::fs::read_to_string(&path).unwrap().contains("estimate: 1.0"), "the files show where it is");
-    let (mut log, problems) = Log::open(dir.path(), reg.clone(), "ext").unwrap();
-    assert_eq!(problems, vec![], "moving around isn't an edit");
-    assert_eq!(log.last_seq(), Some(base));
-    assert_eq!(days(&log, t), Some(Estimate::days(1.0)));
-    log.checkout(other, "t", "").unwrap();
-    assert_eq!(days(&log, t), Some(Estimate::days(5.0)));
-    log.checkout(fork, "t", "").unwrap();
-    assert_eq!(days(&log, t), Some(Estimate::days(9.0)));
-    assert!(std::fs::read_to_string(&path).unwrap().contains("estimate: 9.0"));
-
-    // A hand edit made here is on this branch.
-    let text = std::fs::read_to_string(&path).unwrap();
-    std::fs::write(&path, text.replace("estimate: 9.0", "estimate: 3.0")).unwrap();
-    assert!(log.reload("me").unwrap().is_some());
-    let edit = log.last_seq().unwrap();
-    assert_eq!(log.events()[edit as usize].parent, Some(fork));
-    drop(log);
-    let (log, problems) = Log::open(dir.path(), reg, "ext").unwrap();
-    assert_eq!(problems, vec![]);
-    assert_eq!(log.state_at(other).get(t), Ok(Some(Estimate::days(5.0))), "and the other branch is untouched");
+fn an_undo_that_no_longer_applies_is_refused_and_changes_nothing() {
+    let mut log = plan_log();
+    let (d, a, b) = (Entity::new(), Entity::new(), Entity::new());
+    let mut ops = new(d, DECISION).to_vec();
+    ops.extend([Op::Spawn { id: a }, Op::Spawn { id: b }, Op::link(a, d, ALTERNATIVE), Op::link(b, d, ALTERNATIVE)]);
+    ok(&mut log, ops);
+    let ruled = ok(&mut log, vec![Op::Set { on: On::Edge { from: a, to: d }, cell: RuledOut::NAME.into(), to: Some(Stored::Value(json!("too slow"))) }]);
+    ok(&mut log, vec![choose(d, b)]);
+    let unruled = log.undo(ruled, "t", "").unwrap();
+    ok(&mut log, vec![choose(d, a)]);
+    let events = log.events().len();
+    let before = log.graph().save();
+    // Taking back the undo would rule `a` out again, but `a` is chosen now.
+    let err = log.undo(unruled, "t", "").expect_err("refused");
+    assert_eq!(err.violations()[0].rule, "chosen_must_be_a_live_option");
+    assert_eq!((log.graph().save(), log.events().len()), (before, events));
 }
 
-/// Moving around at random has to land exactly where replaying from nothing would, and leave no stale
-/// values behind in what's remembered.
+/// Undoing and redoing at random has to land exactly where replaying from nothing would, and leave no
+/// stale values behind in what's remembered.
 #[test]
-fn going_anywhere_is_the_same_as_replaying_from_nothing() {
+fn undoing_and_redoing_anywhere_is_the_same_as_replaying_from_nothing() {
     let mut log = plan_log();
     let tasks: Vec<Entity> = (0..6).map(|_| Entity::new()).collect();
     let (d, a, b) = (Entity::new(), Entity::new(), Entity::new());
@@ -718,23 +642,19 @@ fn going_anywhere_is_the_same_as_replaying_from_nothing() {
         state ^= state << 17;
         (state % n as u64) as usize
     };
-    let (mut moves, mut forks) = (0, 0);
+    let (mut undos, mut redos) = (0, 0);
     for _ in 0..400 {
         let t = tasks[next(tasks.len())];
-        match next(6) {
-            0 | 1 => {
-                let seq = next(log.events().len()) as u64;
-                log.checkout(seq, "t", "").unwrap();
-                moves += 1;
-            }
-            2 => {
-                forks += usize::from(log.last_seq().is_some_and(|h| log.newest_after(h).is_some()));
+        match next(7) {
+            0 | 1 => undos += usize::from(log.undo_last("t").is_ok_and(|s| s.is_some())),
+            2 => redos += usize::from(log.redo("t").is_ok_and(|s| s.is_some())),
+            3 => {
                 let _ = log.commit("t", "", vec![Op::add(t, TASK), Op::link(t, if next(2) == 0 { a } else { b }, PART_OF)]);
             }
-            3 => {
+            4 => {
                 let _ = log.commit("t", "", vec![Op::set(t, Estimate::days(next(9) as f64))]);
             }
-            4 => {
+            5 => {
                 let _ = log.commit("t", "", vec![choose(d, if next(2) == 0 { a } else { b })]);
             }
             _ => {
@@ -752,18 +672,5 @@ fn going_anywhere_is_the_same_as_replaying_from_nothing() {
             }
         }
     }
-    assert!(moves > 50 && forks > 10, "{moves} moves and {forks} forks: the test should really exercise this");
-}
-
-#[test]
-fn what_to_return_to_is_only_ever_on_the_way_from_here() {
-    let mut log = plan_log();
-    let t = Entity::new();
-    let start = ok(&mut log, task(t).to_vec());
-    let one = note(&mut log, t, 1.0);
-    log.checkout(start, "t", "").unwrap();
-    let other = note(&mut log, t, 2.0);
-    assert_eq!(log.newest_after(one), None, "the newer event is on a branch this doesn't lead to");
-    assert_eq!(log.newest_after(start), Some(other));
-    assert_eq!(log.newest_after(other), None);
+    assert!(undos > 50 && redos > 10, "{undos} undos and {redos} redos: the test should really exercise this");
 }

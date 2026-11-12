@@ -3,9 +3,8 @@
 //! or a kind says: only what was written. Nothing here needs a system to be understood: a component or
 //! cell nothing provides goes back out exactly as it came in.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -76,11 +75,6 @@ pub enum LoadProblem {
     BrokenFormula(Key, Error),
     /// An edge to a node with no file. It's kept, and the node exists with nothing on it.
     DanglingLink { from: Entity, to: Entity },
-    /// A crash cut this many bytes of an unfinished write off the end of the log. That commit never
-    /// returned, so nothing that was promised is lost.
-    TornLog { bytes: u64 },
-    /// The files differed from the log, so the difference was recorded as this event.
-    ExternalEdit { seq: u64 },
     /// Invariants that don't hold right now, such as after a hand edit. They don't block other work.
     Standing(Vec<Violation>),
 }
@@ -145,59 +139,91 @@ impl Graph {
         (g, problems)
     }
 
-    /// Write `nodes/<id>.yaml`. Files whose text is unchanged aren't touched, so a commit only shows
-    /// what really changed, and files for nodes that are gone are removed.
-    ///
-    /// Each file is replaced atomically, but a crash part way through can leave some files newer than
-    /// others. Anything that has to survive that belongs in a `Log`.
+    /// Write `nodes/<id>.yaml` into a directory, for tests and tools. Files whose text is unchanged
+    /// aren't touched, and files for nodes that are gone are removed.
     pub fn save_dir(&self, dir: &Path) -> Result<(), DirError> {
-        write_files(&self.save(), dir, &mut || {})
+        let saved = self.save();
+        let nodes_dir = dir.join("nodes");
+        fs::create_dir_all(&nodes_dir)?;
+        let keep: BTreeSet<String> = saved.nodes.iter().map(node_path).collect();
+        for node in &saved.nodes {
+            let path = dir.join(node_path(node));
+            let text = node_text(node);
+            if !fs::read_to_string(&path).is_ok_and(|old| old == text) {
+                fs::write(&path, text)?;
+            }
+        }
+        for entry in fs::read_dir(&nodes_dir)? {
+            let name = entry?.file_name().to_string_lossy().to_string();
+            let rel = format!("nodes/{name}");
+            // Only ever a file this wrote: one named for a node. Anything else is left alone.
+            if node_of_path(&rel).is_some() && !keep.contains(&rel) {
+                fs::remove_file(dir.join(&rel))?;
+            }
+        }
+        Ok(())
     }
 
     pub fn load_dir(dir: &Path, registry: Arc<Registry>) -> Result<(Graph, Vec<LoadProblem>), DirError> {
-        Ok(Graph::load(read_files(dir)?, registry))
-    }
-}
-
-pub(crate) fn node_path(dir: &Path, id: Entity) -> std::path::PathBuf {
-    dir.join("nodes").join(format!("{id}.yaml"))
-}
-
-/// Bring every file in line with this. `step` is called between the things a crash could fall
-/// between.
-pub(crate) fn write_files(saved: &SavedGraph, dir: &Path, step: &mut dyn FnMut()) -> Result<(), DirError> {
-    let nodes_dir = dir.join("nodes");
-    fs::create_dir_all(&nodes_dir)?;
-    let keep: std::collections::BTreeSet<String> = saved.nodes.iter().map(|n| format!("{}.yaml", n.id)).collect();
-    for node in &saved.nodes {
-        write_if_changed(&node_path(dir, node.id), &serde_yaml_ng::to_string(node)?, step)?;
-    }
-    sync_dir(dir)?;
-    for entry in fs::read_dir(&nodes_dir)? {
-        let path = entry?.path();
-        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        // Only ever a file this wrote: a yaml file named for a node. Anything else is left alone.
-        let is_node_file = name.strip_suffix(".yaml").is_some_and(|stem| stem.parse::<Entity>().is_ok());
-        if is_node_file && !keep.contains(&name) {
-            fs::remove_file(path)?;
-            step();
+        let mut files = BTreeMap::new();
+        for entry in fs::read_dir(dir.join("nodes"))? {
+            let name = entry?.file_name().to_string_lossy().to_string();
+            let rel = format!("nodes/{name}");
+            if is_node_path(&rel) {
+                files.insert(rel.clone(), fs::read_to_string(dir.join(&rel))?);
+            }
         }
+        let saved = SavedGraph::from_files(files.iter().map(|(p, t)| (p.as_str(), t.as_str()))).map_err(|(path, e)| DirError::Parse(path, e))?;
+        Ok(Graph::load(saved, registry))
     }
-    sync_dir(&nodes_dir)?;
-    Ok(())
 }
 
-pub(crate) fn read_files(dir: &Path) -> Result<SavedGraph, DirError> {
-    let mut nodes = Vec::new();
-    let mut paths: Vec<_> = fs::read_dir(dir.join("nodes"))?.map(|e| e.map(|e| e.path())).collect::<Result<_, _>>()?;
-    paths.sort();
-    for path in paths {
-        if path.extension().is_some_and(|x| x == "yaml") {
-            let node: SavedNode = serde_yaml_ng::from_str(&fs::read_to_string(&path)?).map_err(|e| DirError::Parse(path.display().to_string(), e))?;
-            nodes.push(node);
+/// Where a node's file goes, relative to the workspace, with `/` between folders.
+pub fn node_path(node: &SavedNode) -> String {
+    path_of(node.id)
+}
+
+pub fn path_of(id: Entity) -> String {
+    format!("nodes/{id}.yaml")
+}
+
+/// A file read as a node: any `.yaml` directly in `nodes/`. The node is the `id` inside it, so a
+/// hand-made file can be called anything, though only a file named for its node is ever written.
+pub fn is_node_path(path: &str) -> bool {
+    path.strip_prefix("nodes/").and_then(|n| n.strip_suffix(".yaml")).is_some_and(|stem| !stem.is_empty() && !stem.starts_with('.') && !stem.contains('/'))
+}
+
+/// The node a file is for, if it's a node's file.
+pub fn node_of_path(path: &str) -> Option<Entity> {
+    path.strip_prefix("nodes/").and_then(|n| n.strip_suffix(".yaml")).and_then(|stem| stem.parse().ok())
+}
+
+/// A node's file, as text.
+pub fn node_text(node: &SavedNode) -> String {
+    serde_yaml_ng::to_string(node).expect("nodes serialise")
+}
+
+pub fn parse_node(text: &str) -> Result<SavedNode, serde_yaml_ng::Error> {
+    serde_yaml_ng::from_str(text)
+}
+
+impl SavedGraph {
+    /// The node files among these, by path. Anything else is ignored, and the first file that isn't
+    /// a valid node comes back with why.
+    pub fn from_files<'a>(files: impl IntoIterator<Item = (&'a str, &'a str)>) -> Result<SavedGraph, (String, serde_yaml_ng::Error)> {
+        let mut nodes = Vec::new();
+        let mut files: Vec<_> = files.into_iter().filter(|(p, _)| is_node_path(p)).collect();
+        files.sort();
+        for (path, text) in files {
+            nodes.push(parse_node(text).map_err(|e| (path.to_string(), e))?);
         }
+        Ok(SavedGraph { nodes })
     }
-    Ok(SavedGraph { nodes })
+
+    /// Every node's file, by path.
+    pub fn to_files(&self) -> BTreeMap<String, String> {
+        self.nodes.iter().map(|n| (node_path(n), node_text(n))).collect()
+    }
 }
 
 #[derive(Debug)]
@@ -218,44 +244,4 @@ impl From<serde_yaml_ng::Error> for DirError {
     fn from(e: serde_yaml_ng::Error) -> Self {
         DirError::Yaml(e)
     }
-}
-
-pub(crate) fn write_if_changed(path: &Path, text: &str, step: &mut dyn FnMut()) -> std::io::Result<()> {
-    if fs::read_to_string(path).is_ok_and(|old| old == text) {
-        return Ok(());
-    }
-    write_atomically(path, text, step)
-}
-
-/// Replace a file so that anyone reading it, even after a crash, sees all of the old text or all
-/// of the new. The rename isn't durable until the caller flushes the directory, which it can do
-/// once for many files.
-pub(crate) fn write_atomically(path: &Path, text: &str, step: &mut dyn FnMut()) -> std::io::Result<()> {
-    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let temp = path.with_file_name(format!(".{name}.tmp"));
-    step();
-    let mut file = fs::File::create(&temp)?;
-    file.write_all(text.as_bytes())?;
-    file.sync_all()?;
-    step();
-    fs::rename(&temp, path)?;
-    step();
-    Ok(())
-}
-
-/// A rename or removal isn't durable until its directory is flushed.
-pub(crate) fn sync_dir(dir: &Path) -> std::io::Result<()> {
-    fs::File::open(dir)?.sync_all()
-}
-
-/// Whatever a crash in `write_atomically` left behind.
-pub(crate) fn remove_temp_files(dir: &Path) -> std::io::Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        if name.starts_with('.') && name.ends_with(".tmp") {
-            fs::remove_file(path)?;
-        }
-    }
-    Ok(())
 }

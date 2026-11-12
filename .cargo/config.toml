@@ -1,0 +1,4 @@
+# Natively, deep formula chains grow the stack as they need (stacker), but that does nothing on the
+# web, so the engine there starts with a larger stack: 32 MB.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=33554432"]

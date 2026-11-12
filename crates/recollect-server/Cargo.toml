@@ -9,6 +9,7 @@ name = "recollect"
 path = "src/main.rs"
 
 [dependencies]
+recollect-core = { path = "../recollect-core" }
 recollect-graph = { path = "../recollect-graph" }
 recollect-systems = { path = "../recollect-systems" }
 anyhow.workspace = true

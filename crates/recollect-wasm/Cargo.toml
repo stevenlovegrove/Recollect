@@ -1,0 +1,16 @@
+[package]
+name = "recollect-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "recollect-core for a browser: the engine the static web app runs in a worker."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+recollect-core = { path = "../recollect-core" }
+recollect-systems = { path = "../recollect-systems" }
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen = "=0.2.129"

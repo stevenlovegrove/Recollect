@@ -898,7 +898,7 @@ fn a_loop_from_a_hand_edit_is_reported_and_the_rest_still_works() {
     plain.link(a, b, PART_OF);
     plain.link(b, a, PART_OF);
     let mut log = Log::new(reg);
-    let broken = log.reconcile(&plain.save(), "hand").unwrap();
+    let broken = log.reconcile(&plain.save(), "hand").1;
     assert!(broken.iter().any(|v| v.rule == "no_deadlock"), "{broken:?}");
     assert!(matches!(log.graph().get::<Need>(a), Err(Error::Cycle(_))), "reported in the cell");
     assert!(log.graph().get::<Need>(c).unwrap().unwrap().0.is_always(), "and the rest of the graph is fine");
@@ -923,7 +923,7 @@ fn a_hand_edit_choosing_a_ruled_out_option_stays_on_it_and_is_flagged() {
     let mut files = g.g().save();
     let link = files.nodes.iter_mut().find(|n| n.id == a).unwrap().links.iter_mut().find(|l| l.to == d).unwrap();
     link.cells.insert(RuledOut::NAME.to_string(), json!({}));
-    let broken = g.log.reconcile(&files, "hand").unwrap();
+    let broken = g.log.reconcile(&files, "hand").1;
     assert_eq!(broken[0].rule, "chosen_must_be_a_live_option");
 
     // What's written is what's read: it still lands on a, rather than quietly on nothing.
@@ -943,7 +943,7 @@ fn a_malformed_value_is_an_error_in_what_reads_it_not_everywhere() {
     let imu = g.id("imu");
     let mut files = g.g().save();
     files.nodes.iter_mut().find(|n| n.id == imu).unwrap().cells.insert(Done::NAME.to_string(), json!("soon"));
-    let broken = g.log.reconcile(&files, "hand").unwrap();
+    let broken = g.log.reconcile(&files, "hand").1;
     assert_eq!(broken[0].rule, "malformed_cell");
     assert!(matches!(g.g().get::<Actionable>(imu), Err(Error::Malformed { .. })));
     assert!(g.need_of("static").holds_among_known(), "need doesn't read it");

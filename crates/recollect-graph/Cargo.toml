@@ -13,6 +13,10 @@ serde_yaml_ng.workspace = true
 stacker = "0.1"
 uuid = { version = "1", features = ["v7", "serde"] }
 
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+uuid = { version = "1", features = ["js"] }
+js-sys = "0.3"
+
 [dev-dependencies]
 recollect-systems = { path = "../recollect-systems" }
 tempfile.workspace = true

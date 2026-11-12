@@ -11,8 +11,8 @@ use recollect_systems::samples::SAMPLES;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-use crate::app::App;
-use crate::{api, source_tree};
+use crate::api;
+use crate::app::{App, AppError};
 
 struct Client {
     router: Router,
@@ -23,7 +23,7 @@ struct Client {
 impl Client {
     fn new() -> Self {
         let home = tempfile::tempdir().unwrap();
-        let app = App::new(home.path().to_path_buf(), source_tree("examples"));
+        let app = App::new(home.path().to_path_buf());
         Client { router: api::router(app.clone()), app, _home: home }
     }
 
@@ -47,7 +47,20 @@ impl Client {
     }
 
     async fn view(&self, world: Value) -> Value {
-        self.post("/api/view", json!({ "world": world })).await
+        self.post("/api/call/view", json!({ "world": world })).await
+    }
+
+    async fn history(&self, node: Option<&str>) -> Value {
+        self.post("/api/call/history", json!({ "node": node })).await
+    }
+
+    fn propose(&self, title: &str, rationale: &str, ops: Vec<Value>) -> Result<Value, AppError> {
+        self.app.call("propose", json!({ "title": title, "rationale": rationale, "ops": ops }), "claude")
+    }
+
+    /// Where the open workspace is on disk.
+    async fn dir(&self) -> String {
+        self.view(json!({})).await["workspace"]["location"].as_str().unwrap().to_string()
     }
 }
 
@@ -70,7 +83,7 @@ fn when(view: &Value, name: &str, component: &str) -> String {
 #[tokio::test]
 async fn with_nothing_open_it_says_so_and_offers_the_samples() {
     let c = Client::new();
-    let (status, _) = c.call("POST", "/api/view", Some(json!({}))).await;
+    let (status, _) = c.call("POST", "/api/call/view", Some(json!({}))).await;
     assert_eq!(status, StatusCode::CONFLICT);
     let (_, list) = c.call("GET", "/api/workspaces", None).await;
     assert_eq!(list["samples"].as_array().unwrap().len(), SAMPLES.len());
@@ -99,10 +112,13 @@ async fn every_sample_opens_with_nothing_wrong_and_no_error_in_any_cell() {
 async fn opening_a_sample_never_touches_the_original() {
     let c = Client::new();
     c.open("invoice").await;
-    let before = std::fs::read_to_string(source_tree("examples/invoice/log.jsonl")).unwrap();
+    let dir = c.dir().await;
+    assert!(dir.starts_with(c._home.path().to_str().unwrap()), "a working copy, in its own home: {dir}");
     let v = c.view(json!({})).await;
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": id(&v, "Tax rate"), "cell": "value", "value": 0.5 }] })).await;
-    assert_eq!(std::fs::read_to_string(source_tree("examples/invoice/log.jsonl")).unwrap(), before);
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": id(&v, "Tax rate"), "cell": "value", "value": 0.5 }] })).await;
+    assert_eq!(cell(&c.view(json!({})).await, "Tax", "value")["value"], 40.0);
+    // Opened again, it's as it was left.
+    c.open("invoice").await;
     assert_eq!(cell(&c.view(json!({})).await, "Tax", "value")["value"], 40.0);
 
     // And it can be started again.
@@ -119,7 +135,7 @@ async fn an_edit_says_what_it_reran() {
     assert_eq!(cell(&v, "Total", "value")["formula"], "subtotal + tax");
     assert_eq!(cell(&v, "Tax rate", "value")["source"], "own");
 
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Widgets: price", "cell": "value", "value": 11.0 }], "why": "dearer" })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": "Widgets: price", "cell": "value", "value": 11.0 }], "why": "dearer" })).await;
     let v = c.view(json!({})).await;
     assert_eq!(cell(&v, "Total", "value")["value"], 99.6);
     let ran: Vec<String> = v["ran"].as_array().unwrap().iter().map(|r| r["node"].as_str().unwrap().to_string()).collect();
@@ -132,11 +148,11 @@ async fn an_edit_says_what_it_reran() {
 async fn a_circular_reference_is_an_error_in_those_cells_and_heals() {
     let c = Client::new();
     c.open("invoice").await;
-    c.post("/api/ops", json!({ "ops": [{ "op": "link", "from": "Subtotal", "to": "Total", "component": "label", "cells": { "called": "line" } }] })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "link", "from": "Subtotal", "to": "Total", "component": "label", "cells": { "called": "line" } }] })).await;
     let v = c.view(json!({})).await;
     assert!(cell(&v, "Total", "value")["error"].as_str().unwrap().contains("depends on itself"), "{}", cell(&v, "Total", "value"));
     assert_eq!(cell(&v, "Gears", "value")["value"], 50.0);
-    c.post("/api/ops", json!({ "ops": [{ "op": "unlink", "from": "Subtotal", "to": "Total", "component": "label" }] })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "unlink", "from": "Subtotal", "to": "Total", "component": "label" }] })).await;
     assert_eq!(cell(&c.view(json!({})).await, "Total", "value")["value"], 96.0);
 }
 
@@ -170,16 +186,16 @@ async fn deciding_commits_and_reopening_brings_it_all_back() {
     c.open("calibration").await;
     let open = c.view(json!({})).await;
     let cad = id(&open, "From the CAD model");
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Which approach?", "cell": "chosen", "value": { "ref": cad } }], "why": "it's accurate enough" })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": "Which approach?", "cell": "chosen", "value": { "ref": cad } }], "why": "it's accurate enough" })).await;
     let v = c.view(json!({})).await;
     assert!(cell(&v, "Export extrinsics from CAD", "need")["shown"]["always"].as_bool().unwrap());
     assert!(v["worlds"]["vars"].as_array().unwrap().is_empty(), "no open choices now");
 
-    let (_, history) = c.call("GET", "/api/history", None).await;
+    let (_, history) = (StatusCode::OK, c.history(None).await);
     assert_eq!(history[0]["why"], "it's accurate enough");
     assert_eq!(history[0]["author"], "you");
     let seq = history[0]["seq"].as_u64().unwrap();
-    c.post("/api/undo", json!({ "seq": seq, "why": "changed my mind" })).await;
+    c.post("/api/call/undo", json!({ "seq": seq, "why": "changed my mind" })).await;
     assert_eq!(when(&c.view(json!({})).await, "Static captures", "need"), when(&open, "Static captures", "need"));
 }
 
@@ -189,7 +205,7 @@ async fn a_change_that_breaks_a_rule_is_refused_and_says_why() {
     c.open("calibration").await;
     let v = c.view(json!({})).await;
     let imu = id(&v, "Fit the IMU time offset");
-    let (status, body) = c.call("POST", "/api/ops", Some(json!({ "ops": [{ "op": "set", "id": "Which approach?", "cell": "chosen", "value": { "ref": imu } }] }))).await;
+    let (status, body) = c.call("POST", "/api/call/apply", Some(json!({ "ops": [{ "op": "set", "id": "Which approach?", "cell": "chosen", "value": { "ref": imu } }] }))).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body["error"].as_str().unwrap().contains("chosen_must_be_a_live_option"), "{body}");
     assert_eq!(c.view(json!({})).await["last_seq"], v["last_seq"], "and nothing changed");
@@ -201,7 +217,7 @@ async fn adding_a_node_and_linking_it_is_one_event_and_says_what_it_made() {
     c.open("calibration").await;
     let before = c.view(json!({})).await;
     let done = c
-        .post("/api/ops", json!({ "ops": [
+        .post("/api/call/apply", json!({ "ops": [
             { "op": "add_node", "id": "new:a", "name": "Held-out scenes", "components": ["task"], "cells": { "estimate": 2.0 }, "links": [{ "to": "Which approach?", "component": "part_of" }] },
             { "op": "add_node", "id": "new:b", "name": "Check them", "components": ["task"], "links": [{ "to": "new:a", "component": "depends_on" }] },
         ], "why": "we'll need these whichever way it goes" }))
@@ -209,11 +225,11 @@ async fn adding_a_node_and_linking_it_is_one_event_and_says_what_it_made() {
     let a = done["created"]["new:a"].as_str().unwrap().to_string();
     let v = c.view(json!({})).await;
     assert_eq!(id(&v, "Held-out scenes"), a);
-    assert_eq!(v["last_seq"].as_u64().unwrap(), before["last_seq"].as_u64().unwrap() + 1);
+    assert_eq!(v["last_seq"].as_u64().unwrap(), before["last_seq"].as_u64().map_or(0, |s| s + 1));
     assert!(cell(&v, "Held-out scenes", "need")["shown"]["always"].as_bool().unwrap());
     assert_eq!(cell(&v, "Check them", "blocked")["shown"]["always"], true, "it waits for what it depends on");
 
-    c.post("/api/ops", json!({ "ops": [{ "op": "delete_node", "id": "Check them" }] })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "delete_node", "id": "Check them" }] })).await;
     assert!(c.view(json!({})).await["nodes"].as_array().unwrap().iter().all(|n| n["name"] != "Check them"));
 }
 
@@ -298,7 +314,7 @@ async fn the_case_file_says_who_it_probably_was_and_what_to_find_out() {
 async fn the_plan_answers_where_work_stands_and_what_decisions_need() {
     let c = Client::new();
     c.open("calibration").await;
-    let p = c.post("/api/plan", json!({})).await;
+    let p = c.post("/api/call/plan", json!({})).await;
     let standing = |p: &Value, name: &str| p["work"].as_array().unwrap().iter().find(|w| w["name"] == name).unwrap()["standing"].clone();
     assert_eq!(standing(&p, "Fit the IMU time offset"), "now");
     assert_eq!(standing(&p, "Static captures"), "depends", "two of the three named options need it");
@@ -312,7 +328,7 @@ async fn the_plan_answers_where_work_stands_and_what_decisions_need() {
 async fn a_sheet_workspace_has_no_plan_to_show() {
     let c = Client::new();
     c.open("invoice").await;
-    let p = c.post("/api/plan", json!({})).await;
+    let p = c.post("/api/call/plan", json!({})).await;
     assert!(p["work"].as_array().unwrap().is_empty() && p["decisions"].as_array().unwrap().is_empty());
 }
 
@@ -321,30 +337,30 @@ async fn proposals_wait_for_review_and_can_be_taken_in_part() {
     let c = Client::new();
     c.open("calibration").await;
     let before = c.view(json!({})).await;
-    let p = c.app.propose("Add two".to_string(), "both are needed".to_string(), vec![
+    let p = c.propose("Add two", "both are needed", vec![
         json!({ "op": "add_node", "id": "new:a", "name": "One" }),
         json!({ "op": "add_node", "id": "new:b", "name": "Two" }),
-    ], "claude").unwrap();
+    ]).unwrap();
     assert_eq!(c.view(json!({})).await["last_seq"], before["last_seq"], "nothing has happened yet");
 
-    let (_, list) = c.call("GET", "/api/proposals", None).await;
-    assert_eq!(list[0]["id"], p.id.as_str());
+    let (_, list) = (StatusCode::OK, c.post("/api/call/proposals", json!({})).await);
+    assert_eq!(list[0]["id"], p["id"]);
     assert_eq!(list[0]["error"], Value::Null);
     assert_eq!(list[0]["ops"].as_array().unwrap().len(), 4, "each node is made, then named");
 
     // Only the first.
-    c.post(&format!("/api/proposals/{}/accept", p.id), json!({ "ops": [0, 1] })).await;
+    c.post("/api/call/accept", json!({ "id": p["id"], "ops": [0, 1] })).await;
     let v = c.view(json!({})).await;
     assert!(v["nodes"].as_array().unwrap().iter().any(|n| n["name"] == "One"));
     assert!(!v["nodes"].as_array().unwrap().iter().any(|n| n["name"] == "Two"));
-    assert_eq!(c.call("GET", "/api/proposals", None).await.1.as_array().unwrap().len(), 0);
-    let (_, history) = c.call("GET", "/api/history", None).await;
+    assert_eq!((StatusCode::OK, c.post("/api/call/proposals", json!({})).await).1.as_array().unwrap().len(), 0);
+    let (_, history) = (StatusCode::OK, c.history(None).await);
     assert_eq!(history[0]["author"], "claude", "the log says who proposed it");
     assert!(history[0]["why"].as_str().unwrap().contains("both are needed"));
 
     // One that wouldn't apply is refused before it gets to anyone.
     let v = c.view(json!({})).await;
-    let refused = c.app.propose("Bad".to_string(), String::new(), vec![json!({ "op": "set", "id": "Which approach?", "cell": "chosen", "value": { "ref": id(&v, "One") } })], "claude");
+    let refused = c.propose("Bad", "", vec![json!({ "op": "set", "id": "Which approach?", "cell": "chosen", "value": { "ref": id(&v, "One") } })]);
     assert!(refused.is_err());
 }
 
@@ -353,7 +369,7 @@ async fn a_hand_edit_on_disk_is_recorded_as_an_event() {
     let c = Client::new();
     c.open("invoice").await;
     let v = c.view(json!({})).await;
-    let dir = v["workspace"]["dir"].as_str().unwrap().to_string();
+    let dir = v["workspace"]["location"].as_str().unwrap().to_string();
     let rate = id(&v, "Tax rate");
     let path = format!("{dir}/nodes/{rate}.yaml");
     let text = std::fs::read_to_string(&path).unwrap();
@@ -370,57 +386,46 @@ async fn a_hand_edit_on_disk_is_recorded_as_an_event() {
         assert!(tries < 100, "the edit never arrived");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let (_, history) = c.call("GET", "/api/history", None).await;
+    let (_, history) = (StatusCode::OK, c.history(None).await);
     assert_eq!((history[0]["author"].as_str(), history[0]["why"].as_str()), (Some("disk"), Some("external edit")));
 }
 
 #[tokio::test]
-async fn going_back_and_changing_something_starts_a_branch_and_loses_nothing() {
+async fn undo_and_redo_go_back_and_forward_and_the_files_follow() {
     let c = Client::new();
     c.open("invoice").await;
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Tax rate", "cell": "value", "value": 0.5 }], "why": "raised" })).await;
-    let dir = c.view(json!({})).await["workspace"]["dir"].as_str().unwrap().to_string();
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": "Tax rate", "cell": "value", "value": 0.5 }], "why": "raised" })).await;
+    let dir = c.dir().await;
     let rate = id(&c.view(json!({})).await, "Tax rate");
     let file = format!("{dir}/nodes/{rate}.yaml");
     assert!(std::fs::read_to_string(&file).unwrap().contains("value: 0.5"));
 
-    // Going back is the whole app being there, including the files.
-    c.post("/api/checkout", json!({ "seq": 0 })).await;
+    let v = c.view(json!({})).await;
+    assert_eq!((v["undo"].as_u64(), v["redo"].as_u64()), (Some(0), None));
+    c.post("/api/call/undo", json!({})).await;
     let v = c.view(json!({})).await;
     assert_eq!(cell(&v, "Tax", "value")["value"], 16.0);
-    assert_eq!((v["last_seq"].as_u64(), v["latest"].as_u64()), (Some(0), Some(1)), "and it says there's something to return to");
-    assert!(std::fs::read_to_string(&file).unwrap().contains("value: 0.2"));
+    assert!(std::fs::read_to_string(&file).unwrap().contains("value: 0.2"), "and the file says so");
+    assert_eq!((v["undo"].as_u64(), v["redo"].as_u64()), (None, Some(1)));
 
-    // A change from here is a fork.
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Tax rate", "cell": "value", "value": 0.1 }], "why": "cut instead" })).await;
-    let v = c.view(json!({})).await;
-    assert_eq!(cell(&v, "Tax", "value")["value"], 8.0);
-    assert_eq!(v["latest"], Value::Null, "this is the end of a branch");
-    let (_, history) = c.call("GET", "/api/history", None).await;
-    let events = history.as_array().unwrap();
-    assert_eq!(events.len(), 3, "nothing is lost");
-    let parents: Vec<(u64, Value)> = events.iter().map(|e| (e["seq"].as_u64().unwrap(), e["parent"].clone())).collect();
-    assert_eq!(parents, vec![(2, json!(0)), (1, json!(0)), (0, Value::Null)]);
-    assert_eq!(events.iter().map(|e| e["here"].as_bool().unwrap()).collect::<Vec<_>>(), vec![true, false, true]);
-
-    // A node's own history is only what led here.
-    let (_, own) = c.call("GET", &format!("/api/history?node={rate}"), None).await;
-    assert_eq!(own.as_array().unwrap().iter().map(|e| e["why"].as_str().unwrap().to_string()).filter(|w| w == "raised").count(), 0);
-
-    // What isn't on this branch can't be undone from here.
-    let (status, body) = c.call("POST", "/api/undo", Some(json!({ "seq": 1 }))).await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    assert!(body["error"].as_str().unwrap().contains("isn't on this branch"), "{body}");
-
-    // And the other branch is still there to go back to, through a reopen too.
-    c.post("/api/checkout", json!({ "seq": 1 })).await;
-    assert_eq!(cell(&c.view(json!({})).await, "Tax", "value")["value"], 40.0);
-    c.open("invoice").await;
+    c.post("/api/call/redo", json!({})).await;
     let v = c.view(json!({})).await;
     assert_eq!(cell(&v, "Tax", "value")["value"], 40.0);
-    assert_eq!(v["last_seq"], 1);
+    assert!(std::fs::read_to_string(&file).unwrap().contains("value: 0.5"));
+    let history = c.history(None).await;
+    assert_eq!(history.as_array().unwrap().len(), 3, "every step is an event");
+    assert_eq!(history[0]["reverts"], 1, "the redo takes back the undo");
 
-    let (status, _) = c.call("POST", "/api/checkout", Some(json!({ "seq": 99 }))).await;
+    // A node's own history is only what touched it.
+    let own = c.history(Some(&rate)).await;
+    assert_eq!(own.as_array().unwrap().len(), 3);
+    let gears = id(&v, "Gears");
+    assert_eq!(c.history(Some(&gears)).await.as_array().unwrap().len(), 0);
+
+    // With nothing to undo, it says so by giving nothing back.
+    c.open("invoice").await;
+    assert_eq!(c.post("/api/call/undo", json!({})).await["seq"], Value::Null);
+    let (status, _) = c.call("POST", "/api/call/undo", Some(json!({ "seq": 99 }))).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -428,7 +433,7 @@ async fn going_back_and_changing_something_starts_a_branch_and_loses_nothing() {
 async fn a_worked_out_cell_can_be_typed_over_and_comes_back() {
     let c = Client::new();
     c.open("calibration").await;
-    let done = c.post("/api/ops", json!({ "ops": [{ "op": "add_node", "id": "new:t", "name": "Mine", "components": ["task"] }] })).await;
+    let done = c.post("/api/call/apply", json!({ "ops": [{ "op": "add_node", "id": "new:t", "name": "Mine", "components": ["task"] }] })).await;
     let t = done["created"]["new:t"].as_str().unwrap().to_string();
     let cell = |v: &Value| v["nodes"].as_array().unwrap().iter().find(|n| n["id"] == t.as_str()).unwrap()["cells"]["done"].clone();
 
@@ -437,15 +442,15 @@ async fn a_worked_out_cell_can_be_typed_over_and_comes_back() {
     assert_eq!(shown["value"], json!(false));
     assert!(shown["formula"].as_str().unwrap().contains("is_leaf"), "and what it's worked out by: {shown}");
 
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": t, "cell": "done", "value": true }] })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": t, "cell": "done", "value": true }] })).await;
     let shown = cell(&c.view(json!({})).await);
     assert_eq!((&shown["source"], &shown["value"]), (&json!("own"), &json!(true)));
 
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": t, "cell": "done", "formula": "1 < 2" }] })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": t, "cell": "done", "formula": "1 < 2" }] })).await;
     let shown = cell(&c.view(json!({})).await);
     assert_eq!((&shown["source"], &shown["formula"], &shown["value"]), (&json!("own"), &json!("1 < 2"), &json!(true)));
 
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": t, "cell": "done" }] })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": t, "cell": "done" }] })).await;
     let shown = cell(&c.view(json!({})).await);
     assert_eq!((&shown["source"], &shown["value"]), (&json!("default"), &json!(false)), "and without it, it's worked out again");
 }
@@ -461,14 +466,12 @@ async fn a_new_workspace_starts_empty_and_an_old_one_is_not_touched() {
     assert!(v["nodes"].as_array().unwrap().is_empty());
     assert_eq!(v["worlds"]["count"], "1");
 
-    let old = dir.path().join("old");
-    std::fs::create_dir_all(old.join("nodes")).unwrap();
-    std::fs::write(old.join("recollect.toml"), "name = \"Old\"\n").unwrap();
-    std::fs::write(old.join("nodes/a.md"), "---\nid: a\n---\n").unwrap();
-    let (status, body) = c.call("POST", "/api/workspaces/open", Some(json!({ "path": old }))).await;
+    let other = dir.path().join("not-one");
+    std::fs::create_dir_all(&other).unwrap();
+    let (status, body) = c.call("POST", "/api/workspaces/open", Some(json!({ "path": other }))).await;
     assert!(!status.is_success());
-    assert!(body["error"].as_str().unwrap().contains("older version"), "{body}");
-    assert!(!old.join("log.jsonl").exists(), "and nothing was written there");
+    assert!(body["error"].as_str().unwrap().contains("isn't a workspace"), "{body}");
+    assert_eq!(std::fs::read_dir(&other).unwrap().count(), 0, "and nothing was written there");
 }
 
 fn paths(list: &Value) -> Vec<&str> {
@@ -481,8 +484,8 @@ async fn the_files_can_be_read_and_show_what_the_app_is_working_from() {
     c.open("calibration").await;
     let (_, list) = c.call("GET", "/api/files", None).await;
     let paths = paths(&list);
-    assert!(paths.contains(&"recollect.toml") && paths.contains(&"log.jsonl"), "{paths:?}");
-    assert!(!paths.contains(&"log.lock"), "{paths:?}");
+    assert!(paths.contains(&"recollect.toml"), "{paths:?}");
+    assert!(!paths.contains(&".recollect.lock"), "{paths:?}");
 
     let v = c.view(json!({})).await;
     let path = format!("nodes/{}.yaml", id(&v, "Which approach?"));
@@ -493,19 +496,19 @@ async fn the_files_can_be_read_and_show_what_the_app_is_working_from() {
     assert_eq!(file["truncated"], false);
 
     // Reading is all it does, and a change shows up.
-    let before = c.call("GET", "/api/file?path=log.jsonl", None).await.1;
-    assert_eq!(c.call("GET", "/api/file?path=log.jsonl", None).await.1, before);
-    c.post("/api/ops", json!({ "ops": [{ "op": "add_node", "id": "new:x", "name": "Fresh" }] })).await;
-    let after = c.call("GET", "/api/file?path=log.jsonl", None).await.1;
-    assert!(after["size"].as_u64() > before["size"].as_u64());
-    assert!(after["text"].as_str().unwrap().contains("Fresh"));
+    let before = c.call("GET", &format!("/api/file?path={path}"), None).await.1;
+    assert_eq!(c.call("GET", &format!("/api/file?path={path}"), None).await.1, before);
+    let done = c.post("/api/call/apply", json!({ "ops": [{ "op": "add_node", "id": "new:x", "name": "Fresh" }] })).await;
+    let fresh = format!("nodes/{}.yaml", done["created"]["new:x"].as_str().unwrap());
+    let after = c.call("GET", &format!("/api/file?path={fresh}"), None).await.1;
+    assert!(after["text"].as_str().unwrap().contains("Fresh"), "{after}");
 }
 
 #[tokio::test]
 async fn only_the_workspaces_own_files_can_be_read() {
     let c = Client::new();
     c.open("invoice").await;
-    let dir = std::path::PathBuf::from(c.call("GET", "/api/workspaces", None).await.1["current"]["dir"].as_str().unwrap());
+    let dir = std::path::PathBuf::from(c.call("GET", "/api/workspaces", None).await.1["current"]["location"].as_str().unwrap());
     let secret = c._home.path().join("secret.txt");
     std::fs::write(&secret, "private").unwrap();
     std::os::unix::fs::symlink(&secret, dir.join("linked.txt")).unwrap();
@@ -517,7 +520,7 @@ async fn only_the_workspaces_own_files_can_be_read() {
     assert!(!listed.iter().any(|p| p.contains("linked") || p.contains(".git/")), "{listed:?}");
 
     let absolute = secret.display().to_string();
-    for path in ["../../secret.txt", "nodes/../../../secret.txt", "linked.txt", ".git/config", "log.lock", "nope.txt", absolute.as_str()] {
+    for path in ["../../secret.txt", "nodes/../../../secret.txt", "linked.txt", ".git/config", ".recollect.lock", "nope.txt", absolute.as_str()] {
         let (status, body) = c.call("GET", &format!("/api/file?path={}", path.replace('/', "%2F")), None).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
     }
@@ -531,7 +534,7 @@ async fn with_nothing_open_there_are_no_files() {
 }
 
 async fn refused(c: &Client, ops: Value) -> String {
-    let (status, body) = c.call("POST", "/api/ops", Some(json!({ "ops": ops }))).await;
+    let (status, body) = c.call("POST", "/api/call/apply", Some(json!({ "ops": ops }))).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     body["error"].as_str().unwrap().to_string()
 }
@@ -542,14 +545,14 @@ async fn a_formula_and_its_labels_are_one_change_and_a_bad_one_is_refused() {
     c.open("invoice").await;
     let before = c.view(json!({})).await;
 
-    let done = c.post("/api/ops", json!({ "ops": [{ "op": "add_node", "id": "new:x", "name": "Doubled", "cells": { "value": { "formula": "total * 2", "labels": { "total": "Total" } } } }] })).await;
+    let done = c.post("/api/call/apply", json!({ "ops": [{ "op": "add_node", "id": "new:x", "name": "Doubled", "cells": { "value": { "formula": "total * 2", "labels": { "total": "Total" } } } }] })).await;
     let x = done["created"]["new:x"].as_str().unwrap().to_string();
     let v = c.view(json!({})).await;
     assert_eq!(cell(&v, "Doubled", "value")["value"], 192.0);
-    assert_eq!(v["last_seq"].as_u64().unwrap(), before["last_seq"].as_u64().unwrap() + 1, "one event");
+    assert_eq!(v["last_seq"].as_u64().unwrap(), before["last_seq"].as_u64().map_or(0, |s| s + 1), "one event");
 
     // Changing it says what its names now mean, and a name it no longer has goes.
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": x, "cell": "value", "formula": "tax + 1", "labels": { "tax": "Tax" } }] })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": x, "cell": "value", "formula": "tax + 1", "labels": { "tax": "Tax" } }] })).await;
     let v = c.view(json!({})).await;
     assert_eq!(cell(&v, "Doubled", "value")["value"], 17.0);
     let labels: Vec<&Value> = v["edges"].as_array().unwrap().iter().filter(|l| l["from"] == x.as_str() && l["components"] == json!(["label"])).collect();
@@ -557,7 +560,7 @@ async fn a_formula_and_its_labels_are_one_change_and_a_bad_one_is_refused() {
     assert_eq!(labels[0]["cells"]["called"]["value"], "tax");
 
     // Several nodes under one name are a group.
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": x, "cell": "value", "formula": "sum(n)", "labels": { "n": ["Tax", "Total"] } }] })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": x, "cell": "value", "formula": "sum(n)", "labels": { "n": ["Tax", "Total"] } }] })).await;
     assert_eq!(cell(&c.view(json!({})).await, "Doubled", "value")["value"], 112.0);
 
     // What's wrong with one is said before anything lands.
@@ -573,7 +576,7 @@ async fn a_formula_and_its_labels_are_one_change_and_a_bad_one_is_refused() {
     assert_eq!(c.view(json!({})).await["last_seq"], seq, "and nothing changed");
 
     // A proposal is held to the same, before anyone is asked to look at it.
-    assert!(c.app.propose("Bad".to_string(), String::new(), vec![json!({ "op": "add_node", "id": "new:y", "name": "Y", "cells": { "value": { "formula": "nope" } } })], "claude").is_err());
+    assert!(c.propose("Bad", "", vec![json!({ "op": "add_node", "id": "new:y", "name": "Y", "cells": { "value": { "formula": "nope" } } })]).is_err());
 }
 
 #[tokio::test]
@@ -581,7 +584,7 @@ async fn a_hand_edit_to_a_formula_stands_and_its_cell_says_whats_wrong() {
     let c = Client::new();
     c.open("invoice").await;
     let v = c.view(json!({})).await;
-    let dir = v["workspace"]["dir"].as_str().unwrap().to_string();
+    let dir = v["workspace"]["location"].as_str().unwrap().to_string();
     let path = format!("{dir}/nodes/{}.yaml", id(&v, "Total"));
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.contains("subtotal + tax"), "{text}");
@@ -605,7 +608,7 @@ async fn a_working_copy_from_before_samples_changed_is_put_aside_not_misread() {
     let c = Client::new();
     c.open("invoice").await;
     let v = c.view(json!({})).await;
-    let dir = std::path::PathBuf::from(v["workspace"]["dir"].as_str().unwrap());
+    let dir = std::path::PathBuf::from(v["workspace"]["location"].as_str().unwrap());
     std::fs::remove_file(dir.join("sample-format")).unwrap();
     std::fs::write(dir.join("recollect.toml"), "name = \"Old\"\nsystems = [\"sheet\"]\n").unwrap();
     c.open("invoice").await;
@@ -627,14 +630,14 @@ async fn held_out_a_budget_cap_on_a_plan() {
     let (approach, cad, free, board) = (id(&v, "Which approach?"), id(&v, "From the CAD model"), id(&v, "Free-form search"), id(&v, "With a checkerboard"));
 
     // Free-form needs a second pass of captures, so what's shared costs more on that path.
-    let p = c.app.propose("Cap the effort at six days".to_string(), "the review is in a week".to_string(), vec![
+    let p = c.propose("Cap the effort at six days", "the review is in a week", vec![
         json!({ "op": "set", "id": "Static captures", "cell": "estimate", "formula": "if(chose(approach, free), 3, 2)", "labels": { "approach": approach, "free": free } }),
         json!({ "op": "add_node", "id": "new:effort", "name": "Effort", "cells": { "value": { "formula": "effort()" } } }),
         json!({ "op": "add_node", "id": "new:cap", "name": "Within six days", "components": ["requires"], "cells": { "value": { "formula": "effort <= 6", "labels": { "effort": "new:effort" } } } }),
-    ], "claude").unwrap();
-    let (_, list) = c.call("GET", "/api/proposals", None).await;
+    ]).unwrap();
+    let (_, list) = (StatusCode::OK, c.post("/api/call/proposals", json!({})).await);
     assert!(list[0]["ops"].as_array().unwrap().iter().any(|o| o["value"] == "effort <= 6"), "the formula is what gets reviewed: {list}");
-    c.post(&format!("/api/proposals/{}/accept", p.id), json!({})).await;
+    c.post("/api/call/accept", json!({ "id": p["id"] })).await;
 
     let v = c.view(json!({})).await;
     let at = |o: &str| json!({ approach.as_str(): o });
@@ -667,7 +670,7 @@ async fn held_out_a_clause_that_isnt_a_pair() {
     let dir = tempfile::tempdir().unwrap();
     c.post("/api/workspaces/new", json!({ "path": dir.path().join("logic"), "name": "Logic", "systems": [] })).await;
     let person = |id: &str, name: &str| json!({ "op": "add_node", "id": id, "name": name, "cells": { "options": ["truth", "lie"] } });
-    c.post("/api/ops", json!({ "ops": [
+    c.post("/api/call/apply", json!({ "ops": [
         person("new:a", "Alice"), person("new:b", "Bob"), person("new:c", "Carol"),
         { "op": "add_node", "id": "new:most", "name": "At most one lies", "components": ["requires"], "cells": { "value": { "formula": "count(x in people: x.chosen.value = \"lie\") <= 1", "labels": { "people": ["new:a", "new:b", "new:c"] } } } },
         { "op": "add_node", "id": "new:clue", "name": "Alice and Bob differ", "components": ["requires"], "cells": { "value": { "formula": "a.chosen != b.chosen", "labels": { "a": "new:a", "b": "new:b" } } } },
@@ -686,7 +689,7 @@ async fn held_out_tiers_and_a_loan_with_a_macro() {
     let c = Client::new();
     let dir = tempfile::tempdir().unwrap();
     c.post("/api/workspaces/new", json!({ "path": dir.path().join("money"), "name": "Money", "systems": [] })).await;
-    c.post("/api/ops", json!({ "ops": [
+    c.post("/api/call/apply", json!({ "ops": [
         { "op": "add_node", "id": "new:tier", "name": "Tier", "cells": { "macro": { "params": ["units", "from", "to", "price"], "body": "max(0, min(units, to) - from) * price" } } },
         { "op": "add_node", "id": "new:units", "name": "Units", "cells": { "value": 250 } },
         { "op": "add_node", "id": "new:bill", "name": "Bill", "cells": { "value": { "formula": "tier(units, 0, 100, 10) + tier(units, 100, 200, 8) + tier(units, 200, 1000, 5)", "labels": { "tier": "new:tier", "units": "new:units" } } } },
@@ -695,7 +698,7 @@ async fn held_out_tiers_and_a_loan_with_a_macro() {
 
     // Monthly repayment on 10000 at 1% a month over 12 months, from the standard formula, with the
     // power written out by chaining a macro that squares.
-    c.post("/api/ops", json!({ "ops": [
+    c.post("/api/call/apply", json!({ "ops": [
         { "op": "add_node", "id": "new:sq", "name": "Squared", "cells": { "macro": { "params": ["x"], "body": "x * x" } } },
         { "op": "add_node", "id": "new:rate", "name": "Rate", "cells": { "value": 0.01 } },
         { "op": "add_node", "id": "new:g", "name": "Growth", "cells": { "value": { "formula": "sq(sq(1 + r)) * sq(sq(1 + r)) * sq(sq(1 + r))", "labels": { "sq": "new:sq", "r": "new:rate" } } } },
@@ -719,7 +722,7 @@ async fn held_out_choosing_a_car() {
             "links": [{ "to": "new:which", "component": "alternative" }, { "to": kind, "component": "is_a" }] })
     };
     let petrol = "fuel * 4.546 / self.mpg";
-    let done = c.post("/api/ops", json!({ "ops": [
+    let done = c.post("/api/call/apply", json!({ "ops": [
         { "op": "add_node", "id": "new:years", "name": "Years kept", "cells": { "value": 5 } },
         { "op": "add_node", "id": "new:miles", "name": "Miles a year", "components": ["decision", "uncertain"] },
         option("new:light", "Light use", "new:miles", 6000.0, 1.0), option("new:typical", "Typical", "new:miles", 10000.0, 2.0), option("new:heavy", "Heavy", "new:miles", 16000.0, 1.0),
@@ -793,25 +796,25 @@ async fn held_out_choosing_a_car() {
     // What the hatchback and the electric car cost as fuel gets dearer, which is the same as typing each
     // price in, with nothing changed. Every petrol car reads the one price through its kind.
     let read = json!([{ "node": ids("new:hatch"), "cell": "cost_per_mile" }, { "node": ids("new:ev"), "cell": "cost_per_mile" }]);
-    let swept = c.post("/api/sweep", json!({ "set": { "node": ids("new:fuel"), "cell": "value" }, "values": [1.45, 3.0], "read": read })).await;
+    let swept = c.post("/api/call/sweep", json!({ "set": { "node": ids("new:fuel"), "cell": "value" }, "values": [1.45, 3.0], "read": read })).await;
     let at = |i: usize, j: usize| swept[i]["cells"][j]["value"].as_f64().unwrap_or_else(|| panic!("{swept}"));
     for (i, fuel) in [1.45, 3.0].into_iter().enumerate() {
         assert!((at(i, 0) - by_mpg(fuel, 52.0)).abs() < 1e-9 && (at(i, 1) - 0.28 * 0.28).abs() < 1e-9, "{swept}");
     }
     // Heavy use, swept up to 20,000 with both decisions pinned.
-    let pinned = c.post("/api/sweep", json!({ "set": { "node": ids("new:heavy"), "cell": "value" }, "values": [20000], "read": [{ "node": ids("new:cost"), "cell": "value" }], "world": { &which: ids("new:ev"), ids("new:miles"): ids("new:heavy") } })).await;
+    let pinned = c.post("/api/call/sweep", json!({ "set": { "node": ids("new:heavy"), "cell": "value" }, "values": [20000], "read": [{ "node": ids("new:cost"), "cell": "value" }], "world": { &which: ids("new:ev"), ids("new:miles"): ids("new:heavy") } })).await;
     assert!((pinned[0]["cells"][0]["value"].as_f64().unwrap() - by_hand(32000.0, 0.28 * 0.28, 600.0, 20_000.0)).abs() < 1e-6, "{pinned}");
     assert!((per_mile(&c.view(json!({})).await, "Hatchback") - by_mpg(1.45, 52.0)).abs() < 1e-9, "and nothing was changed");
 
     // A car can say otherwise for itself, and goes back to its kind's when that's taken away.
     let hatch = ids("new:hatch");
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": hatch, "cell": "cost_per_mile", "value": 0.2 }] })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": hatch, "cell": "cost_per_mile", "value": 0.2 }] })).await;
     assert_eq!(per_mile(&c.view(json!({})).await, "Hatchback"), 0.2);
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": hatch, "cell": "cost_per_mile", "labels": {} }] })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": hatch, "cell": "cost_per_mile", "labels": {} }] })).await;
     assert!((per_mile(&c.view(json!({})).await, "Hatchback") - by_mpg(1.45, 52.0)).abs() < 1e-9);
 
     // And the kind changes every car of that kind at once, but not one that says its own.
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": ids("new:petrol"), "cell": "cost_per_mile", "formula": "fuel * 4.5 / self.mpg" }] })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": ids("new:petrol"), "cell": "cost_per_mile", "formula": "fuel * 4.5 / self.mpg" }] })).await;
     let v = c.view(json!({})).await;
     assert!((per_mile(&v, "Hatchback") - 1.45 * 4.5 / 52.0).abs() < 1e-9 && (per_mile(&v, "Estate") - 1.45 * 4.5 / 44.0).abs() < 1e-9);
     assert_eq!(per_mile(&v, "Hybrid"), 0.09);
@@ -824,7 +827,7 @@ async fn held_out_tables_of_cars_and_years() {
     let c = Client::new();
     let dir = tempfile::tempdir().unwrap();
     c.post("/api/workspaces/new", json!({ "path": dir.path().join("tables"), "name": "Tables", "systems": ["plan"] })).await;
-    c.post("/api/ops", json!({ "ops": [
+    c.post("/api/call/apply", json!({ "ops": [
         { "op": "add_node", "id": "new:fuel", "name": "Fuel price", "cells": { "value": 1.45 } },
         { "op": "add_node", "id": "new:which", "name": "Which car?", "components": ["decision"] },
         { "op": "add_node", "id": "new:per_mile", "name": "Per mile", "cells": { "value": { "formula": "car.chosen.cost_per_mile", "labels": { "car": "new:which" } } } },
@@ -854,14 +857,14 @@ async fn held_out_tables_of_cars_and_years() {
     assert_eq!(per_mile_cases.len(), 3, "and what's read through it is each row's: {per_mile_cases:?}");
 
     // Writing it again changes nothing that's there: rows with those names are used, not made twice.
-    c.post("/api/ops", json!({ "ops": [{ "op": "table", "name": "Car", "rows": [{ "key": "Hatchback", "price": 17000 }, "Estate"] }] })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "table", "name": "Car", "rows": [{ "key": "Hatchback", "price": 17000 }, "Estate"] }] })).await;
     let v = c.view(json!({})).await;
     assert_eq!(v["nodes"].as_array().unwrap().iter().filter(|n| n["name"] == "Car[Hatchback]").count(), 1);
     assert_eq!(cell(&v, "Car[Hatchback]", "price")["value"], 17000.0);
     assert!(refused(&c, json!([{ "op": "table", "name": "Car[x]" }])).await.contains("row's name"));
 
     // Years, with a top-up chosen at year 5 that only the years after it see.
-    let done = c.post("/api/ops", json!({ "ops": [
+    let done = c.post("/api/call/apply", json!({ "ops": [
         { "op": "add_node", "id": "new:rate", "name": "Rate", "cells": { "value": 0.05 } },
         { "op": "add_node", "id": "new:top", "name": "Top up?", "components": ["decision"] },
         { "op": "add_node", "name": "No", "id": "new:no", "cells": { "value": 0 }, "links": [{ "to": "new:top", "component": "alternative" }] },
@@ -896,7 +899,7 @@ async fn rows_nobody_wrote_can_be_looked_at() {
     let c = Client::new();
     c.open("compound-interest").await;
     let v = c.view(json!({})).await;
-    let rows = c.post("/api/rows", json!({ "table": "Year", "from": 4, "to": 12, "world": { id(&v, "Top up in year 5?"): id(&v, "No top-up") } })).await;
+    let rows = c.post("/api/call/rows", json!({ "table": "Year", "from": 4, "to": 12, "world": { id(&v, "Top up in year 5?"): id(&v, "No top-up") } })).await;
     let rows = rows.as_array().unwrap();
     assert_eq!(rows.iter().take(3).map(|r| (r["key"].as_i64().unwrap(), r["written"].as_bool().unwrap())).collect::<Vec<_>>(), vec![(4, false), (5, true), (6, false)]);
     let twelve = rows[8]["cells"]["balance"]["value"].as_f64().unwrap();
@@ -945,12 +948,12 @@ async fn part_of_a_formula_can_be_tried_with_nothing_changed() {
     let c = Client::new();
     c.open("trip-budget").await;
     let v = c.view(json!({})).await;
-    let tried = c.post("/api/try", json!({ "node": id(&v, "Trip"), "text": "travel.chosen.value + 1" })).await;
+    let tried = c.post("/api/call/try", json!({ "node": id(&v, "Trip"), "text": "travel.chosen.value + 1" })).await;
     assert_eq!(tried["shown"]["cases"].as_array().unwrap().len(), 2);
     assert_eq!(tried["expansion"], "(Travel.chosen.value + 1)");
-    let pinned = c.post("/api/try", json!({ "node": id(&v, "Trip"), "text": "travel.chosen.value + 1", "world": { id(&v, "Travel"): id(&v, "Plane") } })).await;
+    let pinned = c.post("/api/call/try", json!({ "node": id(&v, "Trip"), "text": "travel.chosen.value + 1", "world": { id(&v, "Travel"): id(&v, "Plane") } })).await;
     assert_eq!(pinned["shown"]["cases"][0]["value"], 121.0);
-    let bad = c.post("/api/try", json!({ "node": id(&v, "Trip"), "text": "nope" })).await;
+    let bad = c.post("/api/call/try", json!({ "node": id(&v, "Trip"), "text": "nope" })).await;
     assert!(bad["error"].as_str().unwrap().contains("no input called nope"), "{bad}");
     assert_eq!(c.view(json!({})).await["last_seq"], v["last_seq"]);
 }
@@ -959,7 +962,7 @@ async fn part_of_a_formula_can_be_tried_with_nothing_changed() {
 async fn a_drawing_is_added_undone_and_refused_like_anything_else() {
     let c = Client::new();
     c.open("australia").await;
-    let done = c.post("/api/ops", json!({ "ops": [{ "op": "add_node", "id": "new:d", "name": "Mine", "cells": { "drawing": "export function draw() { return \"\"; }" } }], "why": "a second way to see it" })).await;
+    let done = c.post("/api/call/apply", json!({ "ops": [{ "op": "add_node", "id": "new:d", "name": "Mine", "cells": { "drawing": "export function draw() { return \"\"; }" } }], "why": "a second way to see it" })).await;
     let d = done["created"]["new:d"].as_str().unwrap().to_string();
     let v = c.view(json!({})).await;
     assert_eq!(cell(&v, "Mine", "drawing")["value"], "export function draw() { return \"\"; }");
@@ -969,30 +972,26 @@ async fn a_drawing_is_added_undone_and_refused_like_anything_else() {
     let why = refused(&c, json!([{ "op": "set", "id": d, "cell": "drawing", "value": 3 }])).await;
     assert!(why.contains("malformed_cell"), "a drawing is text: {why}");
 
-    let (_, history) = c.call("GET", "/api/history", None).await;
-    c.post("/api/undo", json!({ "seq": history[0]["seq"] })).await;
+    let (_, history) = (StatusCode::OK, c.history(None).await);
+    c.post("/api/call/undo", json!({ "seq": history[0]["seq"] })).await;
     assert!(c.view(json!({})).await["nodes"].as_array().unwrap().iter().all(|n| n["name"] != "Mine"));
 }
 
 #[tokio::test]
-async fn a_hand_edit_nobody_has_noticed_yet_stays_on_the_branch_it_was_made_on() {
+async fn a_hand_edit_nobody_has_noticed_yet_is_brought_in_before_a_change() {
     let c = Client::new();
     c.open("invoice").await;
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Tax rate", "cell": "value", "value": 0.5 }] })).await;
     let v = c.view(json!({})).await;
-    let path = format!("{}/nodes/{}.yaml", v["workspace"]["dir"].as_str().unwrap(), id(&v, "Tax rate"));
+    let path = format!("{}/nodes/{}.yaml", c.dir().await, id(&v, "Tax rate"));
     let text = std::fs::read_to_string(&path).unwrap();
-    std::fs::write(&path, text.replace("value: 0.5", "value: 0.7")).unwrap();
+    std::fs::write(&path, text.replace("value: 0.2", "value: 0.7")).unwrap();
 
     // Straight away, before anything watching the files could have looked.
-    c.app.checkout(0, "you", "").unwrap();
-    assert!(std::fs::read_to_string(&path).unwrap().contains("value: 0.2"));
-    let (_, history) = c.call("GET", "/api/history", None).await;
-    let edit = history.as_array().unwrap().iter().find(|e| e["why"] == "external edit").expect("it was recorded, not lost");
-    assert_eq!(edit["parent"], 1, "on the branch it was made on");
-    let seq = edit["seq"].as_u64().unwrap();
-    c.app.checkout(seq, "you", "").unwrap();
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": "Widgets: price", "cell": "value", "value": 11.0 }] })).await;
+    let history = c.history(None).await;
+    assert_eq!(history[1]["why"], "external edit", "it was recorded first, not lost: {history}");
     assert_eq!(cell(&c.view(json!({})).await, "Tax rate", "value")["value"], 0.7);
+    assert!(std::fs::read_to_string(&path).unwrap().contains("value: 0.7"));
 }
 
 /// Taking a component away takes what was written in its cells, so nothing is left without its
@@ -1001,11 +1000,11 @@ async fn a_hand_edit_nobody_has_noticed_yet_stays_on_the_branch_it_was_made_on()
 async fn taking_a_component_away_takes_its_cells() {
     let c = Client::new();
     c.open("calibration").await;
-    c.post("/api/ops", json!({ "ops": [{ "op": "remove", "id": "Board detector", "component": "task" }], "why": "not a task" })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "remove", "id": "Board detector", "component": "task" }], "why": "not a task" })).await;
     let v = c.view(json!({})).await;
     assert!(cell(&v, "Board detector", "estimate").is_null(), "{}", node(&v, "Board detector"));
-    let (_, history) = c.call("GET", "/api/history", None).await;
-    c.post("/api/undo", json!({ "seq": history[0]["seq"] })).await;
+    let (_, history) = (StatusCode::OK, c.history(None).await);
+    c.post("/api/call/undo", json!({ "seq": history[0]["seq"] })).await;
     assert_eq!(cell(&c.view(json!({})).await, "Board detector", "estimate")["value"], 4.0);
 }
 
@@ -1015,7 +1014,7 @@ async fn taking_a_component_away_takes_its_cells() {
 async fn a_formulas_labels_leave_another_formulas_alone() {
     let c = Client::new();
     c.open("case-file").await;
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "id": "Clara", "cell": "arrives", "formula": "1 + 1", "labels": {} }] })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": "Clara", "cell": "arrives", "formula": "1 + 1", "labels": {} }] })).await;
     let v = c.view(json!({})).await;
     assert_eq!(cell(&v, "Clara", "arrives")["value"], 2.0);
     assert!(cell(&v, "Clara", "from_garden")["error"].is_null(), "from_garden still reads garden: {}", cell(&v, "Clara", "from_garden"));
@@ -1027,7 +1026,7 @@ async fn a_formulas_labels_leave_another_formulas_alone() {
 async fn a_weight_that_differs_between_worlds_is_an_error() {
     let c = Client::new();
     c.open("case-file").await;
-    c.post("/api/ops", json!({ "ops": [{ "op": "set", "from": "Tom", "to": "Who took it?", "cell": "weight", "formula": "if(from.arrives > 40, 3, 1)" }] })).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "from": "Tom", "to": "Who took it?", "cell": "weight", "formula": "if(from.arrives > 40, 3, 1)" }] })).await;
     let why = cell(&c.view(json!({})).await, "Who took it?", "chosen")["error"].as_str().unwrap_or_default().to_string();
     assert!(why.contains("differs between worlds"), "{why}");
 }

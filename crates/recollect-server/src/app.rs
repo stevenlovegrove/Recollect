@@ -1,21 +1,21 @@
-//! The open workspace. Every change goes through here, so the web UI, Claude and the file watcher
-//! all see the same thing, and every change that lands is an event in the log.
+//! The open workspace, on disk. Every change goes through here, so the web UI, Claude and the file
+//! watcher all see the same thing. What a workspace is and does is `recollect_core`: this reads its
+//! files, writes what each change says to, and notices when someone else changes them.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use notify::{RecursiveMode, Watcher};
-use recollect_graph::{CommitError, Log, Op, OpenError, Stored};
-use recollect_systems::samples::{FORMAT, SAMPLES, Sample};
-use recollect_systems::{Built, build};
-use serde::{Deserialize, Serialize};
+use recollect_core::{Effect, Files, SAMPLE_FORMAT, SAMPLE_MARKER, Workspace, Writes, dispatch, new_files, sample_files};
+use recollect_systems::samples::{SAMPLES, Sample};
+use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::broadcast;
-
-use crate::ops::{Resolved, resolve_ops};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -52,116 +52,124 @@ impl From<anyhow::Error> for AppError {
     }
 }
 
-/// `recollect.toml`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Config {
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub about: Option<String>,
-    #[serde(default)]
-    pub systems: Vec<String>,
-    /// Whether Claude may change things directly, rather than proposing them for review.
-    #[serde(default)]
-    pub llm_direct_writes: bool,
+impl From<recollect_core::Error> for AppError {
+    fn from(e: recollect_core::Error) -> Self {
+        match e {
+            recollect_core::Error::NotFound(s) => AppError::NotFound(s),
+            recollect_core::Error::Refused(s) => AppError::Refused(s),
+            recollect_core::Error::Other(s) => AppError::Other(anyhow!(s)),
+        }
+    }
 }
 
-/// A change-set waiting for someone to look at it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Proposal {
-    pub id: String,
-    pub title: String,
-    pub rationale: String,
-    pub ops: Vec<Op>,
-    pub author: String,
-    /// Milliseconds since 1970.
-    pub created: u64,
-}
-
-/// A proposal, and why it can't be accepted any more, if it can't.
-#[derive(Debug, Clone, Serialize)]
-pub struct ProposalView {
-    #[serde(flatten)]
-    pub proposal: Proposal,
-    pub error: Option<String>,
-}
+/// Held while a workspace is open, so two processes can't both write one.
+pub const LOCK: &str = ".recollect.lock";
 
 pub struct Open {
     pub dir: PathBuf,
-    pub config: Config,
-    pub built: Built,
-    pub log: Log,
-    pub proposals: Vec<Proposal>,
-    /// Set for a sample's working copy.
-    pub sample: Option<String>,
+    pub ws: Workspace,
+    _lock: File,
     _watcher: Option<notify::RecommendedWatcher>,
 }
 
 pub struct App {
-    /// Where samples are copied to, so working in one never touches the originals.
+    /// Where this keeps its own things: working copies of samples, and what was open last.
     pub home: PathBuf,
-    /// The samples as shipped.
-    pub samples: PathBuf,
     current: Mutex<Option<Open>>,
     pub events: broadcast::Sender<Event>,
 }
 
-fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+/// The files that make up a workspace, as `recollect_core` reads them. Anything else in the directory
+/// is the user's own.
+fn is_workspace_file(path: &str) -> bool {
+    path == "recollect.toml" || path == SAMPLE_MARKER || recollect_graph::is_node_path(path) || path.strip_prefix("proposals/").is_some_and(|n| n.ends_with(".json") && !n.starts_with('.') && !n.contains('/'))
 }
 
-fn slug(s: &str) -> String {
-    let mut out: String = s.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
-    while out.contains("--") {
-        out = out.replace("--", "-");
-    }
-    out.trim_matches('-').chars().take(40).collect()
-}
-
-fn copy_dir(from: &Path, to: &Path) -> Result<()> {
-    std::fs::create_dir_all(to)?;
-    for entry in std::fs::read_dir(from)? {
-        let path = entry?.path();
-        let name = path.file_name().context("a file with no name")?;
-        if name == "log.lock" {
-            continue;
+/// Every workspace file in a directory.
+pub fn read_files(dir: &Path) -> Result<Files> {
+    let mut out = Files::new();
+    for (sub, prefix) in [(dir.to_path_buf(), ""), (dir.join("nodes"), "nodes/"), (dir.join("proposals"), "proposals/")] {
+        let Ok(entries) = std::fs::read_dir(&sub) else { continue };
+        for entry in entries {
+            let entry = entry?;
+            let path = format!("{prefix}{}", entry.file_name().to_string_lossy());
+            if is_workspace_file(&path) && entry.file_type()?.is_file() {
+                out.insert(path, std::fs::read_to_string(entry.path()).with_context(|| format!("reading {}", entry.path().display()))?);
+            }
         }
-        if path.is_dir() {
-            copy_dir(&path, &to.join(name))?;
-        } else {
-            std::fs::copy(&path, to.join(name))?;
+    }
+    Ok(out)
+}
+
+/// Write what a change says to, each file replaced whole so a reader never sees half of one.
+pub fn write_files(dir: &Path, writes: &Writes) -> Result<()> {
+    for (path, text) in &writes.write {
+        let to = dir.join(path);
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let temp = to.with_file_name(format!(".{}.tmp", to.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()));
+        let mut file = File::create(&temp)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&temp, &to).with_context(|| format!("writing {}", to.display()))?;
+    }
+    for path in &writes.delete {
+        match std::fs::remove_file(dir.join(path)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+            _ => {}
         }
     }
     Ok(())
 }
 
-/// A formula written through the app or by Claude has to work when it's written, or it's refused,
-/// saying why. A hand edit can't be refused, so it stands and its cell says what's wrong.
-fn formulas_work(o: &Open, ops: &[Op]) -> Result<(), AppError> {
-    let g = o.log.what_if(ops).map_err(|v| AppError::Refused(v.iter().map(|v| format!("{}: {}", v.rule, v.detail)).collect::<Vec<_>>().join("; ")))?;
-    for op in ops {
-        if let Op::Set { on, cell, to: Some(Stored::Formula(_)) } = op
-            && let Err(e) = g.get_value(on.entity(), cell)
-        {
-            return Err(AppError::Refused(crate::views::error_text(&e, &g)));
+/// A lock belongs to the open file, so a process being spawned elsewhere in this program holds a
+/// copy for an instant until it execs, even for a workspace that was just closed. Only someone who
+/// keeps holding it is really using it.
+fn take_lock(dir: &Path) -> Result<File> {
+    let lock = OpenOptions::new().create(true).truncate(false).write(true).open(dir.join(LOCK))?;
+    let give_up = Instant::now() + Duration::from_millis(500);
+    loop {
+        match lock.try_lock() {
+            Ok(()) => return Ok(lock),
+            Err(std::fs::TryLockError::Error(e)) => return Err(e.into()),
+            Err(std::fs::TryLockError::WouldBlock) if Instant::now() >= give_up => return Err(anyhow!("{} is open in another process", dir.display())),
+            Err(std::fs::TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(2)),
         }
     }
-    Ok(())
 }
 
-fn refusal(e: CommitError) -> AppError {
-    match e {
-        CommitError::Refused(v) => AppError::Refused(v.iter().map(|v| format!("{}: {}", v.rule, v.detail)).collect::<Vec<_>>().join("; ")),
-        CommitError::NoSuchEvent(seq) => AppError::NotFound(format!("event {seq}")),
-        CommitError::NotOnThisBranch(seq) => AppError::Refused(format!("event {seq} isn't on this branch, so there's nothing here to undo")),
-        CommitError::Io(e) => AppError::Other(anyhow!(e).context("couldn't write the log")),
-        CommitError::FilesBehind { seq, error } => AppError::Other(anyhow!("event {seq} happened, but the files couldn't be brought up to date: {error:?}")),
+impl Open {
+    /// Read the files again, and bring in whatever someone else changed. Returns whether the graph
+    /// or the proposals changed.
+    fn sync(&mut self) -> Result<recollect_core::Changed> {
+        let disk = read_files(&self.dir)?;
+        let paths: BTreeSet<&String> = disk.keys().chain(self.ws.files().keys()).collect();
+        let changes: BTreeMap<String, Option<String>> = paths.into_iter().filter(|p| disk.get(*p) != self.ws.files().get(*p)).map(|p| (p.clone(), disk.get(p).cloned())).collect();
+        if changes.is_empty() {
+            return Ok(Default::default());
+        }
+        let changed = self.ws.files_changed(changes);
+        for p in &changed.problems {
+            tracing::warn!("{}: {p}", self.dir.display());
+        }
+        self.flush()?;
+        Ok(changed)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        let writes = self.ws.take_writes();
+        if !writes.is_empty() {
+            write_files(&self.dir, &writes).context("couldn't write the workspace's files")?;
+        }
+        Ok(())
     }
 }
 
 impl App {
-    pub fn new(home: PathBuf, samples: PathBuf) -> Arc<App> {
+    pub fn new(home: PathBuf) -> Arc<App> {
         let (events, _) = broadcast::channel(64);
-        Arc::new(App { home, samples, current: Mutex::new(None), events })
+        Arc::new(App { home, current: Mutex::new(None), events })
     }
 
     fn lock(&self) -> MutexGuard<'_, Option<Open>> {
@@ -177,18 +185,61 @@ impl App {
         let _ = self.events.send(e);
     }
 
-    pub fn sample_list(&self) -> Vec<&'static Sample> {
-        SAMPLES.iter().filter(|s| self.samples.join(s.name).exists()).collect()
+    pub fn sample_list(&self) -> &'static [Sample] {
+        SAMPLES
+    }
+
+    /// Ask the open workspace something, or change it, as `author`. A change first reads the files
+    /// again, so it's made on top of whatever someone else has done to them.
+    pub fn call(&self, method: &str, args: Value, author: &str) -> Result<Value, AppError> {
+        let (value, effect, changed) = self.with(|o| {
+            let reads = matches!(method, "view" | "plan" | "try" | "sweep" | "rows" | "history" | "proposals");
+            let changed = if reads { Default::default() } else { o.sync()? };
+            let (value, effect) = dispatch(&mut o.ws, method, args, author)?;
+            o.flush()?;
+            Ok((value, effect, changed))
+        })?;
+        self.announce(&changed, "disk");
+        let Effect { graph, proposals } = effect;
+        if graph {
+            self.send(Event::GraphChanged { by: author.to_string() });
+        }
+        if proposals {
+            self.send(Event::ProposalsChanged);
+        }
+        Ok(value)
+    }
+
+    fn announce(&self, changed: &recollect_core::Changed, by: &str) {
+        if changed.graph {
+            self.send(Event::GraphChanged { by: by.to_string() });
+        }
+        if changed.proposals {
+            self.send(Event::ProposalsChanged);
+        }
+        if changed.workspace {
+            self.send(Event::WorkspaceChanged);
+        }
     }
 
     /// Open a workspace directory, in place of whatever's open.
     pub fn open_dir(self: &Arc<Self>, dir: &Path, sample: Option<String>) -> Result<(), AppError> {
         let mut current = self.lock();
-        // The log's lock has to be free, in case this is the same directory.
+        // The lock has to be free, in case this is the same directory.
         *current = None;
-        let opened = load(dir, sample).map_err(AppError::Other)?;
-        let mut opened = opened;
-        opened._watcher = watch(self.clone(), dir).map_err(AppError::Other).map(Some)?;
+        let dir = std::path::absolute(dir).map_err(|e| AppError::Other(e.into()))?;
+        if !dir.join("recollect.toml").exists() {
+            return Err(AppError::Other(anyhow!("{} isn't a workspace: it has no recollect.toml", dir.display())));
+        }
+        let lock = take_lock(&dir).map_err(AppError::Other)?;
+        let files = read_files(&dir).map_err(AppError::Other)?;
+        let (ws, problems) = Workspace::load(&dir.display().to_string(), &dir.display().to_string(), sample, files)?;
+        for p in problems {
+            tracing::info!("{}: {p}", dir.display());
+        }
+        let mut opened = Open { dir: dir.clone(), ws, _lock: lock, _watcher: None };
+        opened.flush().map_err(AppError::Other)?;
+        opened._watcher = Some(watch(self.clone(), &dir).map_err(AppError::Other)?);
         *current = Some(opened);
         drop(current);
         let _ = std::fs::create_dir_all(&self.home);
@@ -197,11 +248,9 @@ impl App {
         Ok(())
     }
 
-    /// Open a sample's working copy, making it from the original if it isn't there or `reset` says so.
+    /// Open a sample's working copy, making it if it isn't there or `reset` says so.
     pub fn open_sample(self: &Arc<Self>, name: &str, reset: bool) -> Result<(), AppError> {
-        if !SAMPLES.iter().any(|s| s.name == name) || !self.samples.join(name).exists() {
-            return Err(AppError::NotFound(format!("sample {name}")));
-        }
+        let fresh = sample_files(name).ok_or_else(|| AppError::NotFound(format!("sample {name}")))?;
         let dir = self.home.join("samples").join(name);
         {
             let mut current = self.lock();
@@ -213,26 +262,23 @@ impl App {
             std::fs::remove_dir_all(&dir).context("couldn't remove the working copy").map_err(AppError::Other)?;
         }
         // A copy made when samples meant something else would be misread, so it's put aside.
-        let marker = dir.join("sample-format");
-        if dir.exists() && std::fs::read_to_string(&marker).ok().as_deref() != Some(FORMAT) {
-            let aside = self.home.join("samples-superseded").join(format!("{name}-{}", now_ms()));
+        if dir.exists() && std::fs::read_to_string(dir.join(SAMPLE_MARKER)).ok().as_deref() != Some(SAMPLE_FORMAT) {
+            let aside = self.home.join("samples-superseded").join(format!("{name}-{}", recollect_graph::now_ms()));
             std::fs::create_dir_all(self.home.join("samples-superseded")).map_err(|e| AppError::Other(e.into()))?;
             std::fs::rename(&dir, &aside).context("couldn't put the old working copy aside").map_err(AppError::Other)?;
         }
         if !dir.exists() {
-            copy_dir(&self.samples.join(name), &dir).map_err(AppError::Other)?;
-            std::fs::write(&marker, FORMAT).map_err(|e| AppError::Other(e.into()))?;
+            write_files(&dir, &Writes { write: fresh, delete: vec![] }).map_err(AppError::Other)?;
         }
         self.open_dir(&dir, Some(name.to_string()))
     }
 
     /// Make a new, empty workspace, and open it.
     pub fn create(self: &Arc<Self>, dir: &Path, name: &str, systems: Vec<String>) -> Result<(), AppError> {
-        build(&systems).map_err(AppError::Refused)?;
         if dir.join("recollect.toml").exists() {
             return Err(AppError::Refused(format!("{} is already a workspace", dir.display())));
         }
-        init(dir, name, systems).map_err(AppError::Other)?;
+        init(dir, name, systems)?;
         self.open_dir(dir, None)
     }
 
@@ -253,215 +299,54 @@ impl App {
         }
     }
 
-    /// Commit these ops. Returns what any `new:` names in them became.
-    pub fn apply(&self, ops: Vec<Value>, author: &str, why: &str) -> Result<Resolved, AppError> {
-        let resolved = self.with(|o| {
-            let resolved = resolve_ops(ops, o.log.graph()).map_err(AppError::Refused)?;
-            formulas_work(o, &resolved.ops)?;
-            o.log.commit(author, why, resolved.ops.clone()).map_err(refusal)?;
-            Ok(resolved)
-        })?;
-        self.send(Event::GraphChanged { by: author.to_string() });
-        Ok(resolved)
-    }
-
-    /// Go to any point in the log. The next change follows from there, starting a branch if it needs
-    /// to, and nothing is lost. Any edit on disk that hasn't been noticed yet is recorded first, so it
-    /// stays on the branch it was made on.
-    pub fn checkout(&self, seq: u64, author: &str, why: &str) -> Result<(), AppError> {
-        self.with(|o| {
-            o.log.reload("disk").map_err(|e| AppError::Other(anyhow!("couldn't read the files: {e:?}")))?;
-            o.log.checkout(seq, author, why).map_err(refusal)
-        })?;
-        self.send(Event::GraphChanged { by: author.to_string() });
-        Ok(())
-    }
-
-    pub fn undo(&self, seq: u64, author: &str, why: &str) -> Result<u64, AppError> {
-        let out = self.with(|o| o.log.undo(seq, author, why).map_err(refusal))?;
-        self.send(Event::GraphChanged { by: author.to_string() });
-        Ok(out)
-    }
-
-    /// Store a change-set for review. It has to apply cleanly as things stand.
-    pub fn propose(&self, title: String, rationale: String, ops: Vec<Value>, author: &str) -> Result<Proposal, AppError> {
-        let p = self.with(|o| {
-            let resolved = resolve_ops(ops, o.log.graph()).map_err(AppError::Refused)?;
-            formulas_work(o, &resolved.ops)?;
-            let created = now_ms();
-            let mut id = format!("{created}-{}", slug(&title));
-            let mut n = 2;
-            while o.proposals.iter().any(|p| p.id == id) {
-                id = format!("{created}-{}-{n}", slug(&title));
-                n += 1;
-            }
-            let p = Proposal { id, title, rationale, ops: resolved.ops, author: author.to_string(), created };
-            save_proposal(&o.dir, &p).map_err(AppError::Other)?;
-            o.proposals.push(p.clone());
-            Ok(p)
-        })?;
-        self.send(Event::ProposalsChanged);
-        Ok(p)
-    }
-
-    pub fn proposals(&self) -> Result<Vec<ProposalView>, AppError> {
-        self.with(|o| {
-            Ok(o.proposals
-                .iter()
-                .map(|p| {
-                    let error = o.log.what_if(&p.ops).err().map(|v| v.iter().map(|v| format!("{}: {}", v.rule, v.detail)).collect::<Vec<_>>().join("; "));
-                    ProposalView { proposal: p.clone(), error }
-                })
-                .collect())
-        })
-    }
-
-    /// Commit a proposal, or some of its ops by index, and take it out of the inbox.
-    pub fn accept(&self, id: &str, only: Option<&[usize]>) -> Result<u64, AppError> {
-        let seq = self.with(|o| {
-            let at = o.proposals.iter().position(|p| p.id == id).ok_or_else(|| AppError::NotFound(format!("proposal {id}")))?;
-            let p = o.proposals[at].clone();
-            let ops: Vec<Op> = match only {
-                Some(idx) => idx.iter().filter_map(|i| p.ops.get(*i).cloned()).collect(),
-                None => p.ops.clone(),
-            };
-            let why = if p.rationale.is_empty() { p.title.clone() } else { format!("{}: {}", p.title, p.rationale) };
-            let seq = o.log.commit(&p.author, &why, ops).map_err(refusal)?;
-            remove_proposal(&o.dir, id).map_err(AppError::Other)?;
-            o.proposals.remove(at);
-            Ok(seq)
-        })?;
-        self.send(Event::GraphChanged { by: "review".to_string() });
-        self.send(Event::ProposalsChanged);
-        Ok(seq)
-    }
-
-    pub fn reject(&self, id: &str) -> Result<(), AppError> {
-        self.with(|o| {
-            let before = o.proposals.len();
-            o.proposals.retain(|p| p.id != id);
-            if o.proposals.len() == before {
-                return Err(AppError::NotFound(format!("proposal {id}")));
-            }
-            remove_proposal(&o.dir, id).map_err(AppError::Other)
-        })?;
-        self.send(Event::ProposalsChanged);
-        Ok(())
-    }
-
-    /// Look at the files again, after something on disk changed. Files the log wrote itself are
-    /// no difference, so this only records what someone else did.
+    /// Look at the files again, after something on disk changed. Files this wrote itself are no
+    /// difference, so this only records what someone else did.
     fn reload(&self, dir: &Path) {
-        let mut changed = false;
-        let mut proposals_changed = false;
-        {
+        let changed = {
             let mut current = self.lock();
             let Some(o) = current.as_mut().filter(|o| o.dir == dir) else { return };
-            match o.log.reload("disk") {
-                Ok(seq) => changed = seq.is_some(),
-                Err(e) => tracing::warn!("couldn't read the files: {e:?}"),
-            }
-            match load_proposals(dir) {
-                Ok(p) if p != o.proposals => {
-                    o.proposals = p;
-                    proposals_changed = true;
+            match o.sync() {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!("couldn't read the files: {e:#}");
+                    return;
                 }
-                Ok(_) => {}
-                Err(e) => tracing::warn!("couldn't read the proposals: {e:#}"),
             }
-        }
-        if changed {
-            self.send(Event::GraphChanged { by: "disk".to_string() });
-        }
-        if proposals_changed {
-            self.send(Event::ProposalsChanged);
-        }
+        };
+        self.announce(&changed, "disk");
     }
 }
 
 /// Make a workspace directory.
-pub fn init(dir: &Path, name: &str, systems: Vec<String>) -> Result<()> {
-    std::fs::create_dir_all(dir)?;
-    let config = Config { name: name.to_string(), about: None, systems, llm_direct_writes: false };
-    std::fs::write(dir.join("recollect.toml"), toml::to_string(&config)?)?;
-    std::fs::write(dir.join(".gitignore"), "log.lock\nlog.applied\n")?;
-    Ok(())
+pub fn init(dir: &Path, name: &str, systems: Vec<String>) -> Result<(), AppError> {
+    let mut files = new_files(name, systems)?;
+    files.insert(".gitignore".to_string(), format!("{LOCK}\n"));
+    write_files(dir, &Writes { write: files, delete: vec![] }).map_err(AppError::Other)
 }
 
-fn load(dir: &Path, sample: Option<String>) -> Result<Open> {
-    let path = dir.join("recollect.toml");
-    let text = std::fs::read_to_string(&path).with_context(|| format!("{} isn't a workspace: it has no recollect.toml", dir.display()))?;
-    let config: Config = toml::from_str(&text).with_context(|| format!("reading {}", path.display()))?;
-    if let Ok(entries) = std::fs::read_dir(dir.join("nodes"))
-        && entries.flatten().any(|e| e.path().extension().is_some_and(|x| x == "md"))
-    {
-        bail!("{} was made by an older version of Recollect, which this can't read", dir.display());
-    }
-    let built = build(&config.systems).map_err(|e| anyhow!(e))?;
-    let (log, problems) = Log::open(dir, built.registry.clone(), "disk").map_err(|e| match e {
-        OpenError::Locked => anyhow!("{} is open in another process", dir.display()),
-        OpenError::Corrupt { line, detail } => anyhow!("line {line} of the log can't be read: {detail}"),
-        OpenError::Dir(e) => anyhow!("{e:?}"),
-    })?;
-    for p in problems {
-        tracing::info!("{}: {p:?}", dir.display());
-    }
-    let proposals = load_proposals(dir)?;
-    Ok(Open { dir: dir.to_path_buf(), config, built, log, proposals, sample, _watcher: None })
-}
-
-fn proposals_dir(dir: &Path) -> PathBuf {
-    dir.join("proposals")
-}
-
-fn load_proposals(dir: &Path) -> Result<Vec<Proposal>> {
-    let mut out = BTreeMap::new();
-    let Ok(entries) = std::fs::read_dir(proposals_dir(dir)) else { return Ok(vec![]) };
-    for entry in entries {
-        let path = entry?.path();
-        if path.extension().is_some_and(|x| x == "json") {
-            let p: Proposal = serde_json::from_str(&std::fs::read_to_string(&path)?).with_context(|| format!("reading {}", path.display()))?;
-            out.insert(p.id.clone(), p);
-        }
-    }
-    Ok(out.into_values().collect())
-}
-
-fn save_proposal(dir: &Path, p: &Proposal) -> Result<()> {
-    std::fs::create_dir_all(proposals_dir(dir))?;
-    std::fs::write(proposals_dir(dir).join(format!("{}.json", p.id)), serde_json::to_string_pretty(p)?)?;
-    Ok(())
-}
-
-fn remove_proposal(dir: &Path, id: &str) -> Result<()> {
-    let path = proposals_dir(dir).join(format!("{id}.json"));
-    if path.exists() {
-        std::fs::remove_file(path)?;
-    }
-    Ok(())
-}
-
-/// Notice when node or proposal files change on disk: hand edits, `git pull`, other tools.
+/// Notice when files change on disk: hand edits, `git pull`, other tools.
 fn watch(app: Arc<App>, dir: &Path) -> Result<notify::RecommendedWatcher> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(ev) = res {
             let relevant = ev.paths.iter().any(|p| {
                 let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                !name.starts_with('.') && (name.ends_with(".yaml") || name.ends_with(".json"))
+                !name.starts_with('.') && (name.ends_with(".yaml") || name.ends_with(".json") || name.ends_with(".toml"))
             });
             if relevant {
                 let _ = tx.send(());
             }
         }
     })?;
-    std::fs::create_dir_all(proposals_dir(dir))?;
+    std::fs::create_dir_all(dir.join("nodes"))?;
+    std::fs::create_dir_all(dir.join("proposals"))?;
+    watcher.watch(dir, RecursiveMode::NonRecursive)?;
     watcher.watch(&dir.join("nodes"), RecursiveMode::NonRecursive)?;
-    watcher.watch(&proposals_dir(dir), RecursiveMode::NonRecursive)?;
+    watcher.watch(&dir.join("proposals"), RecursiveMode::NonRecursive)?;
     let dir = dir.to_path_buf();
     tokio::spawn(async move {
         while rx.recv().await.is_some() {
-            // Debounce bursts: editors, git checkouts, and this process's own commits.
+            // Debounce bursts: editors, git checkouts, and this process's own writes.
             tokio::time::sleep(Duration::from_millis(150)).await;
             while rx.try_recv().is_ok() {}
             let (app, dir) = (app.clone(), dir.clone());

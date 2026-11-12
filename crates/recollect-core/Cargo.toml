@@ -1,0 +1,13 @@
+[package]
+name = "recollect-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A workspace: its files, its graph, proposals, and everything the app and Claude can ask of it. No I/O: it's given files and says which to write, so the same code runs in the server and in a browser."
+
+[dependencies]
+recollect-graph = { path = "../recollect-graph" }
+recollect-systems = { path = "../recollect-systems" }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true

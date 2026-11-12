@@ -1,4 +1,4 @@
-//! Write the sample workspaces, through a real log: `cargo run -p recollect-systems --example write_samples -- examples`.
+//! Write the sample workspaces: `cargo run -p recollect-systems --example write_samples -- examples`.
 
 use std::path::PathBuf;
 
@@ -14,9 +14,9 @@ fn main() {
         std::fs::write(dir.join("recollect.toml"), config_text(s)).unwrap();
         let names: Vec<String> = s.systems.iter().map(|n| n.to_string()).collect();
         let built = recollect_systems::build(&names).unwrap();
-        let (mut log, problems) = Log::open(&dir, built.registry, "sample").unwrap();
-        assert_eq!(problems, vec![], "{}", s.name);
+        let mut log = Log::new(built.registry);
         log.commit("sample", s.about, ops_of(s)).unwrap_or_else(|e| panic!("{}: {e:?}", s.name));
+        log.graph().save_dir(&dir).unwrap();
         println!("{}: {} nodes", s.name, log.graph().entities().count());
     }
 }
