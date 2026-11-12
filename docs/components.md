@@ -148,7 +148,7 @@ A commit also checks what it touched against the definitions: a component nothin
 
 So `need` is only on what's in a plan's structure: what's part of something or has parts, an option, or work. A plain note on its own, a suspect with nothing beneath it, or a piece of evidence has none. A note that's part of something has `part`, so need still flows down through it.
 
-A belief isn't a cell. It depends on what's pinned, so the server works it out for each view: an option's `chance` is how strongly it's believed among the worlds left, and its `weight` is its share of its decision's weights, before any evidence. The app shows both on the `option` and `uncertain` cards.
+A belief isn't a cell. It depends on what's pinned, so it's worked out for each view: an option's `chance` is how strongly it's believed among the worlds left, and its `weight` is its share of its decision's weights, before any evidence. The app shows both on the `option` and `uncertain` cards.
 
 ## What the app shows
 
@@ -200,20 +200,22 @@ A `Graph` is `Send + Sync`. Reading takes `&self` and writing `&mut self`, so sh
 
 ## The log
 
-A graph held by a `Log` only changes through `commit`: `log.graph()` gives `&Graph`, so the types enforce it. Its state is the replay of its events.
+A graph held by a `Log` only changes through `commit`: `log.graph()` gives `&Graph`, so the types enforce it. Its state is where it was opened from, plus the replay of its events. The log lives in memory for as long as a workspace is open, and is what undo, redo and "who did this" work from. It isn't saved: what's saved is the graph, as files.
 
 ```rust
-let (mut log, problems) = Log::open(dir, registry, "disk")?;
+let (mut log, problems) = Log::from_saved(saved, registry);   // from files; `Log::new` for an empty one
 
 let seq = log.commit("steven", "CAD model is already accurate", vec![plan::choose(calib, cad)])?;
 
 log.blame(On::Node { id: calib }, "chosen");   // who last wrote it, when and why
 log.history(Target::Node(calib));             // everything that touched it
 log.state_at(seq);                            // the graph just after that event, as a new Graph
-log.undo(seq, "steven", "changed my mind")?;  // appends the inverse; history isn't rewritten
-log.checkout(seq, "steven", "try another way")?; // go to any event; the next commit follows from it
+log.undo_last("steven")?;                     // takes back the newest change, by appending its inverse
+log.redo("steven")?;                          // takes back that undo, the same way
+log.undo(seq, "steven", "changed my mind")?;  // takes back any one event
 log.what_if(&ops);                            // the same code as a commit, writing nothing
-log.reconcile(&files, "git pull")?;           // an outside edit, as ordinary audited ops
+log.reconcile(&files, "git pull");            // an outside edit, as ordinary audited ops
+log.take_changes();                           // the node files to write since this was last asked
 ```
 
 There are seven ops, each with an exact inverse:
@@ -228,23 +230,27 @@ There are seven ops, each with an exact inverse:
 | Take one off an edge | `{"op": "unlink", "from", "to", "component"}` |
 | Write in a cell, or with neither field take away what's written | `{"op": "set", "id", "cell", "value"}`, or `"formula"`, with `"from"` and `"to"` in place of `"id"` for an edge |
 
-The server's op language, which the app and Claude write, comes down to these. It adds names for handles, `new:x` for a node that doesn't exist yet, `add_node`, `delete_node` (which unlinks the node's edges first), `table`, and `labels` with a formula. Writing in a cell of a component a node doesn't have gives it that component. See `crates/recollect-server/src/ops.rs`.
+The op language the app and Claude write comes down to these. It adds names for handles, `new:x` for a node that doesn't exist yet, `add_node`, `delete_node` (which unlinks the node's edges first), `table`, and `labels` with a formula. Writing in a cell of a component a node doesn't have gives it that component. See `crates/recollect-core/src/ops.rs`.
 
-A commit is all or nothing. It applies its ops, runs the checks, and if anything is newly broken, takes the ops back out and returns `CommitError::Refused` with what and where. Nothing is logged and no file changes. Checks already broken, such as by a hand edit, don't block other work, and `log.violations()` lists what stands.
+A commit is all or nothing. It applies its ops, runs the checks, and if anything is newly broken, takes the ops back out and returns `CommitError::Refused` with what and where. Nothing is logged. Checks already broken, such as by a hand edit, don't block other work, and `log.violations()` lists what stands.
 
 `no_deadlock` needs no graph search. Everything in a plan has two internal cells, `can_start` (its parents started and what it depends on finished) and `can_finish` (it started and its parts finished). Work that can never complete is exactly a cycle among those, which the engine already reports.
 
-### History is a tree
+### Undo and redo
 
-Every event has a `parent`, and the log has a **head**: where it is now, and what the files show. `checkout` moves the head to any event, so the next commit starts a branch from there if that isn't the end of one. Nothing is rewritten and nothing is lost. Events are numbered in the order they happened, whichever branch they're on, and the head moving is a record of its own, so who moved it and when is known and it survives a reopen.
-
-`blame`, `history` and `path` look only at what led to the head. `undo` refuses an event that isn't on the way here, because its inverse wouldn't mean anything from here. `state_at` follows an event's own ancestors.
-
-Going somewhere takes the shortest way: back to where the two branches split using inverses, and on from there using ops. So memos survive, and only what differs reruns.
+History is a line. Undoing appends the inverse of the newest change not yet undone, and redoing appends the inverse of that undo, so both are ordinary changes: checked like any other, with an author, and refused if they'd newly break something, as when what an undo would bring back has since been ruled out. Each says which event it takes back (`reverts`). Any other change, a hand edit included, ends what can be redone.
 
 ### Files
 
-The log and `save_dir` both write one file per node, `nodes/<id>.yaml`:
+A workspace is files at paths relative to its root:
+
+```
+recollect.toml       its name, which systems it uses, and whether Claude may change it directly
+nodes/<id>.yaml      a node each, with its edges
+proposals/<id>.json  changes waiting for review
+```
+
+`recollect-core` reads them and says which to write after each change, and the host, the server or a browser, does the reading and writing. A node's file looks like this:
 
 ```yaml
 id: 01a1bff4-e98a-7511-803e-a718fc43b670
@@ -269,35 +275,19 @@ links:
     called: trip
 ```
 
-`components` are the ones it was given, `cells` its values and `formulas` its formulas, so a value can't be mistaken for a formula. Each edge lives with its source, with its own `components`, `cells` and `formulas`. Only what was written is saved: never memos, defaults, what a kind gives or what's brought. Files whose text is unchanged aren't rewritten, so a commit shows only real changes. Files for nodes that are gone are removed, and anything not named like a node file is left alone.
+`components` are the ones it was given, `cells` its values and `formulas` its formulas, so a value can't be mistaken for a formula. Each edge lives with its source, with its own `components`, `cells` and `formulas`. Only what was written is saved: never memos, defaults, what a kind gives or what's brought. Files whose text is unchanged aren't rewritten, so a change shows only what really changed. Files for nodes that are gone are removed.
 
-Nothing in a file needs a system to be read. A component or cell nothing provides goes back out exactly as it came in, and a log reports it as standing. An edge to a node with no file is kept, reported, and the node exists with nothing on it. A formula that can't be read is kept as written and reported.
+Any `.yaml` directly in `nodes/` is read, whatever it's called: the node is the `id` inside. A node lives in the file it came from, so one made by hand or by another program as `nodes/an-idea.yaml` stays there and is written back there. Only a new node gets a file named for it.
 
-Logs and files from before components had cells aren't read. A working copy of a sample from before samples last changed is moved aside to `~/.recollect/samples-superseded`.
+Nothing in a file needs a system to be read. A component or cell nothing provides goes back out exactly as it came in, and is reported as standing. An edge to a node with no file is kept, reported, and the node exists with nothing on it, and gets a file. A formula that can't be read is kept as written and reported.
 
-### On disk, and crashes
+When files change underneath an open workspace, by hand, `git pull` or another program, the host says which, and the difference is recorded as an event by `disk`, so it can be undone like anything else. A file that can't be read, such as one caught half written, is left as it was understood before. Files from older versions, such as a `log.jsonl`, are ignored.
 
-```
-log.jsonl      what's true: append-only, one record per line
-log.applied    how far the files have caught up
-nodes/*.yaml   a projection of the log, and the place to edit by hand
-log.lock       so two processes can't write one log
-```
+Each file is replaced whole when it's written, so a reader never sees half of one, but there's no log on disk any more, so a process stopped part way through a change that touches several files can leave some newer than others. A workspace kept in a browser is written in one transaction, so it can't.
 
-A commit appends a line to `log.jsonl` and flushes it, **which is the moment it happens**. Then it replaces the affected files, each atomically, flushes, and moves `log.applied` on. Opening repairs whatever a crash left:
+### Long chains on the web
 
-| What it finds | What it does |
-|---|---|
-| A last line with no newline | That commit never returned. It's cut off and reported as `TornLog` |
-| A file equal to the state at `log.applied`, or to the latest state | It's at most behind, so it's rewritten silently |
-| Any other difference | Someone edited it. It's recorded as an event under the `author` given to `open`, and it stands, even if a crash happened too |
-| A complete but unreadable line | `OpenError::Corrupt`, naming the line, since a crash can't cause this |
-
-If the log can't be written, the commit is undone and returns `CommitError::Io`. If only the files can't, it did happen, so `CommitError::FilesBehind` says so and the next commit repairs them.
-
-A crash while going back leaves the log either there or where it was, with the files caught up and no false edit. An edit on disk that hasn't been noticed yet should be recorded before moving, so it stays on the branch it was made on, which the app does.
-
-`Graph::save_dir` is there for a graph with no log. Each file is replaced atomically, but a crash can leave some newer than others.
+Natively the stack grows as a chain of cells needs it (`stacker`). In WebAssembly it can't, so a chain is worked out in stretches: a cell too deep to finish where it was asked for is put off, worked out from the top, the stretches above it worked out again, and the read tried again. What read a put-off cell is marked as needing to be worked out again, so nothing it gave while it was put off is kept. The answer is the same either way, which `tests/depth.rs` checks against every sample with a limit of 5. A loop too long to see from one stretch ends, after enough tries, in an error rather than going on forever.
 
 ## Planning
 

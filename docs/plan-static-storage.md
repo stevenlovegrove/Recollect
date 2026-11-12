@@ -1,6 +1,12 @@
 # Plan: abstracted storage, and Recollect as a static site
 
-Status: for review. Nothing here is built yet.
+Status: built. What follows is the plan as it was agreed. Where the work went differently:
+
+- **Long chains on the web.** Raising the wasm stack size with a linker flag did nothing, because wasm calls run on the JavaScript engine's own stack, which a page can't raise, and 3,000 levels of parts ran out of it. Instead the engine works long chains out in stretches: a cell too deep to finish is put off, worked out from the top, and the read tried again (`Graph::reading` in `recollect-graph/src/graph.rs`). Natively there's no limit, so nothing changes there. `tests/depth.rs` checks the answers are the same at a limit of 5 for every sample. 10,000 levels takes about 13 s in wasm against 6 s natively. If the engine traps anyway, the worker starts it again from the saved files.
+- **A node keeps the file it came from.** A file made by hand or by an agent, like `nodes/an-idea.yaml`, is read as its node and written back to, rather than copied to `nodes/<id>.yaml`. Otherwise the agent's later edits to its own file would lose to the copy.
+- **Two tabs.** The second tab takes over by itself when the first closes, rather than asking to be reloaded.
+- **Undo and redo** are in the engine (`Log::undo_last`, `Log::redo`), each an ordinary checked event, and on ⌘Z and ⇧⌘Z.
+- **Debugging.** The page's backend is `window.recollect`, and `openFolder` and `createInFolder` take a directory handle, so a folder workspace can be driven without the picker, such as with the private file system the browser gives each site (OPFS).
 
 ## Where things stand
 

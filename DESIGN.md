@@ -8,20 +8,21 @@ The engine underneath is described in [docs/components.md](docs/components.md). 
 
 **A decision stays open, exactly.** Each open choice is a variable, and a *world* is one way all of them could land. Any value can differ between worlds, and is stored as the exact set of worlds where each answer holds, so `need(static) = calib∈{cad,free}` is both the value and its explanation. Nothing is approximated, and nothing is written onto a decision's children, so reopening it brings everything back with nothing to undo.
 
-**Looking at a world saves nothing.** Pin any choices and every value in the app reads as it would then. The server works this out with the same code, by narrowing what it has, so a what-if and the real thing can't disagree. That one mechanism is the app's what-if for a plan, its filter for a budget, and how you explore a puzzle.
+**Looking at a world saves nothing.** Pin any choices and every value in the app reads as it would then. The engine works this out with the same code, by narrowing what it has, so a what-if and the real thing can't disagree. That one mechanism is the app's what-if for a plan, its filter for a budget, and how you explore a puzzle.
 
 ## Workspaces and systems
 
-A workspace is a directory:
+A workspace is a directory of plain files:
 
 ```
 recollect.toml       its name, and which systems it uses
-log.jsonl            what's true: every change, who made it, and why
 nodes/<id>.yaml      a node each, with its edges, as plain data that can be edited by hand
 proposals/<id>.json  changes waiting for review
 ```
 
-The log is the source of truth, and the YAML files are a projection of where it is now. History is a tree, like git's: going back to an earlier event moves everything there, files included, and changing something from there starts a new branch, with nothing lost. There's no separate read-only way of looking at the past, because you can just be there. Editing a file by hand, or a `git pull`, is noticed and recorded as an event under the author `disk`. A workspace lives happily in git.
+The files are what's true. While a workspace is open, every change is an event in a log kept in memory, saying who made it and why, which is what undo and redo work from: undoing is a change too, so it can be redone. Editing a file by hand, another program writing one, or a `git pull`, is noticed and recorded as an event under the author `disk`, which can be undone like anything else. A workspace lives happily in git, and git is what keeps its history between sessions.
+
+The same engine runs in two places. In a browser, as a static site, it's WebAssembly in a worker, and a workspace is kept in the browser or in a folder on the computer. With `recollect serve`, it's in the server, which also serves Claude over MCP. Either way the engine is `recollect-core`, which does no I/O: it's given a workspace's files and says which to write after each change, so the browser and the server only read and write files.
 
 Nodes and the edges between them are both entities, and each has components, such as `task` on a node or `part_of` on an edge. A component brings cells, so `task` brings `estimate` and an `alternative` edge brings `weight`, and a cell is only there on an entity with its component. A **system** provides components, their cells and their checks, and a workspace lists the ones it uses:
 
@@ -61,17 +62,17 @@ A cell holds a typed value or a formula, and that's the same whether a person wr
 | **Work** | Tasks by where they stand: can start, depends on a decision, waiting, finished, not needed | `plan` |
 | **Timeline** | Dates as a chart, with hatching for how far a date could move | `schedule` |
 | **Checks** | Invariants that are broken, and notices worth a look | Always |
-| **History** | The log as a tree, with every branch. Go to any event, undo any on the way here, and a change after going back starts a new branch | Always |
+| **History** | Every change since the workspace was opened, with undo and redo (⌘Z, ⇧⌘Z), and any one change can be taken back on its own | Always |
 | **Inbox** | Changes proposed for review, accepted whole or in part | Always |
-| **Files** | The workspace's files as they are on disk, read-only, for debugging | Always |
+| **Files** | The workspace's files as they are, read-only, for debugging | Always |
 
 The world bar above them all says what everything's narrowed to.
 
 ## Claude, over MCP
 
-One process serves the web UI and an MCP server at `/mcp`, so the UI updates live as Claude works. Claude reads with `get_overview`, `get_node`, `get_tree`, `get_work`, `get_decisions`, `read_world`, `find_checks`, `get_history` and search, most of which take a world, so it can answer a what-if the same way the app does.
+`recollect serve` serves the web UI and an MCP server at `/mcp`, so the UI updates live as Claude works. A browser with the same folder open sees Claude's changes too, as changes to the files. Claude reads with `get_overview`, `get_node`, `get_tree`, `get_work`, `get_decisions`, `read_world`, `find_checks`, `get_history` and search, most of which take a world, so it can answer a what-if the same way the app does.
 
-It writes with `propose`, whose change-set is checked as if committed, and lands in the inbox with its rationale. A formula with a type error or an unknown input is refused there, with the reason. `apply` writes directly, only if the workspace sets `llm_direct_writes = true`. Ops are the log's seven (`spawn`, `despawn`, `add`, `remove`, `link`, `unlink` and `set`), plus a little to make them easier to write: names for handles, `new:x` for a node that doesn't exist yet, `add_node`, `delete_node`, `table`, and `formula` with `labels` to set a formula and say what its names mean as one change. Writing in a cell of a component a node doesn't have gives it that component. See `crates/recollect-server/src/ops.rs`.
+It writes with `propose`, whose change-set is checked as if committed, and lands in the inbox with its rationale. A formula with a type error or an unknown input is refused there, with the reason. `apply` writes directly, only if the workspace sets `llm_direct_writes = true`. Ops are the log's seven (`spawn`, `despawn`, `add`, `remove`, `link`, `unlink` and `set`), plus a little to make them easier to write: names for handles, `new:x` for a node that doesn't exist yet, `add_node`, `delete_node`, `table`, and `formula` with `labels` to set a formula and say what its names mean as one change. Writing in a cell of a component a node doesn't have gives it that component. See `crates/recollect-core/src/ops.rs`.
 
 Whichever way a change arrives, the rules are the same: it's all or nothing, and only what it newly breaks is refused, so a hand edit that broke something doesn't block other work.
 
@@ -82,14 +83,16 @@ crates/
   recollect-graph         The engine: entities, components and cells, memoisation, worlds, the log. Knows nothing of planning
   recollect-graph-macros  #[cell] and #[component]
   recollect-systems       notes, formulas, plan, schedule, views, and the samples
-  recollect-server        The `recollect` binary: workspaces, REST, WebSocket events, MCP
+  recollect-core          A workspace: its files, proposals, views, and every call through one `dispatch`. No I/O
+  recollect-wasm          recollect-core for the browser
+  recollect-server        The `recollect` binary: workspaces on disk, REST, WebSocket events, MCP
 examples/                 The sample workspaces, written by recollect-systems' write_samples
-web/                      Vite, React, React Flow and ELK
+web/                      Vite, React, React Flow and ELK. `src/engine` runs the engine in a worker, with its stores
 ```
 
 ## The samples
 
-The example problems are real workspaces in `examples/`, offered when nothing's open and under the workspace menu. Opening one makes a working copy in `~/.recollect/samples`, so the originals never change, and it can be started again. `tests/samples.rs` checks what's committed still means what it should: an invoice that totals 96, a budget over £200 exactly when `Stay=Hotel`, 92 queens, 288 grids, and the Japanese owning the zebra.
+The example problems are real workspaces in `examples/`, offered when nothing's open and under the workspace menu. Opening one makes a working copy, kept in the browser or, with `recollect serve`, in `~/.recollect/samples`, so the originals never change, and it can be started again. `tests/samples.rs` checks what's committed still means what it should: an invoice that totals 96, a budget over £200 exactly when `Stay=Hotel`, 92 queens, 288 grids, and the Japanese owning the zebra.
 
 ## What was dropped from the first version
 
@@ -101,13 +104,15 @@ The first version had its own model, and these didn't survive the move to the en
 - **Tags, aliases, wikilinks and `created_by`.** A name is a cell, and the log says who did what.
 - **`merge_nodes`.** It can come back as a proposal that moves edges, with no special op.
 - **`outcome`, `actionable`, `uncertain`, `principle` and `artifact`, with presets.** Now `goal`, `task` and `question`, with `constrains` for a principle. Confidence on a question went too.
-- **Markdown files with frontmatter.** Plain YAML, one file per node, and the log. Older workspaces aren't read, and are left untouched if you try.
-- **Client-side what-ifs.** The server narrows by world instead, which is exact.
+- **Markdown files with frontmatter.** Plain YAML, one file per node.
+- **A log on disk, and history as a tree.** The log was the source of truth, kept in `log.jsonl`, and you could go back to any event and branch from it. Now the files are what's true, the log is for the session, for undo and redo, and history between sessions is git's.
+- **Client-side what-ifs.** The engine narrows by world instead, which is exact.
 - **Some gap checks.** Those that needed timestamps or authors on nodes (stale work, ungrounded LLM nodes), and leverage across outcomes, could come back as checks. The rest became notices in `plan`.
 
 ## Not built yet
 
 - **Ingesting past sessions, memory and docs,** which is what the first version was heading towards.
-- **Merging branches.** Going between them is exact, but nothing brings two together yet. Branches have no names either, only their events.
-- **Sharing a workspace between machines.** Files merged by git are fine, and are recorded as an edit, but two logs don't merge.
+- **History between sessions.** The log is only for while a workspace is open. Between sessions, history is git's, if it's in git.
+- **Sharing a workspace between machines.** Files merged by git are fine, and are recorded as an edit. A workspace kept in a browser can be moved as a zip.
+- **Claude, with only the static site.** MCP needs `recollect serve`. A static site with a folder open sees what Claude does through it.
 - **A plugin mechanism.** Systems are compiled in. Cells read and written by name are what one would use, and formulas and macros cover much of what people would write one for.
