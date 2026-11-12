@@ -1,0 +1,10 @@
+id: 01a1d1af-3f83-761a-82a6-32a031dc7657
+cells:
+  lower: true
+  name: The lower-numbered door
+links:
+- to: 01a1d1af-3f83-761a-82a6-329fde2305ce
+  components:
+  - alternative
+  cells:
+    weight: 1.0

@@ -319,17 +319,40 @@ async fn the_classic_problems_have_their_known_answers() {
     let prob = |v: &Value, name: &str| cell(v, name, "value")["shown"]["prob"].as_f64().unwrap_or_else(|| panic!("{name}: {}", cell(v, name, "value")));
     let near = |a: f64, b: f64| assert!((a - b).abs() < 1e-9, "{a} not {b}");
 
-    // Monty Hall: the car is twice as likely behind door 2, so switching wins two times in three.
+    // Monty Hall, with nothing fixed. Switching wins two times in three before anything's known.
     c.open("monty-hall").await;
     let v = c.view(json!({})).await;
-    near(chance(&v, "Where's the car?", "Behind door 1"), 1.0 / 3.0);
-    near(chance(&v, "Where's the car?", "Behind door 2"), 2.0 / 3.0);
-    near(chance(&v, "Where's the car?", "Behind door 3"), 0.0);
-    let choice = var(&v, "Stick or switch?");
-    for (option, wins) in [("Stick with door 1", 1.0 / 3.0), ("Switch to door 2", 2.0 / 3.0)] {
-        let pinned = c.view(json!({ choice["id"].as_str().unwrap(): id(&v, option) })).await;
-        near(prob(&pinned, "You win the car"), wins);
+    let (car, pick, monty, choice) = ("Where's the car?", "Which door do you pick?", "Which door does Monty open?", "Stick or switch?");
+    let pin = |v: &Value, picks: &[(&str, &str)]| Value::Object(picks.iter().map(|(q, o)| (var(v, q)["id"].as_str().unwrap().to_string(), json!(id(v, o)))).collect());
+    for d in 1..=3 {
+        near(chance(&v, car, &format!("Door[{d}]")), 1.0 / 3.0);
     }
+    near(prob(&c.view(pin(&v, &[(choice, "Stick")])).await, "You win the car"), 1.0 / 3.0);
+    near(prob(&c.view(pin(&v, &[(choice, "Switch")])).await, "You win the car"), 2.0 / 3.0);
+    // Whichever door you pick, and before Monty moves, the car is as likely behind each.
+    for mine in 1..=3 {
+        let mine_name = format!("Door[{mine}]");
+        let picked = c.view(pin(&v, &[(pick, &mine_name)])).await;
+        for d in 1..=3 {
+            near(chance(&picked, car, &format!("Door[{d}]")), 1.0 / 3.0);
+            // He never opens yours, and is as likely to open either of the others.
+            near(chance(&picked, monty, &format!("Door[{d}]")), if d == mine { 0.0 } else { 0.5 });
+        }
+        // Whichever he then opens, yours stays at a third and the one left is two thirds.
+        for opened in (1..=3).filter(|d| *d != mine) {
+            let left = 6 - mine - opened;
+            let (opened_name, left_name) = (format!("Door[{opened}]"), format!("Door[{left}]"));
+            let seen = c.view(pin(&v, &[(pick, &mine_name), (monty, &opened_name)])).await;
+            near(chance(&seen, car, &mine_name), 1.0 / 3.0);
+            near(chance(&seen, car, &left_name), 2.0 / 3.0);
+            near(chance(&seen, car, &opened_name), 0.0);
+            near(prob(&c.view(pin(&v, &[(pick, &mine_name), (monty, &opened_name), (choice, "Stick")])).await, "You win the car"), 1.0 / 3.0);
+            near(prob(&c.view(pin(&v, &[(pick, &mine_name), (monty, &opened_name), (choice, "Switch")])).await, "You win the car"), 2.0 / 3.0);
+        }
+    }
+    // He can't open yours: no world is left.
+    let never = c.view(pin(&v, &[(pick, "Door[3]"), (monty, "Door[3]")])).await;
+    assert_eq!(never["worlds"]["count"], "0");
 
     // The positive test: 90 true positives among 585.
     c.open("medical-test").await;

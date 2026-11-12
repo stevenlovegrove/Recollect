@@ -1,0 +1,6 @@
+id: 01a1d1af-3f83-761a-82a6-32989065c8d5
+components:
+- notes
+cells:
+  body: 'Three doors, with a car behind one and goats behind the other two. You pick a door. Monty knows where the car is: he opens another door, and always shows a goat. Then you can stick with your door, or switch to the one that''s left. Nothing here is fixed: pin your pick and the door Monty opens to see where the car probably is, and compare sticking with switching.'
+  name: The game
