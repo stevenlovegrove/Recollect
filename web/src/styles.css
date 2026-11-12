@@ -2819,8 +2819,12 @@ tr.pruned {
 }
 .picker-modal {
   width: min(900px, calc(100vw - 40px));
-  max-height: calc(100vh - 60px);
+  /* What's left under the backdrop's top padding, less a margin, so the end of the list can be
+     scrolled to. dvh where it's known, so a phone's browser bars don't hide the end either. */
+  max-height: calc(88vh - 24px);
+  max-height: calc(88dvh - 24px);
   overflow: auto;
+  overscroll-behavior: contain;
 }
 .own {
   display: flex;
