@@ -365,6 +365,8 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
   const [showDead, setShowDead] = useState(false);
   const [focus, setFocus] = useState(0);
   const [query, setQuery] = useState("");
+  // On a phone the toolbar is a bubble over the map, shown when wanted.
+  const [opts, setOpts] = useState(false);
   // Laid-out node list (ids + sizes) and the positions currently on screen (animated).
   const [layout, setLayout] = useState<{ ids: string[]; target: Map<string, XY> }>({ ids: [], target: new Map() });
   const [pos, setPos] = useState<Map<string, XY>>(new Map());
@@ -928,7 +930,20 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
 
   return (
     <div className="map">
-      <div className="map-toolbar nowrap">
+      <button
+        className={`opts-toggle ${opts ? "open" : ""} ${query || hiddenFacts.size || hiddenRels.size || focus ? "narrowed" : ""}`}
+        onClick={() => setOpts(!opts)}
+        aria-expanded={opts}
+        aria-label={opts ? "Hide view options" : "View options"}
+        title="View options"
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden>
+          <path d="M4 7h10M18 7h2M4 17h4M12 17h8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+          <circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        </svg>
+      </button>
+      <div className={`map-toolbar nowrap ${opts ? "opts-open" : ""}`}>
         <span className="key-host search-host">
           <Key k="/" />
           <input

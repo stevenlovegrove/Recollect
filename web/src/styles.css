@@ -1968,11 +1968,6 @@ kbd {
   background: var(--recent);
   border-bottom: 1px solid var(--border);
 }
-.about-bar {
-  padding: 4px 14px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-}
 .about-error {
   margin: 0;
   border-radius: 0;
@@ -3210,17 +3205,6 @@ button.icon.act.revert:hover {
   .new-node-word {
     display: none;
   }
-  .about-bar {
-    cursor: pointer;
-    padding: 4px 10px;
-  }
-  .about-bar:not(.open) .about-text {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    overflow: hidden;
-  }
   .world-bar,
   .at-bar {
     padding: 6px 10px;
@@ -3436,5 +3420,100 @@ button.icon.act.revert:hover {
     min-width: 40px;
     min-height: 40px;
     font-size: 24px;
+  }
+}
+
+/* ---------- the workspace menu ---------- */
+.ws-about {
+  margin: 4px 0 8px;
+  line-height: 1.45;
+}
+.menu-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 16px 0;
+}
+.picker-examples {
+  font-size: 15px;
+  margin: 0 0 4px;
+}
+.picker > .menu-divider {
+  margin: 0;
+}
+.picker > .picker-examples {
+  margin-bottom: -10px;
+}
+
+/* ---------- the map's view options ---------- */
+.opts-toggle {
+  display: none;
+}
+@media (max-width: 760px) {
+  .map {
+    position: relative;
+  }
+  /* A round button over the map, with a dot when something is filtered out, so a narrowed map
+     never looks like the whole of it. */
+  .opts-toggle {
+    display: grid;
+    place-items: center;
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 12;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border-radius: 50%;
+    color: var(--muted);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  }
+  .opts-toggle.open {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .opts-toggle.narrowed::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--panel);
+  }
+  .map > .map-toolbar {
+    display: none;
+    position: absolute;
+    top: 58px;
+    left: 10px;
+    right: 10px;
+    z-index: 12;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+    animation: opts-in 0.15s ease;
+  }
+  .map > .map-toolbar.opts-open {
+    display: flex;
+  }
+}
+@keyframes opts-in {
+  from {
+    transform: translateY(-6px);
+    opacity: 0;
+  }
+}
+@media (max-width: 760px) {
+  /* Menus from the bubble open across its width, under it, rather than off the screen's edge. */
+  .map > .map-toolbar .dropdown {
+    position: static;
+  }
+  .map > .map-toolbar .dd-pop {
+    left: 0;
+    right: 0;
+    min-width: 0;
   }
 }

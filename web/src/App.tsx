@@ -239,7 +239,6 @@ export function App() {
       {ws.status.readOnly && <div className="at-bar">This workspace is open in another tab, so it can only be looked at here. Close it there, and this tab takes over.</div>}
       {ws.status.state === "failed" && <div className="at-bar error">{ws.status.error} It'll be tried again with the next change.</div>}
       <WorldBar ws={ws} onShowWorlds={() => setTab("worlds")} />
-      {view.workspace.about && view.workspace.sample && <AboutBar key={wsId} text={view.workspace.about} />}
       {ws.error && <div className="error about-error">{ws.error}</div>}
       <main className="main">
         <section className="view">
@@ -272,11 +271,12 @@ export function App() {
         <div className="modal-backdrop" onClick={() => setPicking(false)}>
           <div className="modal picker-modal" onClick={(e) => e.stopPropagation()}>
             <div className="row spread">
-              <h2>Open a workspace</h2>
-              <button className="icon" onClick={() => setPicking(false)}>
+              <h2>{view.workspace.name}</h2>
+              <button className="icon" onClick={() => setPicking(false)} aria-label="Close">
                 ×
               </button>
             </div>
+            {view.workspace.about && <p className="ws-about">{view.workspace.about}</p>}
             <p className="small muted">
               {view.workspace.sample ? "A sample" : ws.backend?.kind === "local" && view.workspace.location === "this browser" ? "Kept in this browser" : `At ${view.workspace.location}`}
               {ws.backend?.exportZip && (
@@ -301,23 +301,14 @@ export function App() {
                 </button>
               </p>
             )}
-            <SamplePicker ws={ws} onOpened={() => setPicking(false)} />
+            <hr className="menu-divider" />
+            <SamplePicker ws={ws} onOpened={() => setPicking(false)} ownFirst />
           </div>
         </div>
       )}
       {ctx && <ContextMenu key={JSON.stringify(ctx)} ws={ws} target={ctx} selected={selected} onSelect={select} onClose={closeCtx} />}
       {showKeys && <ShortcutSheet tab={tab} hasSelection={!!selNode} sticky={sheet} onClose={() => setSheet(false)} />}
       <AskHost />
-    </div>
-  );
-}
-
-/** What a sample is about. On a narrow screen it's cut to two lines, and a tap shows the rest. */
-function AboutBar({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className={open ? "about-bar muted small open" : "about-bar muted small"} onClick={() => setOpen(!open)}>
-      <span className="about-text">{text}</span>
     </div>
   );
 }

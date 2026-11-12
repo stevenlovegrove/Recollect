@@ -9,8 +9,9 @@ const GROUPS: { title: string; group: string; about: string }[] = [
   { title: "Puzzles", group: "puzzle", about: "Choices and constraints, whose solutions are the worlds left over" },
 ];
 
-/** What to open: the samples, or something of your own. */
-export function SamplePicker({ ws, onOpened }: { ws: Workspace; onOpened?: () => void }) {
+/** What to open: the samples, or something of your own. In the workspace menu your own come first,
+ *  since that's where you'd go to open or make one, and the samples follow as examples. */
+export function SamplePicker({ ws, onOpened, ownFirst = false }: { ws: Workspace; onOpened?: () => void; ownFirst?: boolean }) {
   const [err, setErr] = useState<string | null>(null);
   const a = ws.available;
   const open = async (f: () => Promise<void>) => {
@@ -24,28 +25,42 @@ export function SamplePicker({ ws, onOpened }: { ws: Workspace; onOpened?: () =>
       setErr(e instanceof Error ? e.message : String(e));
     }
   };
+  const samples = GROUPS.map((g) => {
+    const inGroup = (a?.samples ?? []).filter((s) => s.group === g.group);
+    if (!inGroup.length) return null;
+    return (
+      <section key={g.title}>
+        <h3>{g.title}</h3>
+        <p className="muted small">{g.about}</p>
+        <div className="picker-grid">
+          {inGroup.map((s) => (
+            <button key={s.name} className={`picker-card ${a?.current?.sample === s.name ? "current" : ""}`} onClick={() => open(() => ws.openSample(s.name))}>
+              <b>{s.title}</b>
+              <span className="muted small">{s.about}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+    );
+  });
+  const own = <OwnWorkspace ws={ws} open={open} />;
   return (
     <div className="picker">
-      {GROUPS.map((g) => {
-        const samples = (a?.samples ?? []).filter((s) => s.group === g.group);
-        if (!samples.length) return null;
-        return (
-          <section key={g.title}>
-            <h3>{g.title}</h3>
-            <p className="muted small">{g.about}</p>
-            <div className="picker-grid">
-              {samples.map((s) => (
-                <button key={s.name} className={`picker-card ${a?.current?.sample === s.name ? "current" : ""}`} onClick={() => open(() => ws.openSample(s.name))}>
-                  <b>{s.title}</b>
-                  <span className="muted small">{s.about}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-        );
-      })}
-      <OwnWorkspace ws={ws} open={open} />
-      {err && <div className="error">{err}</div>}
+      {ownFirst ? (
+        <>
+          {own}
+          {err && <div className="error">{err}</div>}
+          <hr className="menu-divider" />
+          <h2 className="picker-examples">Examples</h2>
+          {samples}
+        </>
+      ) : (
+        <>
+          {samples}
+          {own}
+          {err && <div className="error">{err}</div>}
+        </>
+      )}
     </div>
   );
 }
