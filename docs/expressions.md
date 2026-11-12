@@ -123,7 +123,7 @@ A typed-in estimate stays `estimate: 3`. `Worldly<T>` reads either a plain `T` o
 
 An estimate that varies is read three ways. The schedule adds it per world, and an undefined one makes the dates unknowable, as a gap does. The `oversized_task` notice fires if it's over 5 days in any world, and says in which. The Work tab shows a range.
 
-**Not every fact can be a formula.** What makes the worlds can't depend on them: a choice's `options`, a settled `chosen`, and which edges are `alternative`. A formula that's undefined in some world is an error for a cell that can't represent that, naming the worlds.
+**Not every fact can be a formula.** What makes the worlds can't depend on them: a choice's `options`, a settled `chosen`, and which edges are `alternative`. A decision's options can depend on how other choices land, by an edge rather than a formula: see [Questions that come after others](#questions-that-come-after-others). A formula that's undefined in some world is an error for a cell that can't represent that, naming the worlds.
 
 An estimate that reads a date which depends on that task is a loop, and is reported as one.
 
@@ -409,6 +409,40 @@ The engine keeps an index of names, so finding a table's rows or a row's neighbo
 The Vane watch sample is a case file rather than a puzzle. "Who took it?" is a decision nobody makes, marked `uncertain`, whose options are the suspects, each weighted by how likely they seemed before the evidence. What's in doubt is the same: "When did Tom leave the Red Lion?" has two options, each an account with who gave it ("At 9:40, as the barman says", weight 3, and "At about 9:10, as Mrs Dale says", weight 1). A question's answer is which account is true, so what follows from it is a cell named for what it is, which each account says and which is read through the question: Tom's arrival is `pub.chosen.left_at + journey.chosen.minutes`. The evidence is two nodes that are required: `who.chosen.arrives <= 60` and `who.chosen.from_garden`.
 
 So the worlds are every way the evening could have gone, weighted by the accounts, and the evidence rules some out. Wherever the app gives a percentage for something uncertain, on a map card, on the Decisions tab, in the bar at the top and on the Worlds tab, it's the belief in it: how strongly it's believed among the worlds left, its weight given the evidence and whatever's pinned or found out. So it changes as things are found out. Its prior belief is how strongly it was believed before any evidence: its weight, out of all its options' weights, which are cells on the `alternative` edges. Neither is a cell: a belief depends on what's pinned, and a prior belief is a share of its decision's weights, so both are worked out for each view. Where the evidence has moved a belief, the prior belief is shown beside it, so when two suspects both fit the evidence, it's plain their beliefs differ only because their prior beliefs did. A choice that's someone's to make isn't believed, so it shows neither. How likely a condition is, as in "true in 33%", is the same: among the worlds left. On the Decisions tab, something uncertain is "found out" rather than chosen. Pinning is finding something out. For each uncertain thing still open, it also says what's most worth finding out: each other open question, by how sure of the answer you'd be on average once you knew it. That's the chance of the likeliest answer given what the other turns out to be, weighted by how likely that is. At the start Tom is likeliest at 38%, and how Mr Pryce got home is most worth finding out (38% → 48%), while when Tom left the pub wouldn't change who's likeliest at all.
+
+## Questions that come after others
+
+Some questions can only be asked once others have an answer. In the Monty Hall sample, which door Monty opens depends on where the car is and which door you picked. Two edges say this, and neither changes a weight.
+
+**`excludes`: whatever that choice lands on isn't an option here.** It goes from a decision to another choice:
+
+```
+Where's the car?              uncertain, one of Door[1], Door[2], Door[3]
+Which door do you pick?       yours, one of the same three
+Which door does Monty open?   uncertain, one of the same three, excludes the car's and yours
+Which door is left?           one of the same three, excludes yours and Monty's
+```
+
+- **Each world normalises over what's left.** With the car behind your door, Monty has two doors at a half each. Otherwise he has one, and it's certain. The weights on the options are what they were: an option's chance is its weight out of the weights of what's left. Under the surface, each set of options that can be left has a variable of its own.
+- **It isn't the same as a `requires`.** A rule saying "the door he opens isn't yours or the car's" keeps two worlds when the car is behind your door and one when it isn't, so it would make the car twice as likely to be behind your door as it should be, which is the famous wrong answer. A constraint rules out worlds; `excludes` says what there is to choose from.
+- **It's what orders them.** A question comes after the ones it leaves out, and a map puts it beneath them. Two that leave out each other are a loop, and reported as one.
+- **Pinning one is finding something out.** Pinning "Monty opens door 3" narrows to the worlds where that's what he does, which says something about the car. Settling it for good says the same, so a what-if and the real thing still can't disagree.
+- **With nothing left, it lands on nothing,** as a decision with no options does.
+
+**`stands_for`: this option is whatever that choice lands on.** It goes from an option to a choice:
+
+```
+Stick or switch?   yours: Stick, which stands for your pick, or Switch, which stands for the door that's left
+You win the car:   choice.chosen = car.chosen
+```
+
+A formula reading `chosen` follows it, so `choice.chosen` is a door, and the comparison on the Decisions tab is still between Stick and Switch. `chose(choice, stick)` asks about the option itself.
+
+What this doesn't do:
+
+- **The same options with different weights depending on something else.** A test that's positive 90% of the time if you have a condition and 5% if you don't is still a question for each case, as the positive test sample has it.
+- **Pinning a choice of yours to something it couldn't always be** reads as finding out that it could. Options that stand for others, like Stick and Switch, are always there, so they don't have this.
+- **What's shown isn't simplified by what's pinned.** A value reads right and is as likely as it says, but where it holds may still mention a world the pin has ruled out.
 
 ## Comparing options
 
