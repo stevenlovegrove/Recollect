@@ -20,7 +20,7 @@ use recollect_graph::worlds::{Bool, Cond, Picks, Space, Worldly};
 use recollect_graph::{Cell, CellType, Cx, Entity, Error, Graph, Op, Registry, Severity, Shown, cell};
 
 use crate::expr::{Type, Val};
-use crate::formulas::{self, CHOICE, Chosen, compiler};
+use crate::formulas::{self, CHOICE, Chosen, Lands, compiler};
 use crate::{label_of, labels};
 
 pub const PART: &str = "part";
@@ -35,6 +35,8 @@ pub const UNCERTAIN: &str = "uncertain";
 pub const OPTION: &str = "option";
 pub const PART_OF: &str = "part_of";
 pub const ALTERNATIVE: &str = "alternative";
+pub const EXCLUDES: &str = "excludes";
+pub const NARROWED: &str = "narrowed";
 pub const DEPENDS_ON: &str = "depends_on";
 
 /// How long a task takes, in days. It can be typed in or worked out, so it can differ between worlds.
@@ -157,9 +159,24 @@ fn live_option(cx: &Cx, option: Entity, edge: Entity) -> Result<bool, Error> {
 #[cell]
 pub struct Need(pub Bool);
 
-/// How an open decision lands: on any of its live options, as likely as their weights say, or on nothing
-/// if it has none. Once it's settled, what's written in `chosen` is what it lands on instead.
-fn decision_chosen(cx: &Cx) -> Cell<Chosen> {
+/// How a decision lands while it's open, in each world, and the worlds where the variables it isn't
+/// using are at rest.
+///
+/// It lands on any of its live options, as likely as their weights say, or on nothing if it has none.
+/// What another choice it `excludes` lands on isn't an option in that world, so what's left differs
+/// between worlds. Each set that can be left has a variable of its own, weighted over what's in it, so
+/// how likely an option is depends on what else is left but the weights don't. That isn't the same as
+/// landing on anything and ruling out the worlds where it's excluded, which would make the worlds with
+/// more left count for more.
+#[cell]
+pub struct Falls {
+    pub on: Worldly<Val>,
+    /// Where each of its variables is either the one in use, or on its first option. Counting worlds
+    /// only among these counts each way things could go once.
+    pub at_rest: Bool,
+}
+
+fn falls(cx: &Cx) -> Cell<Falls> {
     let space = Space::global();
     // Variables are ordered by creation. Whatever this is inside gets its variable first, so formulas
     // read from the outside in.
@@ -176,14 +193,55 @@ fn decision_chosen(cx: &Cx) -> Cell<Chosen> {
                     _ => return Err(Error::Failed(format!("the weight of {o} differs between worlds, and a weight has to be the same in all of them"))),
                 },
             };
-            options.push((o.to_string(), weight, gap));
+            options.push((o, weight, gap));
         }
     }
-    if options.is_empty() {
-        return Ok(Some(Chosen(Worldly::plain(Val::Undefined))));
+    // The options that are gone, world by world: whatever each choice this excludes lands on.
+    let mut gone: Cond<BTreeSet<Entity>> = space.pure(BTreeSet::new());
+    for other in cx.targets(EXCLUDES) {
+        let Some(there) = cx.get::<Lands>(other)? else { continue };
+        gone = gone.zip(&there.0.0, |gone, v| {
+            let mut gone = gone.clone();
+            if let Val::Ref(e) = v
+                && options.iter().any(|o| o.0 == *e)
+            {
+                gone.insert(*e);
+            }
+            gone
+        });
     }
-    let var = space.var(&cx.id().to_string(), &options);
-    Ok(Some(Chosen(Worldly(var.value().map(|o| Val::Ref(o.parse().expect("options are handles")))))))
+    let name = cx.id().to_string();
+    let mut on = space.pure(Val::Undefined);
+    let mut at_rest = space.always();
+    for (when, gone) in gone.cases() {
+        let left: Vec<(String, f64, bool)> = options.iter().filter(|o| !gone.contains(&o.0)).map(|(o, w, gap)| (o.to_string(), *w, *gap)).collect();
+        let here = match left.as_slice() {
+            [] => continue,
+            [(only, _, _)] => space.pure(Val::Ref(only.parse().expect("options are handles"))),
+            _ => {
+                // Every one has this decision's name, so pinning it pins whichever is in use.
+                let var = space.var(&name, &left);
+                at_rest = &at_rest & &(&when | &var.is(&left[0].0));
+                var.value().map(|o| Val::Ref(o.parse().expect("options are handles")))
+            }
+        };
+        on = Cond::when(&when, &here, &on);
+    }
+    Ok(Some(Falls { on: Worldly(on), at_rest }))
+}
+
+fn decision_chosen(cx: &Cx) -> Cell<Chosen> {
+    Ok(cx.own::<Falls>()?.map(|f| Chosen(f.on)))
+}
+
+/// Settling a decision whose options depend on other choices is finding out how it fell, which says
+/// something about them: only the worlds where it would have fallen that way count.
+fn settled_as_it_fell(g: &Graph, e: Entity) -> Cell<Bool> {
+    if g.stored(e, Chosen::NAME).is_none() {
+        return Ok(None);
+    }
+    let (Some(chosen), Some(falls)) = (g.get::<Chosen>(e)?, g.get::<Falls>(e)?) else { return Ok(None) };
+    Ok(chosen.settled().map(|on| Chosen(falls.on).lands_on(on)))
 }
 
 /// The worlds in which `decision` lands on `option`.
@@ -376,7 +434,9 @@ pub fn install(reg: &mut Registry) {
     reg.component(UNKNOWN, "A gap: something here isn't specified yet. Removing it says the gap is closed.").icon("…").requires(WORK);
 
     reg.component(DECISION, "An open question whose options are linked to it. Until one is chosen, it lands on each of them in some world.").icon("⑂").requires(PART).requires(CHOICE).per_entity();
+    reg.cell::<Falls>(DECISION, "").builtin(falls).internal();
     reg.fill::<Chosen>(DECISION, decision_chosen);
+    reg.component(NARROWED, "A decision whose options depend on how other choices land.").requires(DECISION).constraint(settled_as_it_fell);
     reg.component(UNCERTAIN, "Not anyone's choice: it lands one way or another, as likely as its options' weights say. Expected values average over it.").requires(DECISION);
     reg.component(OPTION, "One of a decision's options: only the option taken is needed.").requires(PART);
 
@@ -387,6 +447,7 @@ pub fn install(reg: &mut Registry) {
         .default_formula(WEIGHT)
         .initial(json!(1.0));
     reg.cell::<RuledOut>(ALTERNATIVE, "That this option has been ruled out, and why.").initial(json!(true));
+    reg.edge(EXCLUDES, "Whatever that choice lands on isn't an option here, so this comes after it.").arranges().source_has(NARROWED).target_has(CHOICE);
     reg.edge(DEPENDS_ON, "Waits for that.").orders().source_has(PART).target_has(PART);
     reg.cell::<WaitFor>(DEPENDS_ON, "What it waits for: that to be done, or decided.").default_value(WaitFor::Done);
 
@@ -558,6 +619,71 @@ fn blocking_decisions(g: &Graph) -> Vec<recollect_graph::Advice> {
 }
 
 // ---------- questions about the graph as a whole ----------
+
+/// An open decision whose options depend on how other choices land. It isn't one variable, so what it
+/// lands on is asked of it rather than of a variable.
+#[derive(Debug, Clone)]
+pub struct Narrowed {
+    pub id: Entity,
+    /// Each live option, whether it's a gap, and the worlds where the decision lands on it.
+    pub options: Vec<(Entity, bool, Bool)>,
+}
+
+pub fn narrowed(g: &Graph) -> Result<Vec<Narrowed>, Error> {
+    let mut out = Vec::new();
+    for d in g.having(NARROWED) {
+        if !is_open(g, d)? {
+            continue;
+        }
+        let Some(falls) = g.get::<Falls>(d)? else { continue };
+        let chosen = Chosen(falls.on);
+        let mut options = Vec::new();
+        for (o, edge) in g.edges_into(d, ALTERNATIVE) {
+            if g.get::<RuledOut>(edge)?.is_none() && !is_dropped(g, o)? {
+                options.push((o, g.has(o, UNKNOWN), chosen.lands_on(o)));
+            }
+        }
+        out.push(Narrowed { id: d, options });
+    }
+    Ok(out)
+}
+
+/// Where the variables of every decision whose options depend on other choices are at rest, or nothing
+/// if there are no such decisions. See `Falls::at_rest`.
+pub fn at_rest(g: &Graph) -> Option<Bool> {
+    let mut out = None;
+    for d in g.having(NARROWED) {
+        if let Ok(Some(falls)) = g.get::<Falls>(d) {
+            out = Some(out.map_or(falls.at_rest.clone(), |all: Bool| &all & &falls.at_rest));
+        }
+    }
+    out
+}
+
+/// The variables a world pins. A decision whose options depend on other choices isn't among them: how
+/// likely it was to land where it's pinned differs between worlds, which fixing its variables would
+/// lose, so it's `pinned` that narrows to it.
+pub fn picks(g: &Graph, world: &BTreeMap<String, String>) -> Picks {
+    let narrowed: BTreeSet<String> = g.having(NARROWED).into_iter().map(|d| d.to_string()).collect();
+    if narrowed.is_empty() {
+        return Space::global().picks(world);
+    }
+    Space::global().picks(&world.iter().filter(|(d, _)| !narrowed.contains(*d)).map(|(d, o)| (d.clone(), o.clone())).collect())
+}
+
+/// What pinning these decisions to an option each leaves, beyond what pinning their variables does: the
+/// worlds where each lands on its option. A decision that isn't narrowed is all in its variable.
+pub fn pinned(g: &Graph, world: &BTreeMap<String, String>) -> Bool {
+    let mut out = Space::global().always();
+    for n in narrowed(g).unwrap_or_default() {
+        if let Some(picked) = world.get(&n.id.to_string())
+            && let Some((_, _, lands)) = n.options.iter().find(|o| o.0.to_string() == *picked)
+        {
+            out = &out & lands;
+        }
+    }
+    out
+}
 
 /// Whether work is waiting on an open decision.
 #[derive(Debug, Clone, PartialEq)]
@@ -731,7 +857,8 @@ pub fn matrices(g: &Graph, world: &BTreeMap<String, String>) -> Result<Vec<Matri
     let names = labels(g);
     let label = |s: &str| names.get(s).cloned().unwrap_or_else(|| s.to_string());
     let space = Space::global();
-    let picks = space.picks(world);
+    let picks = picks(g, world);
+    let found = pinned(g, world).given(&picks);
     let mut out = Vec::new();
     for d in g.having(DECISION) {
         let chosen = if g.stored(d, Chosen::NAME).is_some() { g.get::<Chosen>(d)?.and_then(|c| c.settled()) } else { None };
@@ -764,7 +891,10 @@ pub fn matrices(g: &Graph, world: &BTreeMap<String, String>) -> Result<Vec<Matri
             for o in &options {
                 let mut w = world.clone();
                 w.insert(d.to_string(), o.id.to_string());
-                per_option.insert(o.id, need.given(&space.picks(&w)).prob());
+                let (picks, found) = (self::picks(g, &w), pinned(g, &w));
+                let found = found.given(&picks);
+                let held = found.prob();
+                per_option.insert(o.id, if held > 0.0 { (&need.given(&picks) & &found).prob() / held } else { 0.0 });
             }
             let done = g.get::<Done>(e)?;
             rows.push(MatrixRow {
@@ -772,8 +902,8 @@ pub fn matrices(g: &Graph, world: &BTreeMap<String, String>) -> Result<Vec<Matri
                 name: label_of(g, e),
                 depth: row_depth,
                 per_option,
-                need: read(&need.given(&picks), &label),
-                finished: done.is_some_and(|c| c.finished().given(&picks).is_always()),
+                need: read(&need.given(&picks).among(&found), &label),
+                finished: done.is_some_and(|c| c.finished().given(&picks).holds_given(&found)),
                 is_work: g.has(e, TASK) && g.sources_of(e, PART_OF).is_empty(),
                 actionable: g.get::<Actionable>(e)?.map(|a| read(&a.0.given(&picks), &label)),
                 blockers: blockers_of(g, e, &picks, &label)?,
@@ -836,12 +966,13 @@ fn estimate_text(c: &Cond<Option<f64>>) -> String {
 pub fn work(g: &Graph, world: &BTreeMap<String, String>) -> Result<Vec<WorkItem>, Error> {
     let names: HashMap<String, String> = labels(g);
     let label = |s: &str| names.get(s).cloned().unwrap_or_else(|| s.to_string());
-    let picks = Space::global().picks(world);
+    let picks = picks(g, world);
+    let found = pinned(g, world).given(&picks);
     let mut out = Vec::new();
     for e in g.entities() {
         let Some(actionable) = g.get::<Actionable>(e)? else { continue };
-        let actionable = actionable.0.given(&picks);
-        let need = g.get::<Need>(e)?.map_or(Space::global().never(), |n| n.0).given(&picks);
+        let actionable = actionable.0.given(&picks).among(&found);
+        let need = g.get::<Need>(e)?.map_or(Space::global().never(), |n| n.0).given(&picks).among(&found);
         let finished = g.get::<Done>(e)?.is_some_and(|c| c.finished().given(&picks).holds_given(&need));
         let standing = if need.is_never() {
             Standing::NotNeeded

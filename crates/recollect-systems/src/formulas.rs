@@ -39,6 +39,7 @@ pub const REQUIRES: &str = "requires";
 pub const MACRO: &str = "macro";
 pub const LABEL: &str = "label";
 pub const IS_A: &str = "is_a";
+pub const STANDS_FOR: &str = "stands_for";
 
 /// A node's answer. Typed in, or a choice from its options, or a formula.
 #[cell("value")]
@@ -82,6 +83,26 @@ impl Chosen {
             _ => None,
         }
     }
+}
+
+/// What a choice lands on once any option that stands for another choice's result has been followed to
+/// it. This is what a formula reads as `chosen`, so `final.chosen = car.chosen` is about doors even when
+/// the options of `final` are "stick" and "switch".
+#[cell]
+pub struct Lands(pub Worldly<Val>);
+
+fn lands(cx: &Cx) -> Cell<Lands> {
+    let Some(chosen) = cx.own::<Chosen>()? else { return Ok(None) };
+    let mut out = chosen.0.0.clone();
+    for (when, v) in chosen.0.0.cases() {
+        let Val::Ref(option) = v else { continue };
+        // Whatever the choice it stands for lands on. Reading that here makes standing for yourself a loop.
+        if let Some(target) = cx.outgoing_of(*option, STANDS_FOR).into_iter().next() {
+            let there = cx.get::<Lands>(target)?.map_or_else(|| pure(Val::Undefined), |l| l.0.0);
+            out = Cond::when(&when, &there, &out);
+        }
+    }
+    Ok(Some(Lands(Worldly(out))))
 }
 
 /// A plain list of what a choice can land on, such as a puzzle's colours. Each is a node nobody wrote,
@@ -850,7 +871,8 @@ fn read_cell(cx: &Cx, node: Entity, component: &str, fields: &[String]) -> Resul
             Some(v) => Ev::Data(v.0.0),
             None => Ev::Data(pure(Val::Undefined)),
         },
-        Chosen::NAME => match cx.get::<Chosen>(node)? {
+        // Through any option that stands for another choice's result, to what that lands on.
+        Chosen::NAME => match cx.get::<Lands>(node)? {
             Some(c) => Ev::Data(c.0.0),
             None => Ev::Data(pure(Val::Undefined)),
         },
@@ -1314,6 +1336,10 @@ pub fn install(reg: &mut Registry) {
 
     reg.component(CHOICE, "Lands on one node in each world. What's read through it, as chosen.price, is what that node says.").icon("◇");
     reg.cell::<Chosen>(CHOICE, "What it lands on, in each world. Name one to settle it.").validate(one_node).shown(|c| shown_val(&c.0.0)).summary().per_entity();
+
+    // It reads as the nodes it could be, as `chosen` does, so what's read through it is known to be.
+    reg.cell::<Lands>(CHOICE, "").builtin(lands).shown(|c| shown_val(&c.0.0)).internal();
+    reg.edge(STANDS_FOR, "This option is whatever that choice lands on: choosing it is choosing that.").target_has(CHOICE);
 
     reg.component(OPTIONS, "A choice from a plain list, such as colours: each is a node with that name and value.").requires(CHOICE);
     reg.cell::<Options>(OPTIONS, "What it can land on.").initial(json!([]));

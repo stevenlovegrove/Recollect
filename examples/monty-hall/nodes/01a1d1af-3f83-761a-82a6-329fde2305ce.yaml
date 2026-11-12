@@ -1,8 +1,0 @@
-id: 01a1d1af-3f83-761a-82a6-329fde2305ce
-components:
-- decision
-- notes
-- uncertain
-cells:
-  body: It only matters when the car is behind your door. Otherwise one of the other two has the car, and he has no choice.
-  name: Which goat does Monty show, when he has two?

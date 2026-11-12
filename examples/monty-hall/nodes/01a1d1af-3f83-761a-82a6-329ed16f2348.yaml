@@ -1,6 +1,0 @@
-id: 01a1d1af-3f83-761a-82a6-329ed16f2348
-components:
-- decision
-- uncertain
-cells:
-  name: Which door does Monty open?

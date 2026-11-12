@@ -327,6 +327,9 @@ async fn the_classic_problems_have_their_known_answers() {
     for d in 1..=3 {
         near(chance(&v, car, &format!("Door[{d}]")), 1.0 / 3.0);
     }
+    // Three places for the car, three picks, two doors for Monty when they're the same and one when
+    // they aren't, and two things to do then.
+    assert_eq!(v["worlds"]["count"], "24");
     near(prob(&c.view(pin(&v, &[(choice, "Stick")])).await, "You win the car"), 1.0 / 3.0);
     near(prob(&c.view(pin(&v, &[(choice, "Switch")])).await, "You win the car"), 2.0 / 3.0);
     // Whichever door you pick, and before Monty moves, the car is as likely behind each.
@@ -353,6 +356,14 @@ async fn the_classic_problems_have_their_known_answers() {
     // He can't open yours: no world is left.
     let never = c.view(pin(&v, &[(pick, "Door[3]"), (monty, "Door[3]")])).await;
     assert_eq!(never["worlds"]["count"], "0");
+    // Really settling them says the same as pinning them: recording which door Monty opened is finding
+    // out how he chose, so it's evidence about the car, not just a door written in.
+    let settle = |question: &str, door: &str| json!({ "op": "set", "id": id(&v, question), "cell": "chosen", "value": { "ref": id(&v, door) } });
+    c.post("/api/call/apply", json!({ "ops": [settle(pick, "Door[1]"), settle(monty, "Door[3]")] })).await;
+    let settled = c.view(json!({})).await;
+    near(chance(&settled, car, "Door[1]"), 1.0 / 3.0);
+    near(chance(&settled, car, "Door[2]"), 2.0 / 3.0);
+    near(prob(&c.view(pin(&settled, &[(choice, "Switch")])).await, "You win the car"), 2.0 / 3.0);
 
     // The positive test: 90 true positives among 585.
     c.open("medical-test").await;

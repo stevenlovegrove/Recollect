@@ -539,7 +539,26 @@ impl Bool {
         }
         let mut order: Vec<u32> = vars.iter().map(|v| v.idx).collect();
         order.sort();
+        order.dedup();
         go(&self.space.lock(), self.f, 0, &order, &mut HashMap::new())
+    }
+
+    /// How many assignments satisfy this, of the choices it depends on and `more`.
+    pub fn count_with(&self, more: &[Var]) -> u128 {
+        let mut vars = self.vars();
+        vars.extend(more.iter().cloned());
+        self.count(&vars)
+    }
+
+    /// This among the worlds where `given` holds: always if it holds in all of them, and never if in none.
+    pub fn among(&self, given: &Bool) -> Bool {
+        if self.holds_given(given) {
+            self.space.always()
+        } else if (self & given).is_never() {
+            self.space.never()
+        } else {
+            self.clone()
+        }
     }
 
     /// The satisfying assignments of `vars`, up to `limit`.
@@ -706,6 +725,18 @@ impl<T: PartialEq + Clone> Cond<T> {
             let narrowed = self.space.lock().given(*g, &picks.0, &mut memo);
             Cond::push(&mut cases, &self.space, narrowed, v.clone());
         }
+        Cond { space: self.space.clone(), cases }
+    }
+
+    /// This value among the worlds where `given` holds: a case that holds in none of them is gone. What
+    /// it reads as in the worlds outside `given` no longer means anything.
+    pub fn among(&self, given: &Bool) -> Cond<T> {
+        let (kept, gone): (Vec<&(F, T)>, Vec<&(F, T)>) = self.cases.iter().partition(|(g, _)| self.space.and(*g, given.f) != FALSE);
+        let Some((first, rest)) = kept.split_first() else { return self.clone() };
+        // The guards still cover every world: the first case left takes the worlds of those that went.
+        let guard = gone.iter().fold(first.0, |acc, (g, _)| self.space.or(acc, *g));
+        let mut cases = vec![(guard, first.1.clone())];
+        cases.extend(rest.iter().map(|c| (*c).clone()));
         Cond { space: self.space.clone(), cases }
     }
 

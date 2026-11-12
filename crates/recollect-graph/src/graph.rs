@@ -1523,6 +1523,11 @@ impl Cx<'_> {
         self.outgoing_at(self.origin, component)
     }
 
+    /// The nodes another entity links to by an edge with this component.
+    pub fn outgoing_of(&self, e: Entity, component: &str) -> Vec<Entity> {
+        self.outgoing_at(e, component).into_iter().map(|(to, _)| to).collect()
+    }
+
     fn outgoing_at(&self, at: Entity, component: &str) -> Vec<(Entity, Entity)> {
         self.s.note(Dep::From(at, component.to_string()));
         self.s.g.edges_from(at, component)

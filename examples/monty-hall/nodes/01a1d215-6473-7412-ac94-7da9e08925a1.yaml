@@ -1,0 +1,15 @@
+id: 01a1d215-6473-7412-ac94-7da9e08925a1
+components:
+- decision
+- notes
+- uncertain
+cells:
+  body: Never yours, and never the car's. When the car is behind yours he has two doors to choose from, and is as likely to open either. Otherwise he has one.
+  name: Which door does Monty open?
+links:
+- to: 01a1d215-6473-7412-ac94-7da47627e409
+  components:
+  - excludes
+- to: 01a1d215-6473-7412-ac94-7da56ffecb8f
+  components:
+  - excludes

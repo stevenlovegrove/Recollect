@@ -1,0 +1,10 @@
+id: 01a1d215-6473-7412-ac94-7dad61aac354
+cells:
+  name: Switch
+links:
+- to: 01a1d215-6473-7412-ac94-7daa743b1737
+  components:
+  - stands_for
+- to: 01a1d215-6473-7412-ac94-7dab4cac1c47
+  components:
+  - alternative

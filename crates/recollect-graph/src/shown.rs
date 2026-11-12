@@ -30,6 +30,15 @@ impl Shown {
         }
     }
 
+    /// This value among the worlds where `given` holds, so with what holds in none of them gone.
+    pub fn among(&self, given: &Bool) -> Shown {
+        match self {
+            Shown::Bool(b) => Shown::Bool(b.among(given)),
+            Shown::Cond(c) => Shown::Cond(c.among(given)),
+            Shown::Named(items) => Shown::Named(items.iter().map(|(e, b)| (*e, b.among(given))).filter(|(_, b)| !b.is_never()).collect()),
+        }
+    }
+
     /// The open choices this depends on.
     pub fn vars(&self) -> Vec<Var> {
         match self {

@@ -317,9 +317,29 @@ fn show(s: &Shown, labels: &Labels, in_play: &Bool) -> ShownView {
     }
 }
 
-/// The worlds that are left once these picks are made, and whatever rules worlds out has.
-fn in_play(g: &Graph, picks: &Picks) -> Bool {
-    g.registry().constrained(g).map_or_else(|| Space::global().always(), |c| c.given(picks))
+/// A world to look through: some choices pinned to an option each.
+struct Lens {
+    picks: Picks,
+    /// What pinning a decision whose options depend on other choices leaves, beyond its variables: the
+    /// worlds where it lands on what it's pinned to. Always, if nothing like that is pinned.
+    found: Bool,
+    /// The worlds that are left once these picks are made, and whatever rules worlds out has.
+    in_play: Bool,
+}
+
+impl Lens {
+    fn new(g: &Graph, world: &World) -> Lens {
+        let picks = plan::picks(g, world);
+        let found = plan::pinned(g, world).given(&picks);
+        let ruled = g.registry().constrained(g).map_or_else(|| Space::global().always(), |c| c.given(&picks));
+        Lens { in_play: &ruled & &found, picks, found }
+    }
+
+    /// A value as it reads through this.
+    fn narrow(&self, s: &Shown) -> Shown {
+        let narrowed = s.given(&self.picks);
+        if self.found.is_always() { narrowed } else { narrowed.among(&self.found) }
+    }
 }
 
 /// The same in every world that's left, though it could differ in worlds that are ruled out.
@@ -341,7 +361,8 @@ fn shown_of(g: &Graph, e: Entity, c: &str) -> Option<Result<Option<Shown>, Error
     }
 }
 
-fn cell_view(g: &Graph, e: Entity, c: &str, picks: &Picks, in_play: &Bool, labels: &Labels, vars: &mut BTreeMap<String, Var>) -> Option<CellView> {
+fn cell_view(g: &Graph, e: Entity, c: &str, lens: &Lens, labels: &Labels, vars: &mut BTreeMap<String, Var>) -> Option<CellView> {
+    let in_play = &lens.in_play;
     let (backed, source) = g.backed(e, c)?;
     let (source, kind) = match source {
         Source::Own => ("own", None),
@@ -362,7 +383,7 @@ fn cell_view(g: &Graph, e: Entity, c: &str, picks: &Picks, in_play: &Bool, label
                 for v in s.vars() {
                     vars.insert(v.name(), v);
                 }
-                let narrowed = s.given(picks);
+                let narrowed = lens.narrow(&s);
                 // A value with only one case can be read, and edited, as what it is.
                 let value = match &narrowed {
                     Shown::Cond(c) => match c.cases().as_slice() {
@@ -392,8 +413,8 @@ fn internal(g: &Graph, c: &str) -> bool {
 }
 
 /// Every cell an entity has that's worth seeing.
-fn cells(g: &Graph, e: Entity, picks: &Picks, in_play: &Bool, labels: &Labels, vars: &mut BTreeMap<String, Var>) -> BTreeMap<String, CellView> {
-    g.cells_of(e).into_iter().filter(|c| !internal(g, c)).filter_map(|c| cell_view(g, e, &c, picks, in_play, labels, vars).map(|v| (c, v))).collect()
+fn cells(g: &Graph, e: Entity, lens: &Lens, labels: &Labels, vars: &mut BTreeMap<String, Var>) -> BTreeMap<String, CellView> {
+    g.cells_of(e).into_iter().filter(|c| !internal(g, c)).filter_map(|c| cell_view(g, e, &c, lens, labels, vars).map(|v| (c, v))).collect()
 }
 
 fn node_view(g: &Graph, e: Entity, name: String, cells: BTreeMap<String, CellView>) -> NodeView {
@@ -432,15 +453,30 @@ fn node_view(g: &Graph, e: Entity, name: String, cells: BTreeMap<String, CellVie
     NodeView { id: e, name, components, cells, row, parts: g.parts_of(e), reads, unwritten: !g.contains(e) }
 }
 
-fn worlds(g: &Graph, world: &World, picks: &Picks, labels: &Labels, vars: BTreeMap<String, Var>) -> WorldsView {
+/// Something open, as the worlds see it: where it lands on each of its options.
+struct Asked {
+    id: String,
+    /// Each option, with the worlds where this lands on it, among those these picks leave.
+    lands: Vec<(String, Bool)>,
+}
+
+fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap<String, Var>) -> WorldsView {
     let constraint = g.registry().constrained(g);
-    let in_play = in_play(g, picks);
+    let in_play = &lens.in_play;
+    // A decision whose options depend on other choices is several variables with its name, one for each
+    // set of options that can be left, so it's asked where it lands rather than read off one of them.
+    let narrowed = plan::narrowed(g).unwrap_or_default();
     let mut applied = World::new();
     let mut unpicked = Vec::new();
     let mut count = Some(1u128);
     let mut views = Vec::new();
+    let mut asked = Vec::new();
     let held = in_play.prob();
+    let chance = |lands: &Bool| if held > 0.0 { (lands & in_play).prob() / held } else { 0.0 };
     for (id, var) in &vars {
+        if narrowed.iter().any(|n| n.id.to_string() == *id) {
+            continue;
+        }
         let options = var.options();
         let weights = var.weights();
         let gaps = var.gaps();
@@ -450,6 +486,7 @@ fn worlds(g: &Graph, world: &World, picks: &Picks, labels: &Labels, vars: BTreeM
         } else {
             unpicked.push(var.clone());
             count = count.and_then(|n| n.checked_mul(options.len() as u128));
+            asked.push(Asked { id: id.clone(), lands: options.iter().map(|o| (o.clone(), var.is(o))).collect() });
         }
         let views_options = options
             .iter()
@@ -457,12 +494,11 @@ fn worlds(g: &Graph, world: &World, picks: &Picks, labels: &Labels, vars: BTreeM
             .map(|(i, o)| {
                 let possible = match picked {
                     Some(p) => p == o,
-                    None => !(&var.is(o) & &in_play).is_never(),
+                    None => !(&var.is(o) & in_play).is_never(),
                 };
                 let chance = match picked {
                     Some(p) => f64::from(p == o),
-                    None if held > 0.0 => (&var.is(o) & &in_play).prob() / held,
-                    None => 0.0,
+                    None => chance(&var.is(o)),
                 };
                 OptionView { id: o.clone(), name: labels.of(o), weight: weights[i], gap: gaps[i], possible, picked: picked == Some(o), chance }
             })
@@ -470,49 +506,115 @@ fn worlds(g: &Graph, world: &World, picks: &Picks, labels: &Labels, vars: BTreeM
         let uncertain = id.parse::<Entity>().is_ok_and(|e| g.has(e, UNCERTAIN));
         views.push(VarView { id: id.clone(), name: labels.of(id), options: views_options, uncertain, sure: None, clues: Vec::new() });
     }
+    for n in &narrowed {
+        let id = n.id.to_string();
+        let picked = world.get(&id).filter(|p| n.options.iter().any(|o| o.0.to_string() == **p));
+        let lands: Vec<(String, Bool)> = n.options.iter().map(|(o, _, lands)| (o.to_string(), lands.given(&lens.picks))).collect();
+        let views_options = n
+            .options
+            .iter()
+            .zip(&lands)
+            .map(|((o, gap, before), (name, lands))| {
+                let possible = match picked {
+                    Some(p) => p == name,
+                    None => !(lands & in_play).is_never(),
+                };
+                let chance = match picked {
+                    Some(p) => f64::from(p == name),
+                    None => chance(lands),
+                };
+                // Before any evidence, it's as likely as the choices before it make it.
+                OptionView { id: name.clone(), name: labels.of(&o.to_string()), weight: before.prob(), gap: *gap, possible, picked: picked == Some(name), chance }
+            })
+            .collect();
+        if let Some(p) = picked {
+            applied.insert(id.clone(), p.clone());
+        } else {
+            asked.push(Asked { id: id.clone(), lands });
+        }
+        views.push(VarView { id: id.clone(), name: labels.of(&id), options: views_options, uncertain: g.has(n.id, UNCERTAIN), sure: None, clues: Vec::new() });
+    }
     views.sort_by(|a, b| a.id.cmp(&b.id));
-    clues(&mut views, &vars, &in_play, held);
-    let (count, solutions) = if constraint.is_some() {
-        let n = in_play.count(&unpicked);
-        let found = in_play.solutions(&unpicked, 300).into_iter().map(|mut s| {
-            s.extend(applied.clone());
-            s
-        });
-        (n.to_string(), found.collect())
+    clues(&mut views, &asked, in_play, held);
+    let at_rest = plan::at_rest(g);
+    let (count, solutions) = if at_rest.is_none() {
+        if constraint.is_some() {
+            let n = in_play.count(&unpicked);
+            let found = in_play.solutions(&unpicked, 300).into_iter().map(|mut s| {
+                s.extend(applied.clone());
+                s
+            });
+            (n.to_string(), found.collect())
+        } else {
+            (count.map_or_else(|| "more than can be counted".to_string(), |n| n.to_string()), vec![])
+        }
     } else {
-        (count.map_or_else(|| "more than can be counted".to_string(), |n| n.to_string()), vec![])
+        // Each way things could go, once: a variable that isn't in use doesn't make another.
+        let n = (in_play & &at_rest.expect("just checked").given(&lens.picks)).count_with(&unpicked);
+        let found = if constraint.is_some() { ways(&asked, in_play, &applied, 300) } else { vec![] };
+        (n.to_string(), found)
     };
     WorldsView { picks: applied, vars: views, count, constrained: constraint.is_some(), solutions }
+}
+
+/// The ways everything open could land, among the worlds in play, up to `limit`.
+fn ways(asked: &[Asked], in_play: &Bool, applied: &World, limit: usize) -> Vec<World> {
+    fn go(asked: &[Asked], left: &Bool, at: &mut World, out: &mut Vec<World>, limit: usize) {
+        if out.len() >= limit {
+            return;
+        }
+        let Some((first, rest)) = asked.split_first() else {
+            out.push(at.clone());
+            return;
+        };
+        for (option, lands) in &first.lands {
+            let here = left & lands;
+            if !here.is_never() {
+                at.insert(first.id.clone(), option.clone());
+                go(rest, &here, at, out, limit);
+                at.remove(&first.id);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    if !in_play.is_never() {
+        go(asked, in_play, &mut applied.clone(), &mut out, limit);
+    }
+    out
 }
 
 /// What's worth finding out. For each uncertain thing still open, how sure of it you'd be, on average,
 /// once you knew each other uncertain thing that's open: the chance of its likeliest answer, given what
 /// the other turns out to be, weighted by how likely that is. Only what would make you surer is listed,
 /// best first. What's someone's to choose isn't something to find out, so it's neither.
-fn clues(views: &mut [VarView], vars: &BTreeMap<String, Var>, in_play: &Bool, held: f64) {
+fn clues(views: &mut [VarView], asked: &[Asked], in_play: &Bool, held: f64) {
     /// Past this many, it's a puzzle rather than a case, and this would take a while.
     const MOST: usize = 12;
     if held <= 0.0 {
         return;
     }
-    let open: Vec<(String, Var, Vec<String>)> = views
+    let open: Vec<(String, Vec<&Bool>)> = views
         .iter()
         .filter(|v| v.uncertain && !v.options.iter().any(|o| o.picked) && v.options.iter().filter(|o| o.possible).count() > 1)
-        .filter_map(|v| Some((v.id.clone(), vars.get(&v.id)?.clone(), v.options.iter().filter(|o| o.possible).map(|o| o.id.clone()).collect())))
+        .filter_map(|v| {
+            let a = asked.iter().find(|a| a.id == v.id)?;
+            let possible = v.options.iter().filter(|o| o.possible).filter_map(|o| a.lands.iter().find(|l| l.0 == o.id).map(|l| &l.1)).collect();
+            Some((v.id.clone(), possible))
+        })
         .take(MOST + 1)
         .collect();
     if open.len() > MOST {
         return;
     }
     // The worlds where each open thing lands on each of its options, and is consistent with what's known.
-    let lands: Vec<Vec<Bool>> = open.iter().map(|(_, var, options)| options.iter().map(|o| &var.is(o) & in_play).collect()).collect();
-    for (t, (target, _, _)) in open.iter().enumerate() {
+    let lands: Vec<Vec<Bool>> = open.iter().map(|(_, options)| options.iter().map(|o| *o & in_play).collect()).collect();
+    for (t, (target, _)) in open.iter().enumerate() {
         let sure = lands[t].iter().map(|b| b.prob()).fold(0.0, f64::max) / held;
         let mut found: Vec<ClueView> = open
             .iter()
             .enumerate()
             .filter(|(c, _)| *c != t)
-            .map(|(c, (id, _, _))| {
+            .map(|(c, (id, _))| {
                 let after: f64 = lands[c].iter().map(|other| lands[t].iter().map(|b| (b & other).prob()).fold(0.0, f64::max)).sum::<f64>() / held;
                 ClueView { var: id.clone(), sure: after }
             })
@@ -548,11 +650,10 @@ fn relabel(text: &str, labels: &Labels) -> String {
 pub fn view(o: &Workspace, world: &World) -> View {
     let g: &Graph = o.log.graph();
     let labels = Labels(recollect_systems::labels(g));
-    let picks = Space::global().picks(world);
-    let playing = in_play(g, &picks);
+    let lens = Lens::new(g, world);
     let mut vars = BTreeMap::new();
     let mut node = |e: Entity, name: String| {
-        let cells = cells(g, e, &picks, &playing, &labels, &mut vars);
+        let cells = cells(g, e, &lens, &labels, &mut vars);
         node_view(g, e, name, cells)
     };
     let nodes: Vec<NodeView> = g.entities().map(|e| node(e, recollect_systems::label_of(g, e))).collect();
@@ -570,8 +671,8 @@ pub fn view(o: &Workspace, world: &World) -> View {
         .collect();
     // These are made as choices are worked out, so only now are they all there.
     let constants = g.constants().into_iter().map(|(e, _)| node(e, recollect_systems::label_of(g, e))).collect();
-    let edges = g.edges().map(|(e, from, to)| EdgeView { id: e, from, to, components: g.given(e).into_iter().collect(), cells: cells(g, e, &picks, &playing, &labels, &mut vars) }).collect();
-    let worlds = worlds(g, world, &picks, &labels, vars);
+    let edges = g.edges().map(|(e, from, to)| EdgeView { id: e, from, to, components: g.given(e).into_iter().collect(), cells: cells(g, e, &lens, &labels, &mut vars) }).collect();
+    let worlds = worlds(g, world, &lens, &labels, vars);
     let ran = g.take_ran().into_iter().filter(|(_, c)| !internal(g, c)).map(|(node, cell)| RanView { node, cell }).collect();
     View {
         workspace: WorkspaceView { name: o.config.name.clone(), about: o.config.about.clone(), id: o.id.clone(), location: o.location.clone(), systems: o.built.names.clone(), sample: o.sample.clone(), direct_writes: o.config.llm_direct_writes },
@@ -604,9 +705,9 @@ pub fn try_formula(o: &Workspace, e: Entity, text: &str, world: &World) -> Tried
     let labels = Labels(recollect_systems::labels(g));
     match recollect_systems::formulas::try_formula(g, e, text) {
         Ok((value, expansion)) => {
-            let picks = Space::global().picks(world);
-            let narrowed = Shown::cond(&value).given(&picks);
-            Tried { shown: Some(show(&narrowed, &labels, &in_play(g, &picks))), expansion: Some(relabel(&expansion, &labels).replace(['“', '”'], "")), error: None }
+            let lens = Lens::new(g, world);
+            let narrowed = lens.narrow(&Shown::cond(&value));
+            Tried { shown: Some(show(&narrowed, &labels, &lens.in_play)), expansion: Some(relabel(&expansion, &labels).replace(['“', '”'], "")), error: None }
         }
         Err(err) => Tried { shown: None, expansion: None, error: Some(describe_error(&err, &labels)) },
     }
@@ -635,15 +736,14 @@ pub fn sweep(o: &Workspace, set: &CellRef, values: &[f64], read: &[CellRef], wor
         return Err(format!("there's no node {}", set.node));
     }
     let labels = Labels(recollect_systems::labels(g));
-    let picks = Space::global().picks(world);
     let mut copy = g.fork();
     let mut vars = BTreeMap::new();
     Ok(values
         .iter()
         .map(|&at| {
             copy.set_value(set.node, &set.cell, json!(at));
-            let playing = in_play(&copy, &picks);
-            Swept { at, cells: read.iter().map(|r| cell_view(&copy, r.node, &r.cell, &picks, &playing, &labels, &mut vars)).collect() }
+            let lens = Lens::new(&copy, world);
+            Swept { at, cells: read.iter().map(|r| cell_view(&copy, r.node, &r.cell, &lens, &labels, &mut vars)).collect() }
         })
         .collect())
 }
@@ -664,13 +764,12 @@ pub struct RowCells {
 pub fn rows(o: &Workspace, table: &str, from: i64, to: i64, world: &World) -> Vec<RowCells> {
     let g = o.log.graph();
     let labels = Labels(recollect_systems::labels(g));
-    let picks = Space::global().picks(world);
-    let playing = in_play(g, &picks);
+    let lens = Lens::new(g, world);
     let mut vars = BTreeMap::new();
     (from..=to)
         .filter_map(|n| {
             let e = g.row_at(table, &recollect_graph::table::Key::Num(n))?;
-            let cells = cells(g, e, &picks, &playing, &labels, &mut vars);
+            let cells = cells(g, e, &lens, &labels, &mut vars);
             Some(RowCells { key: n, id: e, written: g.contains(e), cells })
         })
         .collect()
@@ -829,14 +928,13 @@ pub struct EdgeBrief {
 pub fn node(o: &Workspace, e: Entity, world: &World) -> NodeDetail {
     let g = o.log.graph();
     let labels = Labels(recollect_systems::labels(g));
-    let picks = Space::global().picks(world);
-    let playing = in_play(g, &picks);
+    let lens = Lens::new(g, world);
     let mut vars = BTreeMap::new();
-    let mine = cells(g, e, &picks, &playing, &labels, &mut vars);
+    let mine = cells(g, e, &lens, &labels, &mut vars);
     let (mut outgoing, mut incoming) = (Vec::new(), Vec::new());
     for (edge, from, to) in g.edges().filter(|(_, f, t)| *f == e || *t == e) {
         let other = if from == e { to } else { from };
-        let brief = EdgeBrief { components: g.given(edge).into_iter().collect(), node: other, name: labels.of(&other.to_string()), cells: cells(g, edge, &picks, &playing, &labels, &mut vars) };
+        let brief = EdgeBrief { components: g.given(edge).into_iter().collect(), node: other, name: labels.of(&other.to_string()), cells: cells(g, edge, &lens, &labels, &mut vars) };
         if from == e { outgoing.push(brief) } else { incoming.push(brief) }
     }
     NodeDetail { node: node_view(g, e, labels.of(&e.to_string()), mine), outgoing, incoming, history: history(o, Some(e)) }

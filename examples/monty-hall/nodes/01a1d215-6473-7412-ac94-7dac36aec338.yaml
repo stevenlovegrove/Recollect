@@ -1,0 +1,10 @@
+id: 01a1d215-6473-7412-ac94-7dac36aec338
+cells:
+  name: Stick
+links:
+- to: 01a1d215-6473-7412-ac94-7da56ffecb8f
+  components:
+  - stands_for
+- to: 01a1d215-6473-7412-ac94-7dab4cac1c47
+  components:
+  - alternative

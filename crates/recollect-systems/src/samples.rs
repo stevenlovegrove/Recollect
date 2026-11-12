@@ -6,9 +6,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use recollect_graph::{CellType, Entity, Name, On, Op, Stored};
 use serde_json::{Value, json};
 
-use crate::formulas::{AT, At, Called, IS_A, LABEL, OPTIONS, Options, REQUIRES, VALUE, ValueCell};
+use crate::formulas::{AT, At, Called, IS_A, LABEL, OPTIONS, Options, REQUIRES, STANDS_FOR, VALUE, ValueCell};
 use crate::notes::{Body, DRAWING, Drawing, NOTES};
-use crate::plan::{ALTERNATIVE, DECISION, DEPENDS_ON, Done, Estimate, GOAL, PART_OF, RISK, TASK, UNCERTAIN, UNKNOWN, Weight};
+use crate::plan::{ALTERNATIVE, DECISION, DEPENDS_ON, EXCLUDES, Done, Estimate, GOAL, PART_OF, RISK, TASK, UNCERTAIN, UNKNOWN, Weight};
 
 pub struct Sample {
     pub name: &'static str,
@@ -42,7 +42,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "13";
+pub const FORMAT: &str = "14";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -512,42 +512,31 @@ fn seen(b: &mut Build, name: &str, formula: &str, about: &str) {
 
 fn monty_hall(b: &mut Build) {
     b.note("The game", "Three doors, with a car behind one and goats behind the other two. You pick a door. Monty knows where the car is: he opens another door, and always shows a goat. Then you can stick with your door, or switch to the one that's left. Nothing here is fixed: pin your pick and the door Monty opens to see where the car probably is, and compare sticking with switching.");
-    // The doors are a table, and three questions land on its rows: the same three nodes each time, so
-    // "Monty opened the door the car is behind" is two questions landing on one node.
-    // A row's key can't be read through a question that lands on it, so each door says its number too.
-    for d in 1..=3 {
-        b.put(&format!("Door[{d}]"), "number", json!(d));
-    }
-    let (car, pick, monty) = ("Where's the car?", "Which door do you pick?", "Which door does Monty open?");
+    // Four questions, each landing on a door, and each after the ones it leaves out. The doors are the
+    // same three nodes every time, so "you win" is two questions landing on one.
+    let doors: Vec<String> = (1..=3).map(|d| format!("Door[{d}]")).collect();
+    let (car, pick, monty, left) = ("Where's the car?", "Which door do you pick?", "Which door does Monty open?", "Which door is left?");
     b.add(car, DECISION).add(car, UNCERTAIN);
     b.add(pick, DECISION);
-    b.add(monty, DECISION).add(monty, UNCERTAIN);
-    for d in 1..=3 {
-        let door = format!("Door[{d}]");
-        b.option(&door, car, Some(1.0)).option(&door, pick, None).option(&door, monty, Some(1.0));
+    for door in &doors {
+        b.option(door, car, Some(1.0)).option(door, pick, None);
     }
-    // Which door Monty opens depends on the first two, and a question's options and weights can't. So
-    // what he does is written as what follows from them, with his one free choice as a doubt of its own.
-    let goats = "Which goat does Monty show, when he has two?";
-    doubt(b, goats, "lower", &[("The lower-numbered door", json!(true), 1.0), ("The higher-numbered door", json!(false), 1.0)]);
-    b.note(goats, "It only matters when the car is behind your door. Otherwise one of the other two has the car, and he has no choice.");
-    let rules = "The door Monty's rules give";
-    // Of the two doors that aren't yours, the lower is 1 unless yours is, and the higher is 3 unless yours is.
-    // The three doors add to 6, so the one that's neither of two is 6 less both.
-    b.formula(rules, "if(car.chosen = pick.chosen, if(goats.chosen.lower, if(pick.chosen.number = 1, 2, 1), if(pick.chosen.number = 3, 2, 3)), 6 - car.chosen.number - pick.chosen.number)");
-    b.label(rules, car, "car").label(rules, pick, "pick").label(rules, goats, "goats");
-    b.note(rules, "Never yours, and never the car's. Saying only that, as a rule that the door he opens isn't either, would get the famous wrong answer: with the car behind your door there are two ways for him to open a door and otherwise one, so the rule alone would count the car being behind yours twice.");
-    seen(b, "Monty opens the door his rules give", "monty.chosen.number = rules", "This ties the door he opens to how he chooses it. Each way the car, your pick and his coin could fall leaves exactly one door, so it doesn't make any of them likelier.");
-    b.label("Monty opens the door his rules give", monty, "monty").label("Monty opens the door his rules give", rules, "rules");
-    // Yours to choose, so it isn't believed: each option is compared by what follows from it.
+    // Any door but the car's and yours, each as likely as the other when there are two. With one left,
+    // that's the one: nothing has to say so.
+    b.add(monty, DECISION).add(monty, UNCERTAIN).link(monty, car, EXCLUDES).link(monty, pick, EXCLUDES);
+    b.note(monty, "Never yours, and never the car's. When the car is behind yours he has two doors to choose from, and is as likely to open either. Otherwise he has one.");
+    // Not yours and not the one he opened, which is always exactly one door.
+    b.add(left, DECISION).add(left, UNCERTAIN).link(left, pick, EXCLUDES).link(left, monty, EXCLUDES);
+    for door in &doors {
+        b.option(door, monty, Some(1.0)).option(door, left, Some(1.0));
+    }
+    // Yours to choose, so it isn't believed: each option is compared by what follows from it. An option
+    // here isn't a door: it stands for whatever another question lands on.
     let choice = "Stick or switch?";
     b.add(choice, DECISION);
-    b.put("Stick", "switches", json!(false)).option("Stick", choice, None);
-    b.put("Switch", "switches", json!(true)).option("Switch", choice, None);
-    let ends = "The door you end on";
-    b.formula(ends, "if(choice.chosen.switches, 6 - pick.chosen.number - monty.chosen.number, pick.chosen.number)");
-    b.label(ends, choice, "choice").label(ends, pick, "pick").label(ends, monty, "monty");
-    b.formula("You win the car", "ends = car.chosen.number").label("You win the car", ends, "ends").label("You win the car", car, "car");
+    b.option("Stick", choice, None).link("Stick", pick, STANDS_FOR);
+    b.option("Switch", choice, None).link("Switch", left, STANDS_FOR);
+    b.formula("You win the car", "choice.chosen = car.chosen").label("You win the car", choice, "choice").label("You win the car", car, "car");
 }
 
 fn medical_test(b: &mut Build) {
