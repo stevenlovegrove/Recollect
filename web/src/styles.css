@@ -3156,3 +3156,285 @@ button.icon.act.revert:hover {
   color: var(--accent);
   background: var(--hl);
 }
+
+/* ---------- narrow screens: views along the bottom ---------- */
+
+.bottom-nav,
+.views-backdrop {
+  display: none;
+}
+.view-icon {
+  display: block;
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    gap: 10px;
+    padding: 6px 10px;
+  }
+  .topbar .tabs,
+  .brand-name,
+  .brand-slash {
+    display: none;
+  }
+  .topbar .brand {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ws-name {
+    min-width: 0;
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    border: none;
+    background: none;
+    padding: 6px 2px;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .ws-name-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .new-node {
+    min-width: 38px;
+    min-height: 34px;
+    font-size: 18px;
+    line-height: 1;
+    padding: 0 10px;
+  }
+  .new-node-word {
+    display: none;
+  }
+  .about-bar {
+    cursor: pointer;
+    padding: 4px 10px;
+  }
+  .about-bar:not(.open) .about-text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+  }
+  .world-bar,
+  .at-bar {
+    padding: 6px 10px;
+  }
+  .world-bar-note {
+    margin-left: 0;
+  }
+
+  .bottom-nav {
+    display: flex;
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+    padding-bottom: env(safe-area-inset-bottom);
+    position: relative;
+    z-index: 30;
+  }
+  .bn-item,
+  .views-item {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    border: none;
+    border-radius: 0;
+    background: none;
+    padding: 7px 2px 6px;
+    color: var(--muted);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .bn-item.active,
+  .views-item.active {
+    color: var(--accent);
+  }
+  .bn-item.active .bn-label {
+    font-weight: 600;
+  }
+  .bn-icon {
+    position: relative;
+  }
+  .bn-label {
+    font-size: 11px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bn-badge {
+    position: absolute;
+    top: -5px;
+    left: 15px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    font-size: 10px;
+    line-height: 14px;
+    text-align: center;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .bn-badge.hot {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-text);
+  }
+
+  .views-backdrop {
+    display: flex;
+    align-items: flex-end;
+    position: fixed;
+    inset: 0;
+    z-index: 25;
+    background: rgba(0, 0, 0, 0.35);
+    animation: views-fade 0.15s ease;
+  }
+  .views-sheet {
+    width: 100%;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    border-radius: 14px 14px 0 0;
+    /* Clear of the bar, which stays on top so it can close the sheet again. */
+    padding: 6px 10px calc(66px + env(safe-area-inset-bottom));
+    animation: views-up 0.18s ease;
+  }
+  .views-grip {
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    margin: 2px auto 8px;
+  }
+  .views-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .views-item {
+    padding: 12px 2px 10px;
+    border-radius: 10px;
+  }
+  .views-item.active {
+    background: var(--hl);
+  }
+
+  /* Map controls clear of thumbs and the bar; the minimap is too small to steer by on a phone. */
+  .mini-frame {
+    display: none;
+  }
+  .search-host {
+    flex: 1 1 120px;
+  }
+}
+@keyframes views-up {
+  from {
+    transform: translateY(40px);
+    opacity: 0;
+  }
+}
+@keyframes views-fade {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .views-sheet,
+  .views-backdrop {
+    animation: none;
+  }
+}
+@media (max-width: 760px) {
+  .map-toolbar {
+    gap: 8px;
+    padding: 6px 10px;
+  }
+  .map-toolbar.nowrap {
+    flex-wrap: wrap;
+  }
+  .map-toolbar.nowrap .search,
+  .search-host {
+    flex: 1 1 80px;
+    min-width: 70px;
+  }
+  .map-hint {
+    display: none;
+  }
+}
+.matrix-wrap {
+  overflow-x: auto;
+}
+@media (max-width: 760px) {
+  /* Tables of options keep columns readable and scroll sideways, rather than squeezing every
+     column to a letter. */
+  .matrix-wrap table.matrix,
+  .compare-wrap table.matrix {
+    table-layout: auto;
+    width: max-content;
+    min-width: 100%;
+  }
+  .matrix-wrap table.matrix th,
+  .matrix-wrap table.matrix td {
+    white-space: nowrap;
+  }
+  table.matrix .t {
+    max-width: 150px;
+  }
+}
+@media (max-width: 760px) {
+  /* Work: one column at a time, swiped sideways, with the next one peeking in. */
+  .columns {
+    grid-auto-columns: 84%;
+    scroll-snap-type: x mandatory;
+    scroll-padding: 0 12px;
+  }
+  .columns > * {
+    scroll-snap-align: start;
+  }
+  /* What differs between worlds: each value as a block, its parts under its name. */
+  .world-values table.sheet,
+  .world-values table.sheet tbody,
+  .world-values table.sheet tr,
+  .world-values table.sheet td {
+    display: block;
+  }
+  .world-values table.sheet tr {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .world-values table.sheet td {
+    border: none;
+    padding: 1px 6px;
+    overflow-wrap: anywhere;
+  }
+  .world-values table.sheet .sheet-name {
+    white-space: normal;
+    font-weight: 600;
+  }
+}
+@media (max-width: 760px) {
+  /* Shrunk to a phone's width its labels would be too small to read, so it scrolls instead. */
+  .timeline-chart {
+    max-width: none;
+    width: 760px;
+  }
+}
+@media (max-width: 760px) {
+  /* Big enough for a thumb. */
+  .insp-head > button.icon,
+  .modal button.icon {
+    min-width: 40px;
+    min-height: 40px;
+    font-size: 24px;
+  }
+}

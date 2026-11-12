@@ -214,6 +214,7 @@ function CommitPanel({ m, ws, commit, onSelect, onCancel, run }: { m: Matrix; ws
 
 function MatrixTable({ m, ws, selected, onSelect }: { m: Matrix; ws: Workspace; selected: string | null; onSelect: (id: string | null) => void }) {
   return (
+    <div className="matrix-wrap">
     <table className="matrix">
       <thead>
         <tr>
@@ -248,6 +249,7 @@ function MatrixTable({ m, ws, selected, onSelect }: { m: Matrix; ws: Workspace; 
         ))}
       </tbody>
     </table>
+    </div>
   );
 }
 

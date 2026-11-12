@@ -21,6 +21,7 @@ import { WorldBar } from "./WorldBar";
 import { SamplePicker, Welcome } from "./Welcome";
 import { isDropped, label } from "./theme";
 import { AskHost, askSure, askWhy } from "./Ask";
+import { BottomNav } from "./ViewNav";
 
 type Tab = "map" | "outline" | "table" | "worlds" | "decisions" | "work" | "timeline" | "checks" | "history" | "inbox" | "files";
 
@@ -213,9 +214,10 @@ export function App() {
     <div className={`app ${showKeys ? "show-keys" : ""}`}>
       <header className="topbar">
         <div className="brand">
-          <span className="logo">◇</span> Recollect{" "}
+          <span className="logo">◇</span> <span className="brand-name">Recollect</span>{" "}
           <button className="ws-name" onClick={() => setPicking(!picking)} title={view.workspace.location}>
-            / {view.workspace.name} ▾
+            <span className="brand-slash">/ </span>
+            <span className="ws-name-text">{view.workspace.name}</span> ▾
           </button>
         </div>
         <nav className="tabs">
@@ -228,8 +230,8 @@ export function App() {
           ))}
         </nav>
         <div className="topbar-right">
-          <button className="primary key-host" onClick={() => startNew({ heading: "New node" })} title="New node (n)">
-            <Key k="n" />+ Node
+          <button className="primary key-host new-node" onClick={() => startNew({ heading: "New node" })} title="New node (n)" aria-label="New node">
+            <Key k="n" />+<span className="new-node-word"> Node</span>
           </button>
           <SaveDot status={ws.status} />
         </div>
@@ -237,7 +239,7 @@ export function App() {
       {ws.status.readOnly && <div className="at-bar">This workspace is open in another tab, so it can only be looked at here. Close it there, and this tab takes over.</div>}
       {ws.status.state === "failed" && <div className="at-bar error">{ws.status.error} It'll be tried again with the next change.</div>}
       <WorldBar ws={ws} onShowWorlds={() => setTab("worlds")} />
-      {view.workspace.about && view.workspace.sample && <div className="about-bar muted small">{view.workspace.about}</div>}
+      {view.workspace.about && view.workspace.sample && <AboutBar key={wsId} text={view.workspace.about} />}
       {ws.error && <div className="error about-error">{ws.error}</div>}
       <main className="main">
         <section className="view">
@@ -255,6 +257,17 @@ export function App() {
         )}
         {selEdge && <EdgeInspector key={selected} ws={ws} edge={selEdge} onSelect={select} onClose={() => select(null)} />}
       </main>
+      {/* On a phone the inspector covers the view, so going to a view puts it away. */}
+      <BottomNav
+        tabs={tabs}
+        tab={tab}
+        onTab={(t) => {
+          setTab(t);
+          select(null);
+        }}
+        counts={counts}
+        hot={hot}
+      />
       {picking && (
         <div className="modal-backdrop" onClick={() => setPicking(false)}>
           <div className="modal picker-modal" onClick={(e) => e.stopPropagation()}>
@@ -295,6 +308,16 @@ export function App() {
       {ctx && <ContextMenu key={JSON.stringify(ctx)} ws={ws} target={ctx} selected={selected} onSelect={select} onClose={closeCtx} />}
       {showKeys && <ShortcutSheet tab={tab} hasSelection={!!selNode} sticky={sheet} onClose={() => setSheet(false)} />}
       <AskHost />
+    </div>
+  );
+}
+
+/** What a sample is about. On a narrow screen it's cut to two lines, and a tap shows the rest. */
+function AboutBar({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={open ? "about-bar muted small open" : "about-bar muted small"} onClick={() => setOpen(!open)}>
+      <span className="about-text">{text}</span>
     </div>
   );
 }
