@@ -73,15 +73,16 @@ impl Engine {
         Engine::default()
     }
 
-    /// Open a workspace from its files, in place of whatever's open. Returns what needs attention,
-    /// and the files to write straight away, such as one for a node only an edge mentioned.
+    /// Open a workspace from its files, in place of whatever's open. Returns its name, what needs
+    /// attention, and the files to write straight away, such as one for a node only an edge mentioned.
     pub fn open(&mut self, id: &str, location: &str, sample: Option<String>, files: &str) -> Result<String, JsValue> {
         self.open = None;
         let files: Files = parse(files)?;
         let (mut ws, problems) = Workspace::load(id, location, sample, files).map_err(fail)?;
         let writes = ws.take_writes();
+        let name = ws.config.name.clone();
         self.open = Some(ws);
-        Ok(text(&json!({ "problems": problems, "writes": writes })))
+        Ok(text(&json!({ "problems": problems, "writes": writes, "name": name })))
     }
 
     pub fn close(&mut self) {

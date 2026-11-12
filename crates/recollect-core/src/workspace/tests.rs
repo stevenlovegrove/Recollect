@@ -112,21 +112,31 @@ fn a_file_that_cant_be_read_is_left_as_it_was_understood() {
 }
 
 #[test]
-fn a_new_file_a_removed_file_and_a_misnamed_file() {
+fn a_node_stays_in_whatever_file_it_was_made_in() {
     let mut ws = invoice();
     let new = recollect_graph::Entity::new();
     let changed = ws.files_changed(BTreeMap::from([("nodes/an-idea.yaml".to_string(), Some(format!("id: {new}\ncells:\n  name: An idea\n")))]));
     assert!(changed.graph);
     assert!(view(&mut ws)["nodes"].as_array().unwrap().iter().any(|n| n["name"] == "An idea"));
+    assert!(ws.take_writes().is_empty(), "it isn't copied to a file named for it: {:?}", ws.files().keys().collect::<Vec<_>>());
+
+    // A change to it goes back where it lives, so whoever made the file sees it there.
+    dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "set", "id": new.to_string(), "cell": "name", "value": "A better idea" }] }), "t").unwrap();
+    let w = ws.take_writes();
+    assert_eq!(w.write.keys().collect::<Vec<_>>(), vec!["nodes/an-idea.yaml"]);
+    assert!(w.write["nodes/an-idea.yaml"].contains("A better idea"));
+
+    // And opened again, it's still there.
+    let (mut again, _) = Workspace::load("t", "t", None, ws.files().clone()).unwrap();
+    assert!(again.take_writes().is_empty());
+
+    // Its file going is the node going.
+    let changed = ws.files_changed(BTreeMap::from([("nodes/an-idea.yaml".to_string(), None)]));
+    assert!(changed.graph);
+    assert!(!view(&mut ws)["nodes"].as_array().unwrap().iter().any(|n| n["name"] == "A better idea"));
     let gone = id(&view(&mut ws), "Gears");
     ws.files_changed(BTreeMap::from([(format!("nodes/{gone}.yaml"), None)]));
     assert!(!view(&mut ws)["nodes"].as_array().unwrap().iter().any(|n| n["name"] == "Gears"));
-
-    // Opened again, a node in a file named otherwise moves to one named for it.
-    let (mut again, _) = Workspace::load("t", "t", None, ws.files().clone()).unwrap();
-    let w = again.take_writes();
-    assert!(w.delete.contains(&"nodes/an-idea.yaml".to_string()), "{w:?}");
-    assert!(w.write.contains_key(&format!("nodes/{new}.yaml")), "{w:?}");
 }
 
 #[test]

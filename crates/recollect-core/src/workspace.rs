@@ -149,6 +149,8 @@ pub struct Workspace {
     known: Files,
     /// The node files as last understood, by path.
     parsed: BTreeMap<String, SavedNode>,
+    /// Which of those each node lives in, so a change to it is written there.
+    homes: BTreeMap<Entity, String>,
     pending: Writes,
 }
 
@@ -185,16 +187,22 @@ fn read_proposals(files: &Files) -> Result<Vec<Proposal>, Error> {
     Ok(out.into_values().collect())
 }
 
-/// The graph the node files say, one node per handle. A node in a file named for it wins over the same
-/// node in a file named otherwise.
-fn graph_of(parsed: &BTreeMap<String, SavedNode>) -> SavedGraph {
-    let mut by_id: BTreeMap<Entity, &SavedNode> = BTreeMap::new();
+/// Which file each node lives in. A node can be in a file called anything, as when someone or some
+/// other program made it by hand, and it stays there. If two files say they're the same node, the one
+/// named for it wins, or else the first.
+fn homes_of(parsed: &BTreeMap<String, SavedNode>) -> BTreeMap<Entity, String> {
+    let mut homes = BTreeMap::new();
     for (path, node) in parsed {
-        if node_of_path(path) == Some(node.id) || !by_id.contains_key(&node.id) {
-            by_id.insert(node.id, node);
+        if node_of_path(path) == Some(node.id) || !homes.contains_key(&node.id) {
+            homes.insert(node.id, path.clone());
         }
     }
-    SavedGraph { nodes: by_id.into_values().cloned().collect() }
+    homes
+}
+
+/// The graph the node files say, one node per handle, from the file it lives in.
+fn graph_of(parsed: &BTreeMap<String, SavedNode>, homes: &BTreeMap<Entity, String>) -> SavedGraph {
+    SavedGraph { nodes: homes.values().map(|p| parsed[p].clone()).collect() }
 }
 
 impl Workspace {
@@ -208,34 +216,21 @@ impl Workspace {
             parsed.insert(path.clone(), parse_node(text).map_err(|e| Error::Other(format!("{path} isn't a valid node: {e}")))?);
         }
         let proposals = read_proposals(&files)?;
-        let (log, problems) = Log::from_saved(graph_of(&parsed), built.registry.clone());
-        let mut ws = Workspace { id: id.to_string(), location: location.to_string(), sample, config, built, log, proposals, known: files, parsed, pending: Writes::default() };
-        // A node in a file named otherwise is moved to one named for it.
-        let misnamed: Vec<(String, Entity)> = ws.parsed.iter().filter(|(p, n)| node_of_path(p) != Some(n.id)).map(|(p, n)| (p.clone(), n.id)).collect();
-        for (path, id) in misnamed {
-            ws.parsed.remove(&path);
-            ws.known.remove(&path);
-            ws.pending.delete.push(path);
-            ws.known.remove(&path_of(id));
-            ws.parsed.remove(&path_of(id));
+        let homes = homes_of(&parsed);
+        let (log, problems) = Log::from_saved(graph_of(&parsed, &homes), built.registry.clone());
+        let mut ws = Workspace { id: id.to_string(), location: location.to_string(), sample, config, built, log, proposals, known: files, parsed, homes, pending: Writes::default() };
+        // A node only an edge mentions gets a file.
+        let homeless: BTreeSet<Entity> = ws.log.graph().entities().filter(|e| !ws.homes.contains_key(e)).collect();
+        for node in ws.log.graph().save().nodes.into_iter().filter(|n| homeless.contains(&n.id)) {
+            ws.put_node(node);
         }
-        let all: Vec<Entity> = ws.log.graph().entities().filter(|e| !ws.parsed.contains_key(&path_of(*e))).collect();
-        ws.write_nodes(all);
         Ok((ws, problems.into_iter().map(|p| format!("{p:?}")).collect()))
     }
 
-    /// Write these nodes' files, if they differ from what's there.
-    fn write_nodes(&mut self, ids: impl IntoIterator<Item = Entity>) {
-        let g = self.log.graph();
-        let saved = g.save();
-        let wanted: BTreeSet<Entity> = ids.into_iter().collect();
-        for node in saved.nodes.into_iter().filter(|n| wanted.contains(&n.id)) {
-            self.put_node(node);
-        }
-    }
-
+    /// Write a node to the file it lives in, or a new one named for it, if that differs from what's there.
     fn put_node(&mut self, node: SavedNode) {
-        let path = path_of(node.id);
+        let path = self.homes.get(&node.id).cloned().unwrap_or_else(|| path_of(node.id));
+        self.homes.insert(node.id, path.clone());
         let text = node_text(&node);
         if self.known.get(&path) != Some(&text) {
             self.known.insert(path.clone(), text.clone());
@@ -252,7 +247,11 @@ impl Workspace {
     }
 
     fn remove(&mut self, path: &str) {
-        self.parsed.remove(path);
+        if let Some(node) = self.parsed.remove(path)
+            && self.homes.get(&node.id).is_some_and(|h| h == path)
+        {
+            self.homes.remove(&node.id);
+        }
         self.pending.write.remove(path);
         if self.known.remove(path).is_some() && !self.pending.delete.iter().any(|p| p == path) {
             self.pending.delete.push(path.to_string());
@@ -270,6 +269,7 @@ impl Workspace {
             for p in paths.into_iter().chain([path_of(gone)]) {
                 self.remove(&p);
             }
+            self.homes.remove(&gone);
         }
         std::mem::take(&mut self.pending)
     }
@@ -319,7 +319,8 @@ impl Workspace {
             }
         }
         if graph {
-            let (seq, _) = self.log.reconcile(&graph_of(&self.parsed), "disk");
+            self.homes = homes_of(&self.parsed);
+            let (seq, _) = self.log.reconcile(&graph_of(&self.parsed, &self.homes), "disk");
             out.graph = seq.is_some();
         }
         if proposals {

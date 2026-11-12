@@ -14,7 +14,7 @@ pub mod shown;
 pub mod table;
 pub mod worlds;
 
-pub use graph::{Backed, Cell, CellType, ComponentType, Computed, Cx, Dep, Entity, Error, Graph, Key, Origin, Source};
+pub use graph::{Backed, Cell, CellType, ComponentType, Computed, Cx, Dep, Entity, Error, Graph, Key, Origin, Source, set_depth_limit};
 pub use log::{Changes, CommitError, Event, Log, On, Op, Stored, Target, Violation, now_ms};
 pub use name::{Name, Named};
 pub use recollect_graph_macros::{cell, component};

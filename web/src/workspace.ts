@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, isNothingOpen, subscribe, type CellInfo, type ComponentInfo, type Edge, type GraphNode, type Op, type PlanData, type Proposal, type View, type Workspaces, type World } from "./api";
+import { backend, type Backend, type ServerEvent, type Status } from "./backend";
+import { api, isNothingOpen, type CellInfo, type ComponentInfo, type Edge, type GraphNode, type Op, type PlanData, type Proposal, type View, type Workspaces, type World } from "./api";
 
 export interface Workspace {
   view: View | null;
@@ -9,7 +10,10 @@ export interface Workspace {
   plan: PlanData;
   proposals: Proposal[];
   available: Workspaces | null;
-  connected: boolean;
+  /** Where the answers come from, and what it can open. */
+  backend: Backend | null;
+  /** Saved, saving, or not saved and why; or, from a server, whether it's connected. */
+  status: Status;
   error: string | null;
   /** Nodes whose cells were worked out again for the last change. */
   recent: Set<string>;
@@ -19,8 +23,10 @@ export interface Workspace {
   world: World;
   pin: (choice: string, option: string | null) => void;
   setWorld: (w: World) => void;
-  /** Go to any point in the log. The next change follows from there. */
-  checkout: (seq: number, why?: string) => Promise<void>;
+  /** Take back the newest change. */
+  undo: () => Promise<void>;
+  /** Take back the newest undo. */
+  redo: () => Promise<void>;
   /** Edges by id. */
   edgeById: Map<string, Edge>;
   /** The edge components that give this graph its shape. */
@@ -38,8 +44,6 @@ export interface Workspace {
   refresh: () => Promise<void>;
   apply: (ops: Op[], why?: string) => Promise<Record<string, string>>;
   openSample: (name: string, reset?: boolean) => Promise<void>;
-  openPath: (path: string) => Promise<void>;
-  create: (path: string, name: string, systems: string[]) => Promise<void>;
 }
 
 const NO_PLAN: PlanData = { work: [], decisions: [] };
@@ -50,11 +54,12 @@ export function useWorkspace(): Workspace {
   const [plan, setPlan] = useState<PlanData>(NO_PLAN);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [available, setAvailable] = useState<Workspaces | null>(null);
-  const [connected, setConnected] = useState(false);
+  const [status, setStatus] = useState<Status>({ state: "saved" });
+  const [be, setBackend] = useState<Backend | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [recent, setRecent] = useState<Set<string>>(new Set());
   const [recentCells, setRecentCells] = useState<Set<string>>(new Set());
-  const lastDir = useRef<string | null>(null);
+  const lastId = useRef<string | null>(null);
   const [world, setWorld] = useState<World>({});
   const recentTimer = useRef<number | undefined>(undefined);
   const worldRef = useRef(world);
@@ -73,8 +78,8 @@ export function useWorkspace(): Workspace {
       setNothingOpen(false);
       setError(null);
       // Everything runs the first time a graph is read, which says nothing about a change.
-      const opened = lastDir.current !== v.workspace.dir;
-      lastDir.current = v.workspace.dir;
+      const opened = lastId.current !== v.workspace.id;
+      lastId.current = v.workspace.id;
       if (v.ran.length && !opened) {
         setRecent(new Set(v.ran.map((r) => r.node)));
         setRecentCells(new Set(v.ran.map((r) => `${r.node}|${r.cell}`)));
@@ -105,7 +110,14 @@ export function useWorkspace(): Workspace {
   const loadAvailable = useCallback(async () => setAvailable(await api.workspaces()), []);
 
   useEffect(() => {
-    return subscribe((ev) => {
+    let stop: (() => void) | undefined;
+    let gone = false;
+    backend().then((b) => {
+      if (gone) return;
+      setBackend(b);
+      stop = b.subscribe(onEvent, setStatus);
+    });
+    function onEvent(ev: ServerEvent) {
       if (ev.type === "graph_changed") {
         refresh();
         loadProposals();
@@ -123,7 +135,11 @@ export function useWorkspace(): Workspace {
         loadProposals();
         loadAvailable();
       }
-    }, setConnected);
+    }
+    return () => {
+      gone = true;
+      stop?.();
+    };
   }, [refresh, loadProposals, loadAvailable]);
 
   // A different world is only a different question.
@@ -172,25 +188,20 @@ export function useWorkspace(): Workspace {
     [refresh],
   );
 
-  const checkout = useCallback(
-    async (seq: number, why = "") => {
-      await api.checkout(seq, why);
-      await refresh();
-    },
-    [refresh],
-  );
+  const undo = useCallback(async () => {
+    await api.undo();
+    await refresh();
+  }, [refresh]);
+  const redo = useCallback(async () => {
+    await api.redo();
+    await refresh();
+  }, [refresh]);
 
   const openSample = useCallback(async (name: string, reset = false) => {
     await api.openSample(name, reset);
   }, []);
-  const openPath = useCallback(async (path: string) => {
-    await api.openPath(path);
-  }, []);
-  const create = useCallback(async (path: string, name: string, systems: string[]) => {
-    await api.create(path, name, systems);
-  }, []);
 
-  return { view, nothingOpen, byId, edgeById, plan, proposals, available, connected, error, recent, recentCells, world, pin, setWorld, checkout, arranging, shape, ends, partKind, info, cellInfo, refresh, apply, openSample, openPath, create };
+  return { view, nothingOpen, byId, edgeById, plan, proposals, available, backend: be, status, error, recent, recentCells, world, pin, setWorld, undo, redo, arranging, shape, ends, partKind, info, cellInfo, refresh, apply, openSample };
 }
 
 /**

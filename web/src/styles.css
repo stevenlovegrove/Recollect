@@ -288,6 +288,9 @@ pre {
 .dot.live {
   background: var(--ok);
 }
+.dot.saving {
+  background: var(--warn);
+}
 .main {
   flex: 1;
   display: flex;
@@ -2830,6 +2833,27 @@ tr.pruned {
 }
 .own input {
   flex: 1;
+}
+/* A file input's label, looking like the buttons beside it. */
+.button-like {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.button-like:hover {
+  border-color: var(--muted);
+}
+.known {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 10px;
+  display: grid;
+  gap: 4px;
+}
+.known li.current b {
+  color: var(--accent);
 }
 .own-new {
   margin-top: 8px;

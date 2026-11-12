@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Op } from "./api";
 import { Key, ShortcutSheet, isTyping, useHoldMeta } from "./Shortcuts";
 import { useWorkspace } from "./workspace";
+import type { Status } from "./backend";
 import { MapView } from "./views/MapView";
 import { OutlineView } from "./views/OutlineView";
 import { TableView } from "./views/TableView";
@@ -90,14 +91,14 @@ export function App() {
 
   // A different workspace is a different graph, so nothing selected carries over, and neither does
   // the map's view of it.
-  const dir = view?.workspace.dir;
+  const wsId = view?.workspace.id;
   const [mapKey, setMapKey] = useState(0);
   useEffect(() => {
     setSelected(null);
     setCreating(null);
     setPicking(false);
     setMapKey((k) => k + 1);
-  }, [dir]);
+  }, [wsId]);
 
   // Drop the selection if its node or edge disappears: deleted, or edited on disk.
   const selEdge = parseEdgeKey(selected);
@@ -117,6 +118,12 @@ export function App() {
     const run = (ops: Op[], why = "") => ws.apply(ops, why).catch((e) => alert(e instanceof Error ? e.message : String(e)));
     const onKey = (e: KeyboardEvent) => {
       if (document.querySelector(".link-menu, .ctx-menu, .dd-pop, .ask")) return;
+      // Undo and redo, unless a text field would undo its own typing.
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "z" && !isTyping(e.target) && view) {
+        e.preventDefault();
+        (e.shiftKey ? ws.redo() : ws.undo()).catch((x) => alert(x instanceof Error ? x.message : String(x)));
+        return;
+      }
       if (e.key === "Escape") {
         if (isTyping(e.target)) (e.target as HTMLElement).blur();
         else if (sheet) setSheet(false);
@@ -160,7 +167,7 @@ export function App() {
 
   if (ws.nothingOpen) return <Welcome ws={ws} />;
   if (!view) {
-    return <div className="splash">{ws.error ? `Can't reach the Recollect server: ${ws.error}` : "Loading…"}</div>;
+    return <div className="splash">{ws.error ? (ws.backend?.kind === "http" ? `Can't reach the Recollect server: ${ws.error}` : ws.error) : "Loading…"}</div>;
   }
 
   const open = ws.plan.decisions.filter((m) => !m.chosen);
@@ -198,7 +205,7 @@ export function App() {
       case "inbox":
         return <InboxView {...common} />;
       case "files":
-        return <FilesView key={dir} {...common} />;
+        return <FilesView key={wsId} {...common} />;
     }
   })();
 
@@ -207,7 +214,7 @@ export function App() {
       <header className="topbar">
         <div className="brand">
           <span className="logo">◇</span> Recollect{" "}
-          <button className="ws-name" onClick={() => setPicking(!picking)} title={view.workspace.dir}>
+          <button className="ws-name" onClick={() => setPicking(!picking)} title={view.workspace.location}>
             / {view.workspace.name} ▾
           </button>
         </div>
@@ -224,17 +231,11 @@ export function App() {
           <button className="primary key-host" onClick={() => startNew({ heading: "New node" })} title="New node (n)">
             <Key k="n" />+ Node
           </button>
-          <span className={ws.connected ? "dot live" : "dot"} title={ws.connected ? "Live" : "Disconnected"} />
+          <SaveDot status={ws.status} />
         </div>
       </header>
-      {view.latest !== null && (
-        <div className="at-bar">
-          You've gone back to event #{view.last_seq}. A change here starts a new branch, and nothing's lost.{" "}
-          <button className="link" onClick={() => ws.checkout(view.latest!, "returned to the latest").catch((e) => alert(String(e)))}>
-            Return to the latest (#{view.latest})
-          </button>
-        </div>
-      )}
+      {ws.status.readOnly && <div className="at-bar">This workspace is open in another tab, so it can only be looked at here. Close it there, and this tab takes over.</div>}
+      {ws.status.state === "failed" && <div className="at-bar error">{ws.status.error} It'll be tried again with the next change.</div>}
       <WorldBar ws={ws} onShowWorlds={() => setTab("worlds")} />
       {view.workspace.about && view.workspace.sample && <div className="about-bar muted small">{view.workspace.about}</div>}
       {ws.error && <div className="error about-error">{ws.error}</div>}
@@ -263,6 +264,17 @@ export function App() {
                 ×
               </button>
             </div>
+            <p className="small muted">
+              {view.workspace.sample ? "A sample" : ws.backend?.kind === "local" && view.workspace.location === "this browser" ? "Kept in this browser" : `At ${view.workspace.location}`}
+              {ws.backend?.exportZip && (
+                <>
+                  {" · "}
+                  <button className="link" onClick={() => ws.backend!.exportZip!().catch((e) => alert(String(e)))}>
+                    Save a copy as a zip
+                  </button>
+                </>
+              )}
+            </p>
             {view.workspace.sample && (
               <p className="small">
                 <span className="muted">This is your working copy of a sample, so the original is safe.</span>{" "}
@@ -285,4 +297,16 @@ export function App() {
       <AskHost />
     </div>
   );
+}
+
+/** Whether what's on screen is safe: saved, or connected to the server that saves it. */
+function SaveDot({ status }: { status: Status }) {
+  const [cls, title] = {
+    live: ["dot live", "Live"],
+    offline: ["dot", "Disconnected"],
+    saved: ["dot live", "Saved"],
+    saving: ["dot saving", "Saving…"],
+    failed: ["dot failed", status.error ?? "Couldn't save"],
+  }[status.state];
+  return <span className={cls} title={status.readOnly ? `${title}, and only looking: it's open in another tab` : title} />;
 }

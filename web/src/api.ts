@@ -1,4 +1,6 @@
-// Types mirror what recollect-server sends.
+// Types mirror what recollect-core sends, whether from the server or from the engine running here.
+
+import { ApiError, backend } from "./backend";
 
 export type World = Record<string, string>;
 
@@ -167,11 +169,14 @@ export interface Check {
 }
 
 export interface View {
-  workspace: { name: string; about: string | null; dir: string; systems: string[]; sample: string | null; direct_writes: boolean };
-  /** Where the log is now. */
+  /** `id` is what the app knows it by, and `location` says where it is, for a person to read. */
+  workspace: { name: string; about: string | null; id: string; location: string; systems: string[]; sample: string | null; direct_writes: boolean };
+  /** The newest event since it was opened, which changes with every change. */
   last_seq: number | null;
-  /** If it's gone back: the newest event that follows from here. */
-  latest: number | null;
+  /** The event undo would take back. */
+  undo: number | null;
+  /** The undo redo would take back. */
+  redo: number | null;
   nodes: GraphNode[];
   /** Rows nobody wrote that a node reads, so a map can show them. They aren't nodes anywhere else. */
   unwritten: GraphNode[];
@@ -255,10 +260,8 @@ export interface OpView {
 
 export interface EventView {
   seq: number;
-  /** The event this one follows. */
-  parent: number | null;
-  /** Whether it's part of what led to where the log is now. */
-  here: boolean;
+  /** The event this one takes back, if it's an undo or a redo. */
+  reverts: number | null;
   at: number;
   author: string;
   why: string;
@@ -293,11 +296,23 @@ export interface SampleInfo {
   systems: string[];
 }
 
+/** A workspace this browser knows, besides the samples. */
+export interface KnownWorkspace {
+  id: string;
+  name: string;
+  kind: "browser" | "folder";
+  location: string;
+  opened: number;
+}
+
 export interface Workspaces {
-  current: { name: string; dir: string; sample: string | null } | null;
+  current: { name: string; id: string; location: string; sample: string | null; kind?: "browser" | "folder"; readOnly?: boolean } | null;
   samples: SampleInfo[];
   systems: { name: string; about: string }[];
-  home: string;
+  /** Served by `recollect serve`: where it keeps its own things. */
+  home?: string;
+  /** Run in the browser: what it's opened before. */
+  recent?: KnownWorkspace[];
 }
 
 /** What a formula calls which nodes. Several nodes under one name are a group. */
@@ -313,7 +328,7 @@ export interface Tried {
 /** A cell as it's given: a value, or a formula with what its names mean. */
 export type Written = unknown | { formula: string; labels?: Labels };
 
-/** A change to make. See crates/recollect-server/src/ops.rs for what these can say. */
+/** A change to make. See crates/recollect-core/src/ops.rs for what these can say. */
 export type Op =
   | { op: "add_node"; id: string; name?: string; body?: string; components?: string[]; cells?: Record<string, Written>; links?: { to: string; component: string; cells?: Record<string, Written> }[] }
   | { op: "add" | "remove"; id: string; component: string }
@@ -323,79 +338,29 @@ export type Op =
   | { op: "unlink"; from: string; to: string; component: string }
   | { op: "delete_node"; id: string };
 
-class ApiError extends Error {
-  status: number;
-  constructor(message: string, status: number) {
-    super(message);
-    this.status = status;
-  }
-}
-
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
-  if (!r.ok) {
-    let msg = `${r.status} ${r.statusText}`;
-    try {
-      msg = (await r.json()).error ?? msg;
-    } catch {
-      /* not JSON */
-    }
-    throw new ApiError(msg, r.status);
-  }
-  return r.status === 204 ? (undefined as T) : r.json();
-}
-
-const post = <T>(path: string, body: unknown) => req<T>(path, { method: "POST", body: JSON.stringify(body) });
-
 export const isNothingOpen = (e: unknown) => e instanceof ApiError && e.status === 409;
 
+const call = async <T>(method: string, args: unknown = {}) => (await backend()).call<T>(method, args);
+
 export const api = {
-  workspaces: () => req<Workspaces>("/api/workspaces"),
-  openSample: (sample: string, reset = false) => post<void>("/api/workspaces/open", { sample, reset }),
-  openPath: (path: string) => post<void>("/api/workspaces/open", { path }),
-  create: (path: string, name: string, systems: string[]) => post<void>("/api/workspaces/new", { path, name, systems }),
-  view: (world: World) => post<View>("/api/view", { world }),
-  plan: (world: World) => post<PlanData>("/api/plan", { world }),
-  apply: (ops: Op[], why = "") => post<{ created: Record<string, string> }>("/api/ops", { ops, why }),
-  checkout: (seq: number, why = "") => post<void>("/api/checkout", { seq, why }),
-  undo: (seq: number, why = "") => post<{ seq: number }>("/api/undo", { seq, why }),
-  tryFormula: (node: string, text: string, world: World) => post<Tried>("/api/try", { node, text, world }),
+  workspaces: async () => (await backend()).workspaces(),
+  openSample: async (sample: string, reset = false) => (await backend()).openSample(sample, reset),
+  view: (world: World) => call<View>("view", { world }),
+  plan: (world: World) => call<PlanData>("plan", { world }),
+  apply: (ops: Op[], why = "") => call<{ created: Record<string, string> }>("apply", { ops, why }),
+  /** Take back one event, or the newest change if none is given. */
+  undo: (seq?: number, why = "") => call<{ seq: number | null }>("undo", { seq, why }),
+  /** Take back the newest undo. */
+  redo: () => call<{ seq: number | null }>("redo"),
+  tryFormula: (node: string, text: string, world: World) => call<Tried>("try", { node, text, world }),
   /** What these cells would be with `set` typed in as each value in turn, with nothing changed. */
-  sweep: (set: CellRef, values: number[], read: CellRef[], world: World) => post<{ at: number; cells: (Cell | null)[] }[]>("/api/sweep", { set, values, read, world }),
+  sweep: (set: CellRef, values: number[], read: CellRef[], world: World) => call<{ at: number; cells: (Cell | null)[] }[]>("sweep", { set, values, read, world }),
   /** A numbered table's rows from one key to another, including rows nobody wrote, which are worked out from the table and never saved. */
-  rows: (table: string, from: number, to: number, world: World) => post<RowCells[]>("/api/rows", { table, from, to, world }),
-  history: (node?: string) => req<EventView[]>(`/api/history${node ? `?node=${encodeURIComponent(node)}` : ""}`),
-  files: () => req<FileInfo[]>("/api/files"),
-  file: (path: string) => req<FileText>(`/api/file?path=${encodeURIComponent(path)}`),
-  proposals: () => req<Proposal[]>("/api/proposals"),
-  accept: (id: string, ops?: number[]) => post<{ seq: number }>(`/api/proposals/${encodeURIComponent(id)}/accept`, { ops }),
-  reject: (id: string) => req<void>(`/api/proposals/${encodeURIComponent(id)}/reject`, { method: "POST" }),
+  rows: (table: string, from: number, to: number, world: World) => call<RowCells[]>("rows", { table, from, to, world }),
+  history: (node?: string) => call<EventView[]>("history", { node }),
+  files: async () => (await backend()).files(),
+  file: async (path: string) => (await backend()).file(path),
+  proposals: () => call<Proposal[]>("proposals"),
+  accept: (id: string, ops?: number[]) => call<{ seq: number }>("accept", { id, ops }),
+  reject: (id: string) => call<void>("reject", { id }),
 };
-
-export type ServerEvent = { type: "graph_changed"; by: string } | { type: "proposals_changed" } | { type: "workspace_changed" } | { type: "resync" };
-
-/** Subscribe to server events; reconnects with backoff. Returns an unsubscribe fn. */
-export function subscribe(onEvent: (e: ServerEvent) => void, onStatus: (connected: boolean) => void): () => void {
-  let ws: WebSocket | null = null;
-  let closed = false;
-  let delay = 500;
-  const connect = () => {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/api/events`);
-    ws.onopen = () => {
-      delay = 500;
-      onStatus(true);
-      onEvent({ type: "resync" });
-    };
-    ws.onmessage = (m) => onEvent(JSON.parse(m.data));
-    ws.onclose = () => {
-      onStatus(false);
-      if (!closed) setTimeout(connect, (delay = Math.min(delay * 2, 8000)));
-    };
-  };
-  connect();
-  return () => {
-    closed = true;
-    ws?.close();
-  };
-}

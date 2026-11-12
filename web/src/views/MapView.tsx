@@ -354,10 +354,10 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
   }, [g.nodes, g.edges, standsFor, ws.arranging]);
   const [hiddenFacts, setHiddenFacts] = useState<Set<Filter>>(new Set());
   const [hiddenRels, setHiddenRels] = useState<Set<string>>(new Set());
-  const [layoutPref, setLayoutPrefState] = useState<LayoutPref>(() => loadLayoutPref(g.workspace.dir));
+  const [layoutPref, setLayoutPrefState] = useState<LayoutPref>(() => loadLayoutPref(g.workspace.id));
   const setLayoutPref = (next: LayoutPref) => {
     setLayoutPrefState(next);
-    saveLayoutPref(g.workspace.dir, next);
+    saveLayoutPref(g.workspace.id, next);
     refit.current = true;
   };
   const refit = useRef(false);

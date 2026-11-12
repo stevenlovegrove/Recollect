@@ -268,6 +268,8 @@ struct Memo {
     verified: u64,
     /// The revision its value last actually changed at.
     changed: u64,
+    /// Something it read was too deep to work out then, so this has to be worked out again.
+    tainted: bool,
 }
 
 #[derive(Default)]
@@ -277,6 +279,26 @@ struct Engine {
     verifying: HashSet<Key>,
     reads: Vec<Vec<Dep>>,
     ran: Vec<Key>,
+    /// Cells that were too deep to work out where they were asked for, to work out from the top.
+    deferred: Vec<Key>,
+    /// How many times that's happened, so a computation can tell whether it happened beneath it.
+    deferrals: u64,
+}
+
+/// How deep cells can wait on cells before the rest is worked out separately. Natively the stack grows
+/// as it needs to, so there's no limit. On the web it can't, so a long chain is worked out in stretches:
+/// one too deep to finish where it was asked for is put off, worked out from the top, and the ask tried
+/// again, which then finds it done. The answer is the same either way.
+static DEPTH_LIMIT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(if cfg!(all(target_arch = "wasm32", target_os = "unknown")) { 160 } else { usize::MAX });
+
+/// Testing: work long chains out in stretches of this many, as the web does.
+#[doc(hidden)]
+pub fn set_depth_limit(n: usize) {
+    DEPTH_LIMIT.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn depth_limit() -> usize {
+    DEPTH_LIMIT.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Every node's name, and what's a row of what, so finding a table's rows doesn't mean reading every name.
@@ -674,6 +696,46 @@ impl Graph {
         f(Session { g: self, engine: &guard })
     }
 
+    /// A read from the top. Whatever was too deep to finish is worked out from here, deepest first,
+    /// then each stretch above it again, now that what it waits on is done, and the read tried again,
+    /// until nothing was put off. Each round finishes at least one more stretch of a chain, so only a
+    /// loop too long to see from one stretch keeps going, and after this many rounds the read says it
+    /// couldn't be worked out.
+    fn reading<R>(&self, f: impl Fn(Session) -> R) -> R {
+        const MOST_ROUNDS: usize = 10_000;
+        self.session(|s| {
+            let pending = || !s.engine.borrow().deferred.is_empty();
+            let mut rounds = 0;
+            loop {
+                let out = f(s);
+                if !pending() {
+                    return out;
+                }
+                let mut seen = HashSet::new();
+                while pending() {
+                    rounds += 1;
+                    if rounds > MOST_ROUNDS {
+                        s.engine.borrow_mut().deferred.clear();
+                        return out;
+                    }
+                    let mut order = Vec::new();
+                    loop {
+                        let next = s.engine.borrow_mut().deferred.pop();
+                        let Some(key) = next else { break };
+                        if seen.insert(key.clone()) {
+                            s.freshen(&key);
+                            order.push(key);
+                        }
+                    }
+                    for key in order.iter().rev() {
+                        s.freshen(key);
+                    }
+                    seen.clear();
+                }
+            }
+        })
+    }
+
     /// Every node, in the order they were made.
     pub fn entities(&self) -> impl Iterator<Item = Entity> + '_ {
         self.nodes.iter().copied()
@@ -941,18 +1003,18 @@ impl Graph {
 
     /// The typed way to read a cell.
     pub fn get<C: CellType>(&self, e: Entity) -> Cell<C> {
-        self.session(|s| s.read(e))
+        self.reading(|s| s.read(e))
     }
 
     /// Any cell by its name, whether or not Rust has a type for it.
     pub fn get_value(&self, e: Entity, cell: &str) -> Cell<Value> {
-        self.session(|s| s.read_value(e, cell))
+        self.reading(|s| s.read_value(e, cell))
     }
 
     /// Run something with what a computed cell on this entity could see, as one would, without keeping
     /// anything: to try out a formula, say.
-    pub fn run<R>(&self, e: Entity, f: impl FnOnce(&Cx) -> R) -> R {
-        self.session(|s| {
+    pub fn run<R>(&self, e: Entity, f: impl Fn(&Cx) -> R) -> R {
+        self.reading(|s| {
             s.engine.borrow_mut().reads.push(Vec::new());
             let out = f(&Cx { s, id: e, origin: e });
             s.engine.borrow_mut().reads.pop();
@@ -1252,6 +1314,12 @@ impl Session<'_> {
         if row && self.g.registry.owner(&key.1).is_none() { Err(Error::Missing(key)) } else { Ok(None) }
     }
 
+    /// How many cells are waiting on others here, which is how deep the stack is.
+    fn depth(&self) -> usize {
+        let engine = self.engine.borrow();
+        engine.evaluating.len() + engine.verifying.len()
+    }
+
     /// Make sure the memo for a cell about to be read is current.
     fn settle(&self, key: &Key, c: &Arc<Computed>) -> Result<(), Error> {
         let evaluating = self.engine.borrow().evaluating.iter().position(|k| k == key);
@@ -1259,6 +1327,15 @@ impl Session<'_> {
             let mut members = self.engine.borrow().evaluating[at..].to_vec();
             members.sort();
             return Err(Error::Cycle(members));
+        }
+        if self.depth() >= depth_limit() {
+            let mut engine = self.engine.borrow_mut();
+            let current = engine.memo.get(key).is_some_and(|m| m.verified == self.g.revision && !m.tainted);
+            if !current {
+                engine.deferred.push(key.clone());
+                engine.deferrals += 1;
+                return Err(Error::Failed("this depends on a chain of cells too long to follow here, or on a loop through that many".to_string()));
+            }
         }
         let verifying = self.engine.borrow().verifying.contains(key);
         if verifying {
@@ -1281,13 +1358,19 @@ impl Session<'_> {
             if engine.evaluating.contains(key) || engine.verifying.contains(key) {
                 return revision; // Part of a loop. Treating it as changed is always safe.
             }
-            engine.memo.get(key).map(|m| (m.verified, m.changed, m.deps.clone()))
+            engine.memo.get(key).map(|m| (m.verified, m.changed, m.deps.clone(), m.tainted))
         };
-        let Some((verified, changed, deps)) = known else {
+        let Some((verified, changed, deps, tainted)) = known else {
             return self.evaluate(key, &c);
         };
+        if tainted {
+            return self.evaluate(key, &c);
+        }
         if verified == revision {
             return changed;
+        }
+        if self.depth() >= depth_limit() {
+            return revision; // Too deep to check from here. Treating it as changed is always safe.
         }
         self.engine.borrow_mut().verifying.insert(key.clone());
         let same = deps.iter().all(|d| stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || self.last_changed(d)) <= verified);
@@ -1309,12 +1392,13 @@ impl Session<'_> {
     }
 
     fn evaluate(&self, key: &Key, c: &Arc<Computed>) -> u64 {
-        {
+        let deferrals = {
             let mut engine = self.engine.borrow_mut();
             engine.evaluating.push(key.clone());
             engine.reads.push(vec![Dep::Backing(key.clone())]);
             engine.ran.push(key.clone());
-        }
+            engine.deferrals
+        };
         // Written on a kind, it reads what the kind's formula names from there. A default is about the
         // entity it's for.
         let origin = self.g.backing_at(key.0, &key.1).map_or(key.0, |(_, at)| if at == Entity::whole() { key.0 } else { at });
@@ -1328,11 +1412,12 @@ impl Session<'_> {
         let mut seen = HashSet::new();
         deps.retain(|d| seen.insert(d.clone()));
         let revision = self.g.revision;
+        let tainted = engine.deferrals != deferrals;
         let changed = match engine.memo.get(key) {
-            Some(old) if (c.same)(&old.value, &value) => old.changed,
+            Some(old) if !tainted && !old.tainted && (c.same)(&old.value, &value) => old.changed,
             _ => revision,
         };
-        engine.memo.insert(key.clone(), Memo { value, deps, verified: revision, changed });
+        engine.memo.insert(key.clone(), Memo { value, deps, verified: revision, changed, tainted });
         changed
     }
 }

@@ -66,6 +66,8 @@ const ANYWHERE: Row[] = [
   ["1–9", "Switch tab"],
   ["?", "Keep this sheet open"],
   ["esc", "Close, or clear the selection"],
+  ["⌘Z", "Undo"],
+  ["⇧⌘Z", "Redo"],
 ];
 
 const SELECTION: Row[] = [

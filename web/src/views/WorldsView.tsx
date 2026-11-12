@@ -52,11 +52,11 @@ export function WorldsView({ ws, onSelect }: ViewProps) {
   };
 
   const drawings = g.nodes.filter((n) => typeof n.cells.drawing?.value === "string");
-  const [wanted, setWanted] = useRemembered(`recollect.drawing:${g.workspace.dir}`);
+  const [wanted, setWanted] = useRemembered(`recollect.drawing:${g.workspace.id}`);
   const drawing = drawings.find((n) => n.id === wanted);
   const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => setFailed(null), [drawing?.id]);
-  const [remembered, setShowing] = useRemembered(`recollect.worlds-showing:${g.workspace.dir}`);
+  const [remembered, setShowing] = useRemembered(`recollect.worlds-showing:${g.workspace.id}`);
   const showing = remembered === DEFAULT ? "left" : remembered;
 
   if (!w.vars.length && !drawing && !drawings.length) {
