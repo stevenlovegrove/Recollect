@@ -1,0 +1,16 @@
+id: 01a1d191-084a-7607-a93b-d0de11aaa7f8
+components:
+- notes
+- requires
+- value
+cells:
+  body: He was sure to open door 3 if the car is behind door 2, and only as likely as not if it's behind yours. That's what makes door 2 twice as likely.
+  name: He opened door 3
+formulas:
+  value: opens = 3
+links:
+- to: 01a1d191-084a-7607-a93b-d0dd9c667371
+  components:
+  - label
+  cells:
+    called: opens

@@ -1,0 +1,16 @@
+id: 01a1d191-0855-72d2-8885-5514b9ab2e81
+components:
+- notes
+- requires
+- value
+cells:
+  body: There are three gold coins you could be holding, each as likely as the others, and two of them are in the box with two gold.
+  name: The coin you took is gold
+formulas:
+  value: took = "gold"
+links:
+- to: 01a1d191-0855-72d2-8885-551235c39559
+  components:
+  - label
+  cells:
+    called: took

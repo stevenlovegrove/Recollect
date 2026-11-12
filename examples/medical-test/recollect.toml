@@ -1,0 +1,3 @@
+name = "The positive test"
+about = "One person in a hundred has a condition. The test catches 90% of those who do, and wrongly flags 5% of those who don't. Yours came back positive. How likely is it that you have it? About 15%, because there are so many more people to flag wrongly."
+systems = ["plan"]

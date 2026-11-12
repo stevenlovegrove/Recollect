@@ -310,6 +310,56 @@ async fn the_case_file_says_who_it_probably_was_and_what_to_find_out() {
     assert!(var(&v, "How did Mr Pryce get home?")["clues"].as_array().is_none_or(|c| c.is_empty()), "what's pinned isn't a question any more");
 }
 
+/// The classic problems, each with the answer it's known for.
+#[tokio::test]
+async fn the_classic_problems_have_their_known_answers() {
+    let c = Client::new();
+    let var = |v: &Value, name: &str| v["worlds"]["vars"].as_array().unwrap().iter().find(|x| x["name"] == name).unwrap_or_else(|| panic!("no {name}")).clone();
+    let chance = |v: &Value, question: &str, option: &str| var(v, question)["options"].as_array().unwrap().iter().find(|o| o["name"] == option).unwrap_or_else(|| panic!("no {option}"))["chance"].as_f64().unwrap();
+    let prob = |v: &Value, name: &str| cell(v, name, "value")["shown"]["prob"].as_f64().unwrap_or_else(|| panic!("{name}: {}", cell(v, name, "value")));
+    let near = |a: f64, b: f64| assert!((a - b).abs() < 1e-9, "{a} not {b}");
+
+    // Monty Hall: the car is twice as likely behind door 2, so switching wins two times in three.
+    c.open("monty-hall").await;
+    let v = c.view(json!({})).await;
+    near(chance(&v, "Where's the car?", "Behind door 1"), 1.0 / 3.0);
+    near(chance(&v, "Where's the car?", "Behind door 2"), 2.0 / 3.0);
+    near(chance(&v, "Where's the car?", "Behind door 3"), 0.0);
+    let choice = var(&v, "Stick or switch?");
+    for (option, wins) in [("Stick with door 1", 1.0 / 3.0), ("Switch to door 2", 2.0 / 3.0)] {
+        let pinned = c.view(json!({ choice["id"].as_str().unwrap(): id(&v, option) })).await;
+        near(prob(&pinned, "You win the car"), wins);
+    }
+
+    // The positive test: 90 true positives among 585.
+    c.open("medical-test").await;
+    let v = c.view(json!({})).await;
+    near(chance(&v, "Do you have it?", "You have it"), 90.0 / 585.0);
+
+    // Bertrand's box: two of the three gold coins are in the box with two.
+    c.open("bertrands-box").await;
+    let v = c.view(json!({})).await;
+    near(chance(&v, "Which box?", "Two gold"), 2.0 / 3.0);
+    near(chance(&v, "Which box?", "Two silver"), 0.0);
+    near(prob(&v, "The other coin is gold too"), 2.0 / 3.0);
+
+    // Two children: a third, and a half once it's the elder who's known to be a boy.
+    c.open("two-children").await;
+    let v = c.view(json!({})).await;
+    near(prob(&v, "Both are boys"), 1.0 / 3.0);
+    let pinned = c.view(json!({ var(&v, "The elder")["id"].as_str().unwrap(): id(&v, "The elder is a boy") })).await;
+    near(prob(&pinned, "Both are boys"), 0.5);
+
+    // Socks: each count of pairs by how likely three different socks were from it.
+    c.open("socks").await;
+    let v = c.view(json!({})).await;
+    let likely = |n: f64| (2.0 * n - 4.0) / (2.0 * n - 1.0);
+    let total: f64 = (3..=6).map(|n| likely(n as f64)).sum();
+    for n in 3..=6 {
+        near(chance(&v, "How many pairs went in?", &format!("{n} pairs")), likely(n as f64) / total);
+    }
+}
+
 #[tokio::test]
 async fn the_plan_answers_where_work_stands_and_what_decisions_need() {
     let c = Client::new();

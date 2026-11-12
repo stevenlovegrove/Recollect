@@ -1,0 +1,10 @@
+id: 01a1d191-085a-771c-b8e2-32fa473a0bba
+cells:
+  boy: true
+  name: The elder is a boy
+links:
+- to: 01a1d191-085a-771c-b8e2-32f9496d0e53
+  components:
+  - alternative
+  cells:
+    weight: 1.0

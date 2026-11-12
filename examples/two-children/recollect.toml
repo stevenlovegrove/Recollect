@@ -1,0 +1,3 @@
+name = "Two children"
+about = "A family has two children, and at least one is a boy. How likely is it that both are? A third, not a half. Find out that the elder is a boy, by pinning it, and it becomes a half: which boy you were told about matters."
+systems = ["plan"]

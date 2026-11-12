@@ -1,0 +1,10 @@
+id: 01a1d191-0855-72d2-8885-5510ffe0b387
+cells:
+  first: true
+  name: Its first coin
+links:
+- to: 01a1d191-0855-72d2-8885-550fc2f896b5
+  components:
+  - alternative
+  cells:
+    weight: 1.0

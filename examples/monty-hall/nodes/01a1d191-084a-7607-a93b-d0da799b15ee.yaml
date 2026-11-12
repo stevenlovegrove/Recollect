@@ -1,0 +1,8 @@
+id: 01a1d191-084a-7607-a93b-d0da799b15ee
+components:
+- decision
+- notes
+- uncertain
+cells:
+  body: 'If the car is behind your door, he can open either of the others, and has no reason to prefer one. If it isn''t, he has no choice: one of the other two has the car.'
+  name: Which goat does Monty show, when he has two?

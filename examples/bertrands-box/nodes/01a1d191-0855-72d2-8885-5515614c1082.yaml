@@ -1,0 +1,13 @@
+id: 01a1d191-0855-72d2-8885-5515614c1082
+components:
+- value
+cells:
+  name: The other coin is gold too
+formulas:
+  value: left = "gold"
+links:
+- to: 01a1d191-0855-72d2-8885-5513330a51d3
+  components:
+  - label
+  cells:
+    called: left

@@ -1,0 +1,10 @@
+id: 01a1d191-6300-703e-8675-5747c4307be7
+cells:
+  name: It misses it
+  positive: false
+links:
+- to: 01a1d191-6300-703e-8675-5745b0da1008
+  components:
+  - alternative
+  cells:
+    weight: 10.0

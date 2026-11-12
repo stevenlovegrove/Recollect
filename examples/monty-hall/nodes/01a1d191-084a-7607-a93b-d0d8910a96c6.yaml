@@ -1,0 +1,10 @@
+id: 01a1d191-084a-7607-a93b-d0d8910a96c6
+cells:
+  door: 2
+  name: Behind door 2
+links:
+- to: 01a1d191-084a-7607-a93b-d0d67d790aa0
+  components:
+  - alternative
+  cells:
+    weight: 1.0

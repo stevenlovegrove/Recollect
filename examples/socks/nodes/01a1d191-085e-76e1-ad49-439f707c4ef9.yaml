@@ -1,0 +1,17 @@
+id: 01a1d191-085e-76e1-ad49-439f707c4ef9
+cells:
+  name: 3 pairs
+  socks: 6
+formulas:
+  all_different: draw.chosen.all_different
+links:
+- to: 01a1d191-085e-76e1-ad49-439e35c41f22
+  components:
+  - alternative
+  cells:
+    weight: 1.0
+- to: 01a1d191-085e-76e1-ad49-43a089def640
+  components:
+  - label
+  cells:
+    called: draw

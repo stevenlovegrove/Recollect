@@ -33,7 +33,12 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "sudoku", title: "4×4 sudoku", about: "A table of sixteen cells, each choosing a number, and a clue for each row, column and box: distinct(Cell[A1].chosen, Cell[A2].chosen, …). There are 288 grids.", group: "puzzle", systems: &[], build: sudoku },
     Sample { name: "knights-and-knaves", title: "Knights and knaves", about: "A says “we are both knaves”. Knights always tell the truth, and knaves always lie.", group: "puzzle", systems: &[], build: knights_and_knaves },
     Sample { name: "case-file", title: "The Vane watch", about: "A case file. A watch went from Rosalind Vane's study one evening, and there are three people it could have been, or someone nobody has thought of. Each account is a node saying who gave it, with how far it's believed, and when each suspect could have reached the house is worked out from those. The Worlds tab gives how likely each suspect is, and what's most worth finding out next. Pin what you learn.", group: "reasoning", systems: &["plan"], build: case_file },
-    Sample { name: "zebra", title: "The zebra puzzle", about: "Who owns the zebra, and who drinks water? A table for each kind of thing, whose rows choose a house, and the clues written as they read: Nationality[English].chosen = Colour[Red].chosen. About 3 × 10¹⁷ combinations, and the clues leave exactly one.", group: "puzzle", systems: &[], build: zebra },
+    Sample { name: "monty-hall", title: "Monty Hall", about: "A car behind one of three doors. You pick door 1, and Monty, who knows where it is, opens door 3 to show a goat. Where the car is and how Monty picks between two goats are both in doubt, and what he opened is evidence. Stick or switch is yours to choose: compare them on the Decisions tab.", group: "reasoning", systems: &["plan"], build: monty_hall },
+    Sample { name: "medical-test", title: "The positive test", about: "One person in a hundred has a condition. The test catches 90% of those who do, and wrongly flags 5% of those who don't. Yours came back positive. How likely is it that you have it? About 15%, because there are so many more people to flag wrongly.", group: "reasoning", systems: &["plan"], build: medical_test },
+    Sample { name: "bertrands-box", title: "Bertrand's box", about: "Three boxes: two gold coins, two silver, and one of each. You take a coin from a box without looking, and it's gold. How likely is the other coin in that box to be gold? Not a half: two of the three gold coins you could be holding are in the box with two.", group: "reasoning", systems: &["plan"], build: bertrands_box },
+    Sample { name: "two-children", title: "Two children", about: "A family has two children, and at least one is a boy. How likely is it that both are? A third, not a half. Find out that the elder is a boy, by pinning it, and it becomes a half: which boy you were told about matters.", group: "reasoning", systems: &["plan"], build: two_children },
+    Sample { name: "socks", title: "Socks in the wash", about: "Somewhere between three and six pairs of socks went in the wash, all different pairs. The first three you pull out are all different. How many pairs are there? Each count says how likely that was, so seeing it moves belief towards the bigger loads.", group: "reasoning", systems: &["plan"], build: socks },
+    Sample { name: "zebra",title: "The zebra puzzle", about: "Who owns the zebra, and who drinks water? A table for each kind of thing, whose rows choose a house, and the clues written as they read: Nationality[English].chosen = Colour[Red].chosen. About 3 × 10¹⁷ combinations, and the clues leave exactly one.", group: "puzzle", systems: &[], build: zebra },
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
@@ -490,6 +495,99 @@ fn case_file(b: &mut Build) {
     };
     evidence(b, "Whoever took it was in the house by 10:00", "who.chosen.arrives <= 60", "The case was locked at 9:00 and empty at 10:15, and it would take a while to find the key, open it, and get away.");
     evidence(b, "They came in from the garden", "who.chosen.from_garden", "Fresh mud on the study carpet, from the garden door to the case.");
+}
+
+/// Something in doubt: a decision nobody makes, whose options each say `cell`, believed this far.
+fn doubt(b: &mut Build, question: &str, cell: &str, options: &[(&str, Value, f64)]) {
+    b.add(question, DECISION).add(question, UNCERTAIN);
+    for (option, value, weight) in options {
+        b.put(option, cell, value.clone()).option(option, question, Some(*weight));
+    }
+}
+
+/// What was seen, which rules out the worlds it doesn't fit.
+fn seen(b: &mut Build, name: &str, formula: &str, about: &str) {
+    b.formula(name, formula).add(name, REQUIRES).note(name, about);
+}
+
+fn monty_hall(b: &mut Build) {
+    b.note("The game", "Three doors, with a car behind one and goats behind the other two. You pick door 1. Monty knows where the car is: he always opens another door, and always shows a goat. He opens door 3, and offers you door 2 instead.");
+    let car = "Where's the car?";
+    doubt(b, car, "door", &[("Behind door 1", json!(1), 1.0), ("Behind door 2", json!(2), 1.0), ("Behind door 3", json!(3), 1.0)]);
+    // Only matters when the car is behind your door: otherwise he has one goat he can show.
+    let goats = "Which goat does Monty show, when he has two?";
+    doubt(b, goats, "opens", &[("The one behind door 2", json!(2), 1.0), ("The one behind door 3", json!(3), 1.0)]);
+    b.note(goats, "If the car is behind your door, he can open either of the others, and has no reason to prefer one. If it isn't, he has no choice: one of the other two has the car.");
+    // Doors 2 and 3 add to 5, so the one that isn't the car's is 5 less the car's.
+    b.formula("Monty opens", "if(car.chosen.door = 1, goats.chosen.opens, 5 - car.chosen.door)").label("Monty opens", car, "car").label("Monty opens", goats, "goats");
+    seen(b, "He opened door 3", "opens = 3", "He was sure to open door 3 if the car is behind door 2, and only as likely as not if it's behind yours. That's what makes door 2 twice as likely.");
+    b.label("He opened door 3", "Monty opens", "opens");
+    // Yours to choose, so it isn't believed: each option is compared by what follows from it.
+    let choice = "Stick or switch?";
+    b.add(choice, DECISION);
+    for (option, door) in [("Stick with door 1", 1), ("Switch to door 2", 2)] {
+        b.put(option, "ends_on", json!(door)).option(option, choice, None);
+    }
+    b.formula("You win the car", "choice.chosen.ends_on = car.chosen.door").label("You win the car", choice, "choice").label("You win the car", car, "car");
+}
+
+fn medical_test(b: &mut Build) {
+    let have = "Do you have it?";
+    b.add(have, DECISION).add(have, UNCERTAIN).note(have, "Before the test, you're anyone: one in a hundred has it.");
+    b.option("You have it", have, Some(1.0)).option("You don't", have, Some(99.0));
+    // How the test behaves is a separate doubt for each case, and only the one that applies is read.
+    doubt(b, "The test, if you have it", "positive", &[("It catches it", json!(true), 90.0), ("It misses it", json!(false), 10.0)]);
+    doubt(b, "The test, if you don't", "positive", &[("A false alarm", json!(true), 5.0), ("It's clear", json!(false), 95.0)]);
+    b.formula_on("You have it", "positive", "test.chosen.positive").label("You have it", "The test, if you have it", "test");
+    b.formula_on("You don't", "positive", "test.chosen.positive").label("You don't", "The test, if you don't", "test");
+    seen(b, "The test came back positive", "have.chosen.positive", "Of 10,000 people, 100 have it and 90 of those test positive. 9,900 don't, and 495 of those test positive too. So 90 of the 585 positives have it.");
+    b.label("The test came back positive", have, "have");
+}
+
+fn bertrands_box(b: &mut Build) {
+    let which = "Which box?";
+    b.add(which, DECISION).add(which, UNCERTAIN);
+    for (name, first, second) in [("Two gold", "gold", "gold"), ("One of each", "gold", "silver"), ("Two silver", "silver", "silver")] {
+        b.put(name, "first", json!(first)).put(name, "second", json!(second)).option(name, which, Some(1.0));
+    }
+    let coin = "Which coin in it?";
+    doubt(b, coin, "first", &[("Its first coin", json!(true), 1.0), ("Its second coin", json!(false), 1.0)]);
+    for (name, formula) in [("The coin you took", "if(coin.chosen.first, box.chosen.first, box.chosen.second)"), ("The coin left in the box", "if(coin.chosen.first, box.chosen.second, box.chosen.first)")] {
+        b.formula(name, formula).label(name, which, "box").label(name, coin, "coin");
+    }
+    seen(b, "The coin you took is gold", r#"took = "gold""#, "There are three gold coins you could be holding, each as likely as the others, and two of them are in the box with two gold.");
+    b.label("The coin you took is gold", "The coin you took", "took");
+    b.formula("The other coin is gold too", r#"left = "gold""#).label("The other coin is gold too", "The coin left in the box", "left");
+}
+
+fn two_children(b: &mut Build) {
+    doubt(b, "The elder", "boy", &[("The elder is a boy", json!(true), 1.0), ("The elder is a girl", json!(false), 1.0)]);
+    doubt(b, "The younger", "boy", &[("The younger is a boy", json!(true), 1.0), ("The younger is a girl", json!(false), 1.0)]);
+    let both = [("elder", "The elder"), ("younger", "The younger")];
+    seen(b, "At least one is a boy", "elder.chosen.boy || younger.chosen.boy", "This rules out only two girls. Of the three families left, boy and boy, boy and girl, girl and boy, one has two boys.");
+    b.formula("Both are boys", "elder.chosen.boy && younger.chosen.boy");
+    for (label, child) in both {
+        b.label("At least one is a boy", child, label).label("Both are boys", child, label);
+    }
+}
+
+fn socks(b: &mut Build) {
+    b.note("The wash", "Every pair is different from the others. You pull three socks out without looking, and no two of them match.");
+    let pairs = "How many pairs went in?";
+    b.add(pairs, DECISION).add(pairs, UNCERTAIN);
+    for n in 3..=6 {
+        let option = format!("{n} pairs");
+        b.put(&option, "socks", json!(2 * n)).option(&option, pairs, Some(1.0));
+        // With the first sock out, the second must miss its partner, and the third both partners:
+        // (2n-2)/(2n-1) × (2n-4)/(2n-2), which is 2n-4 ways in every 2n-1.
+        let draw = format!("Three socks from {n} pairs");
+        let (differ, matched) = (format!("All different, from {n} pairs"), format!("Two match, from {n} pairs"));
+        doubt(b, &draw, "all_different", &[(&differ, json!(true), (2 * n - 4) as f64), (&matched, json!(false), 3.0)]);
+        b.note(&draw, &format!("Of {} socks: the second must miss the first's partner, and the third both partners. That's {} ways in every {}.", 2 * n, 2 * n - 4, 2 * n - 1));
+        b.formula_on(&option, "all_different", "draw.chosen.all_different").label(&option, &draw, "draw");
+    }
+    seen(b, "The first three are all different", "pairs.chosen.all_different", "Likelier the more pairs there are, so it counts for the bigger loads, though not by much: three socks is little to go on.");
+    b.label("The first three are all different", pairs, "pairs");
 }
 
 /// The `recollect.toml` for a sample.

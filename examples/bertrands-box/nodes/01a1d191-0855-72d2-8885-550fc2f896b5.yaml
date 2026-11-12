@@ -1,0 +1,6 @@
+id: 01a1d191-0855-72d2-8885-550fc2f896b5
+components:
+- decision
+- uncertain
+cells:
+  name: Which coin in it?

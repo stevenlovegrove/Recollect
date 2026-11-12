@@ -1,0 +1,10 @@
+id: 01a1d191-085a-771c-b8e2-32fb5ea5f106
+cells:
+  boy: false
+  name: The elder is a girl
+links:
+- to: 01a1d191-085a-771c-b8e2-32f9496d0e53
+  components:
+  - alternative
+  cells:
+    weight: 1.0

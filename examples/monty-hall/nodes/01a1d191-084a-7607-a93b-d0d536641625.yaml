@@ -1,0 +1,6 @@
+id: 01a1d191-084a-7607-a93b-d0d536641625
+components:
+- notes
+cells:
+  body: 'Three doors, with a car behind one and goats behind the other two. You pick door 1. Monty knows where the car is: he always opens another door, and always shows a goat. He opens door 3, and offers you door 2 instead.'
+  name: The game

@@ -1,0 +1,16 @@
+id: 01a1d191-6300-703e-8675-574bb0183374
+components:
+- notes
+- requires
+- value
+cells:
+  body: Of 10,000 people, 100 have it and 90 of those test positive. 9,900 don't, and 495 of those test positive too. So 90 of the 585 positives have it.
+  name: The test came back positive
+formulas:
+  value: have.chosen.positive
+links:
+- to: 01a1d191-6300-703e-8675-5742b5c51839
+  components:
+  - label
+  cells:
+    called: have

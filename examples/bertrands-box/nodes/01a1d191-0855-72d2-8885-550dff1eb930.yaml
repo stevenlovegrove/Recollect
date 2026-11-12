@@ -1,0 +1,11 @@
+id: 01a1d191-0855-72d2-8885-550dff1eb930
+cells:
+  first: gold
+  name: One of each
+  second: silver
+links:
+- to: 01a1d191-0855-72d2-8885-550b64c66252
+  components:
+  - alternative
+  cells:
+    weight: 1.0
