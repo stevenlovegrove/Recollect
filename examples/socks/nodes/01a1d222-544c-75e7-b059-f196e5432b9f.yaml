@@ -1,0 +1,16 @@
+id: 01a1d222-544c-75e7-b059-f196e5432b9f
+components:
+- decision
+- uncertain
+cells:
+  name: The third sock out
+links:
+- to: 01a1d222-544c-75e7-b059-f19034efe092
+  components:
+  - within
+- to: 01a1d222-544c-75e7-b059-f19452c76ac8
+  components:
+  - excludes
+- to: 01a1d222-544c-75e7-b059-f1950d8287fd
+  components:
+  - excludes

@@ -1,8 +1,0 @@
-id: 01a1d191-085e-76e1-ad49-43a4aeab4146
-components:
-- decision
-- notes
-- uncertain
-cells:
-  body: 'Of 8 socks: the second must miss the first''s partner, and the third both partners. That''s 4 ways in every 7.'
-  name: Three socks from 4 pairs

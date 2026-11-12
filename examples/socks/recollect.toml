@@ -1,3 +1,3 @@
 name = "Socks in the wash"
-about = "Somewhere between three and six pairs of socks went in the wash, all different pairs. The first three you pull out are all different. How many pairs are there? Each count says how likely that was, so seeing it moves belief towards the bigger loads."
+about = "Two, three or four pairs of socks went in the wash, all different pairs. The first three you pull out are all different. How many pairs are there? Each sock out is one of those in the wash that isn't out already, so what you see rules out two pairs and counts for four over three."
 systems = ["plan"]

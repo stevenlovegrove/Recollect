@@ -1,0 +1,18 @@
+id: 01a1d222-543d-7512-8707-16c68ddffdce
+cells:
+  gold: true
+  name: Gold coin 3
+links:
+- to: 01a1d222-543d-7512-8707-16c0b33bf185
+  components:
+  - alternative
+  cells:
+    weight: 1.0
+- to: 01a1d222-543d-7512-8707-16c13862677b
+  components:
+  - alternative
+  cells:
+    weight: 1.0
+- to: 01a1d222-543d-7512-8707-16c59069977d
+  components:
+  - part_of

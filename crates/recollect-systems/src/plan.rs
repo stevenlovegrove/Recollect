@@ -36,6 +36,7 @@ pub const OPTION: &str = "option";
 pub const PART_OF: &str = "part_of";
 pub const ALTERNATIVE: &str = "alternative";
 pub const EXCLUDES: &str = "excludes";
+pub const WITHIN: &str = "within";
 pub const NARROWED: &str = "narrowed";
 pub const DEPENDS_ON: &str = "depends_on";
 
@@ -163,8 +164,8 @@ pub struct Need(pub Bool);
 /// using are at rest.
 ///
 /// It lands on any of its live options, as likely as their weights say, or on nothing if it has none.
-/// What another choice it `excludes` lands on isn't an option in that world, so what's left differs
-/// between worlds. Each set that can be left has a variable of its own, weighted over what's in it, so
+/// What another choice it `excludes` lands on isn't an option in that world, and only what's part of
+/// what a choice it's `within` lands on is, so what's left differs between worlds. Each set that can be left has a variable of its own, weighted over what's in it, so
 /// how likely an option is depends on what else is left but the weights don't. That isn't the same as
 /// landing on anything and ruling out the worlds where it's excluded, which would make the worlds with
 /// more left count for more.
@@ -196,25 +197,38 @@ fn falls(cx: &Cx) -> Cell<Falls> {
             options.push((o, weight, gap));
         }
     }
-    // The options that are gone, world by world: whatever each choice this excludes lands on.
-    let mut gone: Cond<BTreeSet<Entity>> = space.pure(BTreeSet::new());
+    // The options there are to choose from, world by world.
+    let mut left: Cond<BTreeSet<Entity>> = space.pure(options.iter().map(|o| o.0).collect());
+    // Only what belongs to whatever each choice this is within lands on. Where that's nothing, nothing does.
+    for other in cx.targets(WITHIN) {
+        let there = cx.get::<Lands>(other)?.map_or_else(|| space.pure(Val::Undefined), |l| l.0.0);
+        let mut belongs: BTreeMap<Entity, BTreeSet<Entity>> = BTreeMap::new();
+        for (_, v) in there.cases() {
+            if let Val::Ref(whole) = v {
+                belongs.insert(*whole, options.iter().map(|o| o.0).filter(|o| cx.outgoing_of(*o, PART_OF).contains(whole)).collect());
+            }
+        }
+        left = left.zip(&there, |left, v| match v {
+            Val::Ref(whole) => left.intersection(&belongs[whole]).copied().collect(),
+            _ => BTreeSet::new(),
+        });
+    }
+    // And not whatever each choice this excludes lands on.
     for other in cx.targets(EXCLUDES) {
         let Some(there) = cx.get::<Lands>(other)? else { continue };
-        gone = gone.zip(&there.0.0, |gone, v| {
-            let mut gone = gone.clone();
-            if let Val::Ref(e) = v
-                && options.iter().any(|o| o.0 == *e)
-            {
-                gone.insert(*e);
+        left = left.zip(&there.0.0, |left, v| {
+            let mut left = left.clone();
+            if let Val::Ref(e) = v {
+                left.remove(e);
             }
-            gone
+            left
         });
     }
     let name = cx.id().to_string();
     let mut on = space.pure(Val::Undefined);
     let mut at_rest = space.always();
-    for (when, gone) in gone.cases() {
-        let left: Vec<(String, f64, bool)> = options.iter().filter(|o| !gone.contains(&o.0)).map(|(o, w, gap)| (o.to_string(), *w, *gap)).collect();
+    for (when, left) in left.cases() {
+        let left: Vec<(String, f64, bool)> = options.iter().filter(|o| left.contains(&o.0)).map(|(o, w, gap)| (o.to_string(), *w, *gap)).collect();
         let here = match left.as_slice() {
             [] => continue,
             [(only, _, _)] => space.pure(Val::Ref(only.parse().expect("options are handles"))),
@@ -447,6 +461,7 @@ pub fn install(reg: &mut Registry) {
         .default_formula(WEIGHT)
         .initial(json!(1.0));
     reg.cell::<RuledOut>(ALTERNATIVE, "That this option has been ruled out, and why.").initial(json!(true));
+    reg.edge(WITHIN, "Only the options that are part of whatever that choice lands on are options here, so this comes after it.").arranges().source_has(NARROWED).target_has(CHOICE);
     reg.edge(EXCLUDES, "Whatever that choice lands on isn't an option here, so this comes after it.").arranges().source_has(NARROWED).target_has(CHOICE);
     reg.edge(DEPENDS_ON, "Waits for that.").orders().source_has(PART).target_has(PART);
     reg.cell::<WaitFor>(DEPENDS_ON, "What it waits for: that to be done, or decided.").default_value(WaitFor::Done);

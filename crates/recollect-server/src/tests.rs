@@ -376,6 +376,13 @@ async fn the_classic_problems_have_their_known_answers() {
     near(chance(&v, "Which box?", "Two gold"), 2.0 / 3.0);
     near(chance(&v, "Which box?", "Two silver"), 0.0);
     near(prob(&v, "The other coin is gold too"), 2.0 / 3.0);
+    // The coin left is the other one in the same box, so it's never the one you took.
+    let (took, left) = ("Which coin do you take?", "Which coin is left in the box?");
+    let pin = |v: &Value, picks: &[(&str, &str)]| Value::Object(picks.iter().map(|(q, o)| (var(v, q)["id"].as_str().unwrap().to_string(), json!(id(v, o)))).collect());
+    let holding = c.view(pin(&v, &[(took, "Gold coin 3")])).await;
+    near(chance(&holding, "Which box?", "One of each"), 1.0);
+    near(chance(&holding, left, "Silver coin 1"), 1.0);
+    near(prob(&holding, "The other coin is gold too"), 0.0);
 
     // Two children: a third, and a half once it's the elder who's known to be a boy.
     c.open("two-children").await;
@@ -384,14 +391,18 @@ async fn the_classic_problems_have_their_known_answers() {
     let pinned = c.view(json!({ var(&v, "The elder")["id"].as_str().unwrap(): id(&v, "The elder is a boy") })).await;
     near(prob(&pinned, "Both are boys"), 0.5);
 
-    // Socks: each count of pairs by how likely three different socks were from it.
+    // Socks: three different socks can't come from two pairs, and are likelier from four than from three.
+    // The second has to miss the first's partner and the third both partners: 2n-4 ways in every 2n-1.
     c.open("socks").await;
     let v = c.view(json!({})).await;
     let likely = |n: f64| (2.0 * n - 4.0) / (2.0 * n - 1.0);
-    let total: f64 = (3..=6).map(|n| likely(n as f64)).sum();
-    for n in 3..=6 {
+    let total: f64 = (2..=4).map(|n| likely(n as f64)).sum();
+    for n in 2..=4 {
         near(chance(&v, "How many pairs went in?", &format!("{n} pairs")), likely(n as f64) / total);
     }
+    near(chance(&v, "How many pairs went in?", "2 pairs"), 0.0);
+    // Every way three different socks can come out: 6·4·2 from three pairs and 8·6·4 from four.
+    assert_eq!(v["worlds"]["count"], "240");
 }
 
 #[tokio::test]

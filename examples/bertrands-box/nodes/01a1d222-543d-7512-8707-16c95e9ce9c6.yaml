@@ -1,0 +1,18 @@
+id: 01a1d222-543d-7512-8707-16c95e9ce9c6
+cells:
+  gold: false
+  name: Silver coin 2
+links:
+- to: 01a1d222-543d-7512-8707-16c0b33bf185
+  components:
+  - alternative
+  cells:
+    weight: 1.0
+- to: 01a1d222-543d-7512-8707-16c13862677b
+  components:
+  - alternative
+  cells:
+    weight: 1.0
+- to: 01a1d222-543d-7512-8707-16c8e4eda5b3
+  components:
+  - part_of

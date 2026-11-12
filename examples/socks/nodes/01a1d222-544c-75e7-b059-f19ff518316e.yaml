@@ -1,0 +1,26 @@
+id: 01a1d222-544c-75e7-b059-f19ff518316e
+components:
+- notes
+- requires
+- value
+cells:
+  body: 'With two pairs it can''t happen: the third sock has to match one of the first two. It''s likelier with four pairs than with three, so it counts for the bigger load.'
+  name: The first three are all different
+formulas:
+  value: distinct(first.chosen.pair, second.chosen.pair, third.chosen.pair)
+links:
+- to: 01a1d222-544c-75e7-b059-f19452c76ac8
+  components:
+  - label
+  cells:
+    called: first
+- to: 01a1d222-544c-75e7-b059-f1950d8287fd
+  components:
+  - label
+  cells:
+    called: second
+- to: 01a1d222-544c-75e7-b059-f196e5432b9f
+  components:
+  - label
+  cells:
+    called: third

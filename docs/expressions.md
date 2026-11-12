@@ -412,7 +412,7 @@ So the worlds are every way the evening could have gone, weighted by the account
 
 ## Questions that come after others
 
-Some questions can only be asked once others have an answer. In the Monty Hall sample, which door Monty opens depends on where the car is and which door you picked. Two edges say this, and neither changes a weight.
+Some questions can only be asked once others have an answer. In the Monty Hall sample, which door Monty opens depends on where the car is and which door you picked. Three edges say this, and none changes a weight.
 
 **`excludes`: whatever that choice lands on isn't an option here.** It goes from a decision to another choice:
 
@@ -429,6 +429,16 @@ Which door is left?           one of the same three, excludes yours and Monty's
 - **Pinning one is finding something out.** Pinning "Monty opens door 3" narrows to the worlds where that's what he does, which says something about the car. Settling it for good says the same, so a what-if and the real thing still can't disagree.
 - **With nothing left, it lands on nothing,** as a decision with no options does.
 
+**`within`: only what's part of whatever that choice lands on is an option here.** It also goes from a decision to another choice, and what belongs to what is said by `part_of`. In Bertrand's box, each coin is part of its box:
+
+```
+Which box?                       uncertain, one of the three boxes
+Which coin do you take?          uncertain, one of the six coins, within the box
+Which coin is left in the box?   one of the six coins, within the box, excludes the one you took
+```
+
+Everything said of `excludes` holds for it: each world normalises over what's left, it orders the questions, and pinning one is finding something out, so holding a gold coin says which box it probably is. Something can be part of several things, as a sock is in every load of washing big enough to have it. Where the other choice lands on nothing, nothing is within it. Together the two are drawing without putting back: each sock out is within the load, and excludes the socks already out.
+
 **`stands_for`: this option is whatever that choice lands on.** It goes from an option to a choice:
 
 ```
@@ -440,6 +450,7 @@ A formula reading `chosen` follows it, so `choice.chosen` is a door, and the com
 
 What this doesn't do:
 
+- **Options that aren't written down.** Every option is still a node with an `alternative` edge to each decision it's an option of, so three draws from eight socks is twenty-four edges. The edges say what could ever be chosen, and `within` and `excludes` what can be in each world.
 - **The same options with different weights depending on something else.** A test that's positive 90% of the time if you have a condition and 5% if you don't is still a question for each case, as the positive test sample has it.
 - **Pinning a choice of yours to something it couldn't always be** reads as finding out that it could. Options that stand for others, like Stick and Switch, are always there, so they don't have this.
 - **What's shown isn't simplified by what's pinned.** A value reads right and is as likely as it says, but where it holds may still mention a world the pin has ruled out.

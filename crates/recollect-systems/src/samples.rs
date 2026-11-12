@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::formulas::{AT, At, Called, IS_A, LABEL, OPTIONS, Options, REQUIRES, STANDS_FOR, VALUE, ValueCell};
 use crate::notes::{Body, DRAWING, Drawing, NOTES};
-use crate::plan::{ALTERNATIVE, DECISION, DEPENDS_ON, EXCLUDES, Done, Estimate, GOAL, PART_OF, RISK, TASK, UNCERTAIN, UNKNOWN, Weight};
+use crate::plan::{ALTERNATIVE, DECISION, DEPENDS_ON, EXCLUDES, Done, Estimate, GOAL, PART_OF, RISK, TASK, UNCERTAIN, UNKNOWN, WITHIN, Weight};
 
 pub struct Sample {
     pub name: &'static str,
@@ -35,14 +35,14 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "case-file", title: "The Vane watch", about: "A case file. A watch went from Rosalind Vane's study one evening, and there are three people it could have been, or someone nobody has thought of. Each account is a node saying who gave it, with how far it's believed, and when each suspect could have reached the house is worked out from those. The Worlds tab gives how likely each suspect is, and what's most worth finding out next. Pin what you learn.", group: "reasoning", systems: &["plan"], build: case_file },
     Sample { name: "monty-hall", title: "Monty Hall", about: "A car behind one of three doors. You pick one, Monty, who knows where the car is, opens another to show a goat, and you stick or switch. Four questions, one after another, and none of them fixed: pin your pick and the door Monty opens, and see where the car probably is.", group: "reasoning", systems: &["plan"], build: monty_hall },
     Sample { name: "medical-test", title: "The positive test", about: "One person in a hundred has a condition. The test catches 90% of those who do, and wrongly flags 5% of those who don't. Yours came back positive. How likely is it that you have it? About 15%, because there are so many more people to flag wrongly.", group: "reasoning", systems: &["plan"], build: medical_test },
-    Sample { name: "bertrands-box", title: "Bertrand's box", about: "Three boxes: two gold coins, two silver, and one of each. You take a coin from a box without looking, and it's gold. How likely is the other coin in that box to be gold? Not a half: two of the three gold coins you could be holding are in the box with two.", group: "reasoning", systems: &["plan"], build: bertrands_box },
+    Sample { name: "bertrands-box", title: "Bertrand's box", about: "Three boxes: two gold coins, two silver, and one of each. You take a coin from a box without looking, and it's gold. How likely is the other coin in that box to be gold? Not a half: two of the three gold coins you could be holding are in the box with two. Three questions, each inside the one before: a box, a coin from it, and the coin that's left.", group: "reasoning", systems: &["plan"], build: bertrands_box },
     Sample { name: "two-children", title: "Two children", about: "A family has two children, and at least one is a boy. How likely is it that both are? A third, not a half. Find out that the elder is a boy, by pinning it, and it becomes a half: which boy you were told about matters.", group: "reasoning", systems: &["plan"], build: two_children },
-    Sample { name: "socks", title: "Socks in the wash", about: "Somewhere between three and six pairs of socks went in the wash, all different pairs. The first three you pull out are all different. How many pairs are there? Each count says how likely that was, so seeing it moves belief towards the bigger loads.", group: "reasoning", systems: &["plan"], build: socks },
+    Sample { name: "socks", title: "Socks in the wash", about: "Two, three or four pairs of socks went in the wash, all different pairs. The first three you pull out are all different. How many pairs are there? Each sock out is one of those in the wash that isn't out already, so what you see rules out two pairs and counts for four over three.", group: "reasoning", systems: &["plan"], build: socks },
     Sample { name: "zebra",title: "The zebra puzzle", about: "Who owns the zebra, and who drinks water? A table for each kind of thing, whose rows choose a house, and the clues written as they read: Nationality[English].chosen = Colour[Red].chosen. About 3 × 10¹⁷ combinations, and the clues leave exactly one.", group: "puzzle", systems: &[], build: zebra },
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "14";
+pub const FORMAT: &str = "15";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -553,19 +553,26 @@ fn medical_test(b: &mut Build) {
 }
 
 fn bertrands_box(b: &mut Build) {
-    let which = "Which box?";
+    // Three questions, one inside another: a box, a coin from that box, and the coin that's then left in it.
+    let (which, took, left) = ("Which box?", "Which coin do you take?", "Which coin is left in the box?");
     b.add(which, DECISION).add(which, UNCERTAIN);
-    for (name, first, second) in [("Two gold", "gold", "gold"), ("One of each", "gold", "silver"), ("Two silver", "silver", "silver")] {
-        b.put(name, "first", json!(first)).put(name, "second", json!(second)).option(name, which, Some(1.0));
+    b.add(took, DECISION).add(took, UNCERTAIN).link(took, which, WITHIN);
+    b.add(left, DECISION).add(left, UNCERTAIN).link(left, which, WITHIN).link(left, took, EXCLUDES);
+    b.note(took, "One of the two coins in whichever box it is, each as likely as the other.");
+    let boxes: [(&str, [(&str, bool); 2]); 3] = [
+        ("Two gold", [("Gold coin 1", true), ("Gold coin 2", true)]),
+        ("One of each", [("Gold coin 3", true), ("Silver coin 1", false)]),
+        ("Two silver", [("Silver coin 2", false), ("Silver coin 3", false)]),
+    ];
+    for (name, coins) in boxes {
+        b.option(name, which, Some(1.0));
+        for (coin, gold) in coins {
+            b.put(coin, "gold", json!(gold)).link(coin, name, PART_OF).option(coin, took, Some(1.0)).option(coin, left, Some(1.0));
+        }
     }
-    let coin = "Which coin in it?";
-    doubt(b, coin, "first", &[("Its first coin", json!(true), 1.0), ("Its second coin", json!(false), 1.0)]);
-    for (name, formula) in [("The coin you took", "if(coin.chosen.first, box.chosen.first, box.chosen.second)"), ("The coin left in the box", "if(coin.chosen.first, box.chosen.second, box.chosen.first)")] {
-        b.formula(name, formula).label(name, which, "box").label(name, coin, "coin");
-    }
-    seen(b, "The coin you took is gold", r#"took = "gold""#, "There are three gold coins you could be holding, each as likely as the others, and two of them are in the box with two gold.");
-    b.label("The coin you took is gold", "The coin you took", "took");
-    b.formula("The other coin is gold too", r#"left = "gold""#).label("The other coin is gold too", "The coin left in the box", "left");
+    seen(b, "The coin you took is gold", "took.chosen.gold", "There are three gold coins you could be holding, each as likely as the others, and two of them are in the box with two gold.");
+    b.label("The coin you took is gold", took, "took");
+    b.formula("The other coin is gold too", "left.chosen.gold").label("The other coin is gold too", left, "left");
 }
 
 fn two_children(b: &mut Build) {
@@ -583,19 +590,34 @@ fn socks(b: &mut Build) {
     b.note("The wash", "Every pair is different from the others. You pull three socks out without looking, and no two of them match.");
     let pairs = "How many pairs went in?";
     b.add(pairs, DECISION).add(pairs, UNCERTAIN);
-    for n in 3..=6 {
-        let option = format!("{n} pairs");
-        b.put(&option, "socks", json!(2 * n)).option(&option, pairs, Some(1.0));
-        // With the first sock out, the second must miss its partner, and the third both partners:
-        // (2n-2)/(2n-1) × (2n-4)/(2n-2), which is 2n-4 ways in every 2n-1.
-        let draw = format!("Three socks from {n} pairs");
-        let (differ, matched) = (format!("All different, from {n} pairs"), format!("Two match, from {n} pairs"));
-        doubt(b, &draw, "all_different", &[(&differ, json!(true), (2 * n - 4) as f64), (&matched, json!(false), 3.0)]);
-        b.note(&draw, &format!("Of {} socks: the second must miss the first's partner, and the third both partners. That's {} ways in every {}.", 2 * n, 2 * n - 4, 2 * n - 1));
-        b.formula_on(&option, "all_different", "draw.chosen.all_different").label(&option, &draw, "draw");
+    for n in 2..=4 {
+        b.option(&format!("{n} pairs"), pairs, Some(1.0));
     }
-    seen(b, "The first three are all different", "pairs.chosen.all_different", "Likelier the more pairs there are, so it counts for the bigger loads, though not by much: three socks is little to go on.");
-    b.label("The first three are all different", pairs, "pairs");
+    // Each sock out is one of those in the wash, which depends on how many pairs went in, and isn't one
+    // that's already out.
+    let draws = ["The first sock out", "The second sock out", "The third sock out"];
+    for (i, draw) in draws.iter().enumerate() {
+        b.add(draw, DECISION).add(draw, UNCERTAIN).link(draw, pairs, WITHIN);
+        for earlier in &draws[..i] {
+            b.link(draw, earlier, EXCLUDES);
+        }
+    }
+    for sock in 1..=8 {
+        let name = format!("Sock[{sock}]");
+        let pair = (sock + 1) / 2;
+        b.put(&name, "pair", json!(pair));
+        // A sock is in every load with at least as many pairs as its own.
+        for n in pair.max(2)..=4 {
+            b.link(&name, &format!("{n} pairs"), PART_OF);
+        }
+        for draw in draws {
+            b.option(&name, draw, Some(1.0));
+        }
+    }
+    seen(b, "The first three are all different", "distinct(first.chosen.pair, second.chosen.pair, third.chosen.pair)", "With two pairs it can't happen: the third sock has to match one of the first two. It's likelier with four pairs than with three, so it counts for the bigger load.");
+    for (label, draw) in ["first", "second", "third"].into_iter().zip(draws) {
+        b.label("The first three are all different", draw, label);
+    }
 }
 
 /// The `recollect.toml` for a sample.

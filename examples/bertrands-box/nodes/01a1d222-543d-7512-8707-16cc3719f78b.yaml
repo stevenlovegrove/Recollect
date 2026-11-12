@@ -1,12 +1,12 @@
-id: 01a1d191-0855-72d2-8885-5515614c1082
+id: 01a1d222-543d-7512-8707-16cc3719f78b
 components:
 - value
 cells:
   name: The other coin is gold too
 formulas:
-  value: left = "gold"
+  value: left.chosen.gold
 links:
-- to: 01a1d191-0855-72d2-8885-5513330a51d3
+- to: 01a1d222-543d-7512-8707-16c13862677b
   components:
   - label
   cells:
