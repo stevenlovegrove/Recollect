@@ -34,7 +34,7 @@ export function TimelineView({ ws, selected, onSelect }: ViewProps) {
     // Only what's in the plan: work, gaps, and what they add up to.
     const inPlan = (id: string): boolean => {
       const n = ws.byId.get(id);
-      return !!n && (!!n.cells.task || !!n.cells.unknown || (kids.get(id) ?? []).some(inPlan));
+      return !!n && (n.components.some((c) => c.name === "task" || c.name === "unknown") || (kids.get(id) ?? []).some(inPlan));
     };
     const walk = (id: string, depth: number) => {
       const node = ws.byId.get(id);
