@@ -412,7 +412,7 @@ So the worlds are every way the evening could have gone, weighted by the account
 
 ## Questions that come after others
 
-Some questions can only be asked once others have an answer. In the Monty Hall sample, which door Monty opens depends on where the car is and which door you picked. Three edges say this, and none changes a weight.
+Some questions can only be asked once others have an answer. In the Monty Hall sample, which door Monty opens depends on where the car is and which door you picked. Two edges say this, and neither changes a weight.
 
 **`excludes`: whatever that choice lands on isn't an option here.** It goes from a decision to another choice:
 
@@ -439,22 +439,23 @@ Which coin is left in the box?   one of the six coins, within the box, excludes 
 
 Everything said of `excludes` holds for it: each world normalises over what's left, it orders the questions, and pinning one is finding something out, so holding a gold coin says which box it probably is. Something can be part of several things, as a sock is in every load of washing big enough to have it. Where the other choice lands on nothing, nothing is within it. Together the two are drawing without putting back: each sock out is within the load, and excludes the socks already out.
 
-**`stands_for`: this option is whatever that choice lands on.** It goes from an option to a choice:
+What you end up with is a value like any other, which picks between two answers:
 
 ```
-Stick or switch?   yours: Stick, which stands for your pick, or Switch, which stands for the door that's left
-You win the car:   choice.chosen = car.chosen
+Stick or switch?      yours: Stick or Switch
+The door you end on:  if(chose(choice, switch), left.chosen, pick.chosen)
+You win the car:      ends = car.chosen
 ```
 
-A formula reading `chosen` follows it, so `choice.chosen` is a door, and the comparison on the Decisions tab is still between Stick and Switch. Which door you pick is yours too, so there's no one chance of winning to give: averaging over a choice still to be made means nothing. There is one for each way your choices could go, so the comparison gives the least and the most of those, and where they're the same, as two thirds is for Switch whichever door you pick, it says that.
+Which door you pick is yours too, so there's no one chance of winning to give: averaging over a choice still to be made means nothing. There is one for each way your choices could go, so the comparison on the Decisions tab gives the least and the most of those, and where they're the same, as two thirds is for Switch whichever door you pick, it says that.
 
-On a map, an option of several questions that has nothing to say but what it's an option or a part of isn't a card: it's drawn on each question, to pin it there, so three doors asked about four times aren't twelve lines. `chose(choice, stick)` asks about the option itself.
+On a map, an option of several questions that has nothing to say but what it's an option or a part of isn't a card: it's drawn on each question, to pin it there, so three doors asked about four times aren't twelve lines.
 
 What this doesn't do:
 
 - **Options that aren't written down.** Every option is still a node with an `alternative` edge to each decision it's an option of, so three draws from eight socks is twenty-four edges. The edges say what could ever be chosen, and `within` and `excludes` what can be in each world.
 - **The same options with different weights depending on something else.** A test that's positive 90% of the time if you have a condition and 5% if you don't is still a question for each case, as the positive test sample has it.
-- **Pinning a choice of yours to something it couldn't always be** reads as finding out that it could. Options that stand for others, like Stick and Switch, are always there, so they don't have this.
+- **Pinning a choice of yours to something it couldn't always be** reads as finding out that it could. Stick and Switch are always there, so they don't have this.
 - **What's shown isn't simplified by what's pinned.** A value reads right and is as likely as it says, but where it holds may still mention a world the pin has ruled out.
 
 ## Comparing options

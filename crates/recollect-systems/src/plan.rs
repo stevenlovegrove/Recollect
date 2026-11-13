@@ -20,7 +20,7 @@ use recollect_graph::worlds::{Bool, Cond, Picks, Space, Worldly};
 use recollect_graph::{Cell, CellType, Cx, Entity, Error, Graph, Op, Registry, Severity, Shown, cell};
 
 use crate::expr::{Type, Val};
-use crate::formulas::{self, CHOICE, Chosen, Lands, compiler};
+use crate::formulas::{self, CHOICE, Chosen, compiler};
 use crate::{label_of, labels};
 
 pub const PART: &str = "part";
@@ -201,7 +201,7 @@ fn falls(cx: &Cx) -> Cell<Falls> {
     let mut left: Cond<BTreeSet<Entity>> = space.pure(options.iter().map(|o| o.0).collect());
     // Only what belongs to whatever each choice this is within lands on. Where that's nothing, nothing does.
     for other in cx.targets(WITHIN) {
-        let there = cx.get::<Lands>(other)?.map_or_else(|| space.pure(Val::Undefined), |l| l.0.0);
+        let there = cx.get::<Chosen>(other)?.map_or_else(|| space.pure(Val::Undefined), |l| l.0.0);
         let mut belongs: BTreeMap<Entity, BTreeSet<Entity>> = BTreeMap::new();
         for (_, v) in there.cases() {
             if let Val::Ref(whole) = v {
@@ -215,7 +215,7 @@ fn falls(cx: &Cx) -> Cell<Falls> {
     }
     // And not whatever each choice this excludes lands on.
     for other in cx.targets(EXCLUDES) {
-        let Some(there) = cx.get::<Lands>(other)? else { continue };
+        let Some(there) = cx.get::<Chosen>(other)? else { continue };
         left = left.zip(&there.0.0, |left, v| {
             let mut left = left.clone();
             if let Val::Ref(e) = v {

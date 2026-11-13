@@ -1,0 +1,28 @@
+id: 01a1d24d-6a75-7431-89a6-d1ace5bd6940
+components:
+- value
+cells:
+  name: The door you end on
+formulas:
+  value: if(chose(choice, switch), left.chosen, pick.chosen)
+links:
+- to: 01a1d24d-6a75-7431-89a6-d1a3255e6953
+  components:
+  - label
+  cells:
+    called: pick
+- to: 01a1d24d-6a75-7431-89a6-d1a874fca00c
+  components:
+  - label
+  cells:
+    called: left
+- to: 01a1d24d-6a75-7431-89a6-d1a914558abf
+  components:
+  - label
+  cells:
+    called: choice
+- to: 01a1d24d-6a75-7431-89a6-d1aba0fe7dd1
+  components:
+  - label
+  cells:
+    called: switch

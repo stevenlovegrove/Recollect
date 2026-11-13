@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use recollect_graph::{CellType, Entity, Name, On, Op, Stored};
 use serde_json::{Value, json};
 
-use crate::formulas::{AT, At, Called, IS_A, LABEL, OPTIONS, Options, REQUIRES, STANDS_FOR, VALUE, ValueCell};
+use crate::formulas::{AT, At, Called, IS_A, LABEL, OPTIONS, Options, REQUIRES, VALUE, ValueCell};
 use crate::notes::{Body, DRAWING, Drawing, NOTES};
 use crate::plan::{ALTERNATIVE, DECISION, DEPENDS_ON, EXCLUDES, Done, Estimate, GOAL, PART_OF, RISK, TASK, UNCERTAIN, UNKNOWN, WITHIN, Weight};
 
@@ -42,7 +42,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "15";
+pub const FORMAT: &str = "16";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -530,13 +530,14 @@ fn monty_hall(b: &mut Build) {
     for door in &doors {
         b.option(door, monty, Some(1.0)).option(door, left, Some(1.0));
     }
-    // Yours to choose, so it isn't believed: each option is compared by what follows from it. An option
-    // here isn't a door: it stands for whatever another question lands on.
+    // Yours to choose, so it isn't believed: each option is compared by what follows from it.
     let choice = "Stick or switch?";
-    b.add(choice, DECISION);
-    b.option("Stick", choice, None).link("Stick", pick, STANDS_FOR);
-    b.option("Switch", choice, None).link("Switch", left, STANDS_FOR);
-    b.formula("You win the car", "choice.chosen = car.chosen").label("You win the car", choice, "choice").label("You win the car", car, "car");
+    b.add(choice, DECISION).option("Stick", choice, None).option("Switch", choice, None);
+    // The door you open in the end is one of two other answers, and which is up to you.
+    let ends = "The door you end on";
+    b.formula(ends, "if(chose(choice, switch), left.chosen, pick.chosen)");
+    b.label(ends, choice, "choice").label(ends, "Switch", "switch").label(ends, left, "left").label(ends, pick, "pick");
+    b.formula("You win the car", "ends = car.chosen").label("You win the car", ends, "ends").label("You win the car", car, "car");
 }
 
 fn medical_test(b: &mut Build) {
