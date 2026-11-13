@@ -1,3 +1,3 @@
 name = "The positive test"
-about = "One person in a hundred has a condition. The test catches 90% of those who do, and wrongly flags 5% of those who don't. Yours came back positive. How likely is it that you have it? About 15%, because there are so many more people to flag wrongly."
+about = "A condition affects one person in a hundred. The test for it comes back positive for 90% of the people who have it, but also for 5% of the people who don't. Your test comes back positive. What is the probability that you have the condition? It feels as if it should be about 90%, but it's only about 15%. People without the condition outnumber those with it by so much that most positive results are false alarms: of 10,000 people tested, 90 positives come from the 100 who have it, and 495 from the 9,900 who don't."
 systems = ["plan"]

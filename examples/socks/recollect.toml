@@ -1,3 +1,3 @@
 name = "Socks in the wash"
-about = "Two, three or four pairs of socks went in the wash, all different pairs. The first three you pull out are all different. How many pairs are there? Each sock out is one of those in the wash that isn't out already, so what you see rules out two pairs and counts for four over three."
+about = "Two, three or four pairs of socks went in the wash, and you don't know which. Every pair is different from the others. You pull out three socks without looking, and no two of them match. What does that tell you about how many pairs went in? Before you looked, each number of pairs was equally likely. Afterwards two pairs is ruled out, because any three socks from two pairs must include a match, and four pairs is more likely than three, at about 59% to 41%, because three socks are less likely to include a match when there are more pairs to draw from. Each sock is drawn from those in the wash that aren't out already."
 systems = ["plan"]
