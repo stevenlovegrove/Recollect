@@ -20,7 +20,7 @@ use recollect_graph::worlds::{Bool, Cond, Picks, Space, Worldly};
 use recollect_graph::{Cell, CellType, Cx, Entity, Error, Graph, Op, Registry, Severity, Shown, cell};
 
 use crate::expr::{Type, Val};
-use crate::formulas::{self, CHOICE, Chosen, compiler};
+use crate::formulas::{self, CHOICE, Chosen, Options, compiler};
 use crate::{label_of, labels};
 
 pub const PART: &str = "part";
@@ -197,6 +197,8 @@ fn falls(cx: &Cx) -> Cell<Falls> {
             options.push((o, weight, gap));
         }
     }
+    // And the ones it lists by name, which have nothing to say but that, each as likely as the others.
+    options.extend(listed(cx)?.into_iter().map(|o| (o, 1.0, false)));
     // The options there are to choose from, world by world.
     let mut left: Cond<BTreeSet<Entity>> = space.pure(options.iter().map(|o| o.0).collect());
     // Only what belongs to whatever each choice this is within lands on. Where that's nothing, nothing does.
@@ -242,6 +244,21 @@ fn falls(cx: &Cx) -> Cell<Falls> {
         on = Cond::when(&when, &here, &on);
     }
     Ok(Some(Falls { on: Worldly(on), at_rest }))
+}
+
+/// The options a decision lists by name, in its `options`, rather than as nodes linked to it: each is the
+/// node nobody wrote that has that name, as a puzzle's colours are.
+fn listed(cx: &Cx) -> Result<Vec<Entity>, Error> {
+    let Some(Options(names)) = cx.own::<Options>()? else { return Ok(vec![]) };
+    let numeric = formulas::numeric(&names);
+    Ok(names.iter().map(|o| cx.constant(formulas::option_cells(o, numeric))).collect())
+}
+
+/// The same, asked from outside.
+fn listed_in(g: &Graph, d: Entity) -> Vec<Entity> {
+    let Ok(Some(Options(names))) = g.get::<Options>(d) else { return vec![] };
+    let numeric = formulas::numeric(&names);
+    names.iter().map(|o| formulas::option_node(g, o, numeric)).collect()
 }
 
 fn decision_chosen(cx: &Cx) -> Cell<Chosen> {
@@ -501,7 +518,7 @@ fn checks(reg: &mut Registry) {
         let Some(c) = settled_on(cx, cx.id())? else { return Ok(vec![]) };
         let ok = match cx.incoming(ALTERNATIVE).into_iter().find(|(o, _)| *o == c) {
             Some((o, edge)) => live_option(cx, o, edge)?,
-            None => false,
+            None => listed(cx)?.contains(&c),
         };
         Ok(if ok { vec![] } else { vec![format!("chose {c}, which isn't a live option")] })
     });
@@ -515,6 +532,9 @@ fn checks(reg: &mut Registry) {
                 return Ok(vec![]);
             }
         }
+        if !listed(cx)?.is_empty() {
+            return Ok(vec![]);
+        }
         Ok(vec!["open, with no live options".to_string()])
     });
 
@@ -522,7 +542,7 @@ fn checks(reg: &mut Registry) {
         if cx.own_is_stored(Chosen::NAME) || !is_live(cx, cx.id())? {
             return Ok(vec![]);
         }
-        let (mut live, mut gaps) = (0, 0);
+        let (mut live, mut gaps) = (listed(cx)?.len(), 0);
         for (o, edge) in cx.incoming(ALTERNATIVE) {
             if live_option(cx, o, edge)? {
                 live += 1;
@@ -658,6 +678,7 @@ pub fn narrowed(g: &Graph) -> Result<Vec<Narrowed>, Error> {
                 options.push((o, g.has(o, UNKNOWN), chosen.lands_on(o)));
             }
         }
+        options.extend(listed_in(g, d).into_iter().map(|o| (o, false, chosen.lands_on(o))));
         out.push(Narrowed { id: d, options });
     }
     Ok(out)
@@ -796,6 +817,8 @@ pub struct MatrixOption {
     pub ruled_out: bool,
     pub dropped: bool,
     pub chosen: bool,
+    /// One the decision lists by name, with no node or link of its own, so there's nothing to rule out.
+    pub listed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -885,7 +908,11 @@ pub fn matrices(g: &Graph, world: &BTreeMap<String, String>) -> Result<Vec<Matri
             if !ruled_out && !dropped {
                 live.push((o, weight_of(g, edge)));
             }
-            options.push(MatrixOption { id: o, name: label_of(g, o), weight: 0.0, gap: g.has(o, UNKNOWN), ruled_out, dropped, chosen: chosen == Some(o) });
+            options.push(MatrixOption { id: o, name: label_of(g, o), weight: 0.0, gap: g.has(o, UNKNOWN), ruled_out, dropped, chosen: chosen == Some(o), listed: false });
+        }
+        for o in listed_in(g, d) {
+            live.push((o, 1.0));
+            options.push(MatrixOption { id: o, name: label_of(g, o), weight: 0.0, gap: false, ruled_out: false, dropped: false, chosen: chosen == Some(o), listed: true });
         }
         let total: f64 = live.iter().map(|l| l.1).sum();
         for o in &mut options {

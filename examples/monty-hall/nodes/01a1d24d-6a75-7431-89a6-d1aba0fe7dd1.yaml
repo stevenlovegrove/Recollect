@@ -1,7 +1,0 @@
-id: 01a1d24d-6a75-7431-89a6-d1aba0fe7dd1
-cells:
-  name: Switch
-links:
-- to: 01a1d24d-6a75-7431-89a6-d1a914558abf
-  components:
-  - alternative

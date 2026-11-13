@@ -323,7 +323,9 @@ async fn the_classic_problems_have_their_known_answers() {
     c.open("monty-hall").await;
     let v = c.view(json!({})).await;
     let (car, pick, monty, choice) = ("Where's the car?", "Which door do you pick?", "Which door does Monty open?", "Stick or switch?");
-    let pin = |v: &Value, picks: &[(&str, &str)]| Value::Object(picks.iter().map(|(q, o)| (var(v, q)["id"].as_str().unwrap().to_string(), json!(id(v, o)))).collect());
+    // An option by its name, whether it's a node or one its decision only lists.
+    let option = |v: &Value, q: &str, o: &str| var(v, q)["options"].as_array().unwrap().iter().find(|x| x["name"] == o).unwrap_or_else(|| panic!("no {o}"))["id"].clone();
+    let pin = |v: &Value, picks: &[(&str, &str)]| Value::Object(picks.iter().map(|(q, o)| (var(v, q)["id"].as_str().unwrap().to_string(), option(v, q, o))).collect());
     for d in 1..=3 {
         near(chance(&v, car, &format!("Door[{d}]")), 1.0 / 3.0);
     }

@@ -42,7 +42,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "16";
+pub const FORMAT: &str = "17";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -530,13 +530,14 @@ fn monty_hall(b: &mut Build) {
     for door in &doors {
         b.option(door, monty, Some(1.0)).option(door, left, Some(1.0));
     }
-    // Yours to choose, so it isn't believed: each option is compared by what follows from it.
+    // Yours to choose, so it isn't believed: each option is compared by what follows from it. The two
+    // options have nothing to say but their names, so the decision lists them.
     let choice = "Stick or switch?";
-    b.add(choice, DECISION).option("Stick", choice, None).option("Switch", choice, None);
+    b.add(choice, DECISION).set(choice, OPTIONS, Options(vec!["Stick".to_string(), "Switch".to_string()]));
     // The door you open in the end is one of two other answers, and which is up to you.
     let ends = "The door you end on";
-    b.formula(ends, "if(chose(choice, switch), left.chosen, pick.chosen)");
-    b.label(ends, choice, "choice").label(ends, "Switch", "switch").label(ends, left, "left").label(ends, pick, "pick");
+    b.formula(ends, r#"if(choice.chosen.value = "Switch", left.chosen, pick.chosen)"#);
+    b.label(ends, choice, "choice").label(ends, left, "left").label(ends, pick, "pick");
     b.formula("You win the car", "ends = car.chosen").label("You win the car", ends, "ends").label("You win the car", car, "car");
 }
 

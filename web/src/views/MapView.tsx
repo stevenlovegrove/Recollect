@@ -421,11 +421,14 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
   const cardOptions = useMemo(() => {
     const out = new Map<string, CardData["options"]>();
     const short = (o: string, name: string) => String(ws.byId.get(o)?.row?.key ?? name);
+    // A decision's options that it only lists by name aren't cards either.
+    const cards = new Set(g.nodes.map((n) => n.id));
+    const decision = (id: string) => !!ws.byId.get(id)?.components.some((c) => c.name === "decision");
     for (const asked of g.worlds.vars)
-      if (asked.options.some((o) => folded.has(o.id)))
+      if (asked.options.some((o) => folded.has(o.id) || (decision(asked.id) && !cards.has(o.id))))
         out.set(asked.id, asked.options.map((o) => ({ choice: asked.id, id: o.id, name: short(o.id, o.name), chance: asked.uncertain ? o.chance : null, picked: o.picked, possible: o.possible })));
     return out;
-  }, [g.worlds.vars, folded, ws.byId]);
+  }, [g.nodes, g.worlds.vars, folded, ws.byId]);
   const cardHeight = (n: GraphNode) => nodeHeight(n) + optionsHeight(cardOptions.get(n.id) ?? []);
   const updateNodeInternals = useUpdateNodeInternals();
   const [showDead, setShowDead] = useState(false);

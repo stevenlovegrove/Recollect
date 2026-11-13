@@ -220,6 +220,8 @@ export interface MatrixOption {
   ruled_out: boolean;
   dropped: boolean;
   chosen: boolean;
+  /** One the decision lists by name, with no node or link of its own. */
+  listed?: boolean;
 }
 
 export interface MatrixRow {

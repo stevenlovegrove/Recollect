@@ -1199,7 +1199,7 @@ pub fn shown_free(g: &Graph, e: Entity, cell: &str) -> Option<Cell<Shown>> {
 
 // ---------- what's built in ----------
 
-fn numeric(options: &[String]) -> bool {
+pub(crate) fn numeric(options: &[String]) -> bool {
     !options.is_empty() && options.iter().all(|o| o.parse::<f64>().is_ok_and(f64::is_finite))
 }
 
@@ -1209,7 +1209,7 @@ pub fn option_node(g: &Graph, option: &str, numeric: bool) -> Entity {
     g.constant(option_cells(option, numeric))
 }
 
-fn option_cells(option: &str, numeric: bool) -> BTreeMap<String, Value> {
+pub(crate) fn option_cells(option: &str, numeric: bool) -> BTreeMap<String, Value> {
     let value = if numeric { json!(option.parse::<f64>().expect("checked by the caller")) } else { json!(option) };
     BTreeMap::from([(recollect_graph::Name::NAME.to_string(), json!(option)), (ValueCell::NAME.to_string(), value)])
 }
@@ -1217,6 +1217,10 @@ fn option_cells(option: &str, numeric: bool) -> BTreeMap<String, Value> {
 /// How a choice with a list of options lands: on any of them, equally. A table's options are what its
 /// rows choose from: it isn't a choice itself.
 fn options_chosen(cx: &Cx) -> Cell<Chosen> {
+    // A decision that lists some of its options this way lands as a decision does.
+    if cx.own_has(crate::plan::DECISION) {
+        return Ok(cx.own::<crate::plan::Falls>()?.map(|f| Chosen(f.on)));
+    }
     let Some(Options(options)) = cx.own::<Options>()? else { return Ok(None) };
     if cx.row_key().is_none() && !cx.rows().is_empty() {
         return Ok(None);

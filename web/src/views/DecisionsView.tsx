@@ -101,7 +101,7 @@ function DecisionCard({ m, ws, selected, onSelect, focused }: { m: Matrix; ws: W
                     {uncertain ? "found out…" : "choose…"}
                   </button>
                 )}
-                {!m.chosen && !out && !o.gap && live.length > 1 && (
+                {!m.chosen && !out && !o.gap && !o.listed && live.length > 1 && (
                   <button className="link" onClick={() => setCommitting({ kind: "rule_out", option: o })}>
                     rule out…
                   </button>

@@ -442,10 +442,12 @@ Everything said of `excludes` holds for it: each world normalises over what's le
 What you end up with is a value like any other, which picks between two answers:
 
 ```
-Stick or switch?      yours: Stick or Switch
-The door you end on:  if(chose(choice, switch), left.chosen, pick.chosen)
+Stick or switch?      yours, with options Stick and Switch
+The door you end on:  if(choice.chosen.value = "Switch", left.chosen, pick.chosen)
 You win the car:      ends = car.chosen
 ```
+
+Stick and Switch have nothing to say but their names, so the decision lists them in its `options`, as a puzzle's choice lists its colours, and there are no nodes or links for them. A decision can have both: options that are nodes linked to it, with weights, parts and evidence, and options it only names.
 
 Which door you pick is yours too, so there's no one chance of winning to give: averaging over a choice still to be made means nothing. There is one for each way your choices could go, so the comparison on the Decisions tab gives the least and the most of those, and where they're the same, as two thirds is for Switch whichever door you pick, it says that.
 

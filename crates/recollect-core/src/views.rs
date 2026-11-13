@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use recollect_graph::worlds::{Bool, Picks, Space, Var};
 use recollect_graph::{Backed, CellDef, ComponentDef, ComponentType, Entity, Error, Event, Graph, Log, Named, On, Op, Origin, Shown, Source, Stored, Violation};
-use recollect_systems::formulas::{LABEL, shown_free};
+use recollect_systems::formulas::{CHOICE, LABEL, shown_free};
 use recollect_systems::notes::Body;
 use recollect_systems::plan::{self, Matrix, UNCERTAIN, WorkItem};
 use serde::{Deserialize, Serialize};
@@ -283,6 +283,15 @@ pub struct View {
 struct Labels(HashMap<String, String>);
 
 impl Labels {
+    /// Every name there is. The options a choice only lists are nodes made as it's worked out, so the
+    /// choices are worked out first, or the first look at a workspace would have no names for them.
+    fn gather(g: &Graph) -> Labels {
+        for choice in g.having(CHOICE) {
+            let _ = g.get_value(choice, "chosen");
+        }
+        Labels(recollect_systems::labels(g))
+    }
+
     fn of(&self, s: &str) -> String {
         self.0.get(s).cloned().unwrap_or_else(|| s.to_string())
     }
@@ -304,7 +313,7 @@ impl Labels {
 }
 
 pub fn error_text(e: &Error, g: &Graph) -> String {
-    describe_error(e, &Labels(recollect_systems::labels(g)))
+    describe_error(e, &Labels::gather(g))
 }
 
 fn describe_error(e: &Error, labels: &Labels) -> String {
@@ -687,7 +696,7 @@ fn relabel(text: &str, labels: &Labels) -> String {
 /// The whole graph, narrowed to `world`.
 pub fn view(o: &Workspace, world: &World) -> View {
     let g: &Graph = o.log.graph();
-    let labels = Labels(recollect_systems::labels(g));
+    let labels = Labels::gather(g);
     let lens = Lens::new(g, world);
     let mut vars = BTreeMap::new();
     let mut node = |e: Entity, name: String| {
@@ -740,7 +749,7 @@ pub struct Tried {
 
 pub fn try_formula(o: &Workspace, e: Entity, text: &str, world: &World) -> Tried {
     let g = o.log.graph();
-    let labels = Labels(recollect_systems::labels(g));
+    let labels = Labels::gather(g);
     match recollect_systems::formulas::try_formula(g, e, text) {
         Ok((value, expansion)) => {
             let lens = Lens::new(g, world);
@@ -773,7 +782,7 @@ pub fn sweep(o: &Workspace, set: &CellRef, values: &[f64], read: &[CellRef], wor
     if !g.entities().any(|e| e == set.node) {
         return Err(format!("there's no node {}", set.node));
     }
-    let labels = Labels(recollect_systems::labels(g));
+    let labels = Labels::gather(g);
     let mut copy = g.fork();
     let mut vars = BTreeMap::new();
     Ok(values
@@ -801,7 +810,7 @@ pub struct RowCells {
 /// as far as the table goes on: see `Graph::row_at`.
 pub fn rows(o: &Workspace, table: &str, from: i64, to: i64, world: &World) -> Vec<RowCells> {
     let g = o.log.graph();
-    let labels = Labels(recollect_systems::labels(g));
+    let labels = Labels::gather(g);
     let lens = Lens::new(g, world);
     let mut vars = BTreeMap::new();
     (from..=to)
@@ -825,7 +834,7 @@ pub fn planning(o: &Workspace, world: &World) -> Result<PlanView, String> {
         return Ok(PlanView { work: vec![], decisions: vec![] });
     }
     let g = o.log.graph();
-    let labels = Labels(recollect_systems::labels(g));
+    let labels = Labels::gather(g);
     let work = plan::work(g, world).map_err(|e| describe_error(&e, &labels))?;
     let decisions = plan::matrices(g, world).map_err(|e| describe_error(&e, &labels))?;
     Ok(PlanView { work, decisions })
@@ -965,7 +974,7 @@ pub struct EdgeBrief {
 
 pub fn node(o: &Workspace, e: Entity, world: &World) -> NodeDetail {
     let g = o.log.graph();
-    let labels = Labels(recollect_systems::labels(g));
+    let labels = Labels::gather(g);
     let lens = Lens::new(g, world);
     let mut vars = BTreeMap::new();
     let mine = cells(g, e, &lens, &labels, &mut vars);
@@ -993,7 +1002,7 @@ pub struct TreeNode {
 /// What's beneath a node, over the kinds of link that give the graph its shape.
 pub fn tree(o: &Workspace, root: Entity, depth: usize) -> TreeNode {
     let kinds = o.log.graph().registry().components().filter(|c| c.arranges).map(|c| c.name.clone()).collect::<Vec<_>>();
-    let labels = Labels(recollect_systems::labels(o.log.graph()));
+    let labels = Labels::gather(o.log.graph());
     fn walk(o: &Workspace, kinds: &[String], labels: &Labels, e: Entity, depth: usize, seen: &mut Vec<Entity>) -> TreeNode {
         let g = o.log.graph();
         let shared = seen.contains(&e);
