@@ -19,7 +19,7 @@ import ELK from "elkjs/lib/elk.bundled.js";
 import type { GraphNode } from "../api";
 import type { Workspace } from "../workspace";
 import { badgesOf, compColor, dominant, isDropped, isNote, label as labelOf, nodeColor } from "../theme";
-import { Brackets, CompBadges, beliefText, edgeKey, edgeText, parseEdgeKey, reading } from "../bits";
+import { Brackets, CompBadges, beliefText, cellText, edgeKey, edgeText, parseEdgeKey, reading } from "../bits";
 import { type SummaryLine, summaryOf } from "../summary";
 import { DdItem, Dropdown } from "../Dropdown";
 import { Key, isTyping } from "../Shortcuts";
@@ -137,7 +137,112 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
   );
 }
 
-const nodeTypes = { card: Card };
+/** What a card for a table is known by: it isn't a node, so it has no handle of its own. */
+const TABLE = "table:";
+const TABLE_W = 300;
+/** The most lines a table's card has before it says how many more there are. */
+const MOST_LINES = 8;
+
+/** One line of a table's card: the rows that say the same thing, and what that is, column by column. */
+type TableLine = { rows: GraphNode[]; values: string[] };
+
+type TableData = {
+  name: string;
+  direction: Direction;
+  count: number;
+  columns: string[];
+  lines: TableLine[];
+  groupBy: string | null;
+  onGroup: (column: string) => void;
+  onPick: (id: string) => void;
+};
+
+/** Which rows, in few words: runs of numbers as ranges, and names as they are. */
+function rowsText(rows: GraphNode[]) {
+  const keys = rows.map((r) => r.row?.key ?? r.name);
+  if (!keys.every((k) => typeof k === "number")) return keys.join(", ");
+  const nums = (keys as number[]).slice().sort((a, b) => a - b);
+  const runs: [number, number][] = [];
+  for (const n of nums) {
+    const last = runs[runs.length - 1];
+    if (last && n === last[1] + 1) last[1] = n;
+    else runs.push([n, n]);
+  }
+  return runs.map(([a, b]) => (a === b ? `${a}` : b === a + 1 ? `${a}, ${b}` : `${a}–${b}`)).join(", ");
+}
+
+/**
+ * A table's rows in as few lines as say everything: rows that say the same in every column share a line.
+ * Grouped by a column, there's a line for each thing that column says, and the others say what they come
+ * to across it: one value, a range of numbers, or how many different things.
+ */
+function tableLines(rows: { row: GraphNode; values: string[] }[], columns: string[], groupBy: string | null): TableLine[] {
+  const by = groupBy ? columns.indexOf(groupBy) : -1;
+  const groups = new Map<string, { row: GraphNode; values: string[] }[]>();
+  for (const r of rows) {
+    const key = by >= 0 ? r.values[by] : r.values.join("\u0000");
+    groups.set(key, [...(groups.get(key) ?? []), r]);
+  }
+  return [...groups.values()].map((group) => ({
+    rows: group.map((r) => r.row),
+    values: columns.map((_, c) => {
+      const said = [...new Set(group.map((r) => r.values[c]))];
+      if (said.length === 1) return said[0];
+      const nums = said.map(Number);
+      return nums.every((n) => Number.isFinite(n)) ? `${Math.min(...nums)}–${Math.max(...nums)}` : `${said.length} values`;
+    }),
+  }));
+}
+
+function tableHeight(lines: number) {
+  return 46 + 19 * (Math.min(lines, MOST_LINES) + 1) + (lines > MOST_LINES ? 19 : 0);
+}
+
+/** A table whose rows aren't cards: what they are, and what they say, in as few lines as it takes. */
+function TableCard({ data }: NodeProps<RFNode<TableData>>) {
+  const { name, direction, count, columns, lines, groupBy, onGroup, onPick } = data;
+  return (
+    <div className="card table-card" style={{ width: TABLE_W }}>
+      <Handle type="source" position={direction === "down" ? Position.Top : Position.Left} />
+      <div className="card-top">
+        <span className="cbadge" title="A table: each line is the rows that say the same thing">table</span>
+        <span className="muted small">{count} rows</span>
+      </div>
+      <table className="card-table nodrag nopan">
+        <thead>
+          <tr>
+            <th className="card-table-key" title="Which rows">{name}</th>
+            {columns.map((c) => (
+              <th key={c}>
+                <button className={groupBy === c ? "on" : ""} title={groupBy === c ? `One line for each ${labelOf(c).toLowerCase()}. Click for one line for rows that say the same in every column` : `Click for one line for each ${labelOf(c).toLowerCase()}`} onClick={() => onGroup(c)}>
+                  {labelOf(c)}
+                </button>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {lines.slice(0, MOST_LINES).map((l) => (
+            <tr key={l.rows[0].id} onClick={() => onPick(l.rows[0].id)} title={l.rows.map((r) => r.name).join(", ")}>
+              <td className="card-table-key">{rowsText(l.rows)}</td>
+              {l.values.map((v, i) => (
+                <td key={columns[i]}>{v}</td>
+              ))}
+            </tr>
+          ))}
+          {lines.length > MOST_LINES && (
+            <tr className="muted">
+              <td colSpan={columns.length + 1}>… {lines.length - MOST_LINES} more</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      <Handle type="target" position={direction === "down" ? Position.Bottom : Position.Right} />
+    </div>
+  );
+}
+
+const nodeTypes = { card: Card, table: TableCard };
 
 type XY = { x: number; y: number };
 
@@ -217,7 +322,7 @@ function FloatingMiniMap({ pref, onChange, canvas }: { pref: MiniPref; onChange:
         pannable
         zoomable
         ariaLabel="Overview: drag to move the view"
-        nodeColor={(n) => compColor(dominant((n.data as CardData).node))}
+        nodeColor={(n) => ("node" in n.data ? compColor(dominant((n.data as CardData).node)) : "var(--muted)")}
         nodeBorderRadius={6}
         maskColor="var(--minimap-mask)"
       />
@@ -229,7 +334,7 @@ const FIT_MS = 450;
 const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
 /** How this map is laid out, per workspace and per browser. It's fine if it can't be remembered. */
-type LayoutPref = { direction: Direction; layoutBy: Record<string, boolean>; /** Draw an option of several questions on each of them, not as a card. */ fold?: boolean };
+type LayoutPref = { direction: Direction; layoutBy: Record<string, boolean>; /** Draw an option of several questions on each of them, not as a card. */ fold?: boolean; /** The column each table's card has a line for each value of, by the table's name. */ groupBy?: Record<string, string> };
 
 function loadLayoutPref(dir: string): LayoutPref {
   try {
@@ -253,7 +358,7 @@ const LABEL_REL = "label:";
  * A line the map draws: an edge, by the component that leads it (the first that gives the graph its shape,
  * and otherwise its first), or a row a node reads by where it is. `value` is what a formula calls the end.
  */
-type MapLink = { from: string; to: string; kind: string; value: unknown; key: string; holds?: string };
+type MapLink = { from: string; to: string; kind: string; value: unknown; key: string; holds?: string; /** What to call it, if not by its kind. */ called?: string };
 
 /** What the Links menu filters a link by. */
 const relOf = (e: { kind: string; value: unknown }) => (e.kind === "label" ? `${LABEL_REL}${String(e.value)}` : e.kind);
@@ -373,7 +478,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
   const rep = (id: string) => standsFor.get(id) ?? id;
   // What the map draws: links between cards, and the rows a node reads by where they are, as `prev` or
   // `Year[3]` do, which no link says. Each keeps the key of the link it came from.
-  const links = useMemo(() => {
+  const baseLinks = useMemo(() => {
     const at = (id: string) => standsFor.get(id) ?? id;
     const out: MapLink[] = [];
     for (const e of g.edges) {
@@ -430,6 +535,35 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
     return out;
   }, [g.nodes, g.worlds.vars, folded, ws.byId]);
   const cardHeight = (n: GraphNode) => nodeHeight(n) + optionsHeight(cardOptions.get(n.id) ?? []);
+  // A table whose rows aren't cards has one of its own, if they've anything to say: what each says for
+  // itself, and what it's part of, which nothing else on the map shows.
+  const tables = useMemo(() => {
+    const byTable = new Map<string, GraphNode[]>();
+    for (const n of g.nodes) if (n.row && folded.has(n.id)) byTable.set(n.row.table, [...(byTable.get(n.row.table) ?? []), n]);
+    const nameOf = (id: string) => ws.byId.get(id)?.name ?? id;
+    const out: { id: string; name: string; count: number; columns: string[]; lines: TableLine[]; rows: Set<string>; groupBy: string | null }[] = [];
+    for (const [name, rows] of byTable) {
+      rows.sort((a, b) => (typeof a.row!.key === "number" && typeof b.row!.key === "number" ? a.row!.key - b.row!.key : String(a.row!.key).localeCompare(String(b.row!.key))));
+      const own = [...new Set(rows.flatMap((r) => Object.keys(r.cells).filter((c) => !ws.cellInfo(c))))].sort();
+      const wholes = (r: GraphNode) => g.edges.filter((e) => e.from === r.id && e.components.includes("part_of")).map((e) => nameOf(e.to));
+      const parts = rows.some((r) => wholes(r).length > 0);
+      const columns = [...own, ...(parts ? ["part_of"] : [])];
+      if (!columns.length) continue;
+      const said = rows.map((row) => ({ row, values: [...own.map((c) => (row.cells[c] ? cellText(row.cells[c], nameOf) : "")), ...(parts ? [wholes(row).join(", ")] : [])] }));
+      const groupBy = columns.includes(layoutPref.groupBy?.[name] ?? "") ? layoutPref.groupBy![name] : null;
+      out.push({ id: TABLE + name, name, count: rows.length, columns, lines: tableLines(said, columns, groupBy), rows: new Set(rows.map((r) => r.id)), groupBy });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [g.nodes, g.edges, folded, ws.byId, layoutPref.groupBy]);
+  // One line from a table to each question that lands on its rows, where there'd have been one from every row.
+  const links = useMemo(() => {
+    const out = [...baseLinks];
+    for (const t of tables)
+      for (const asked of g.worlds.vars)
+        if (asked.options.some((o) => t.rows.has(o.id))) out.push({ from: t.id, to: asked.id, kind: "alternative", value: undefined, key: `${t.id}|${asked.id}`, called: "one of" });
+    return out;
+  }, [baseLinks, tables, g.worlds.vars]);
   const updateNodeInternals = useUpdateNodeInternals();
   const [showDead, setShowDead] = useState(false);
   const [focus, setFocus] = useState(0);
@@ -512,6 +646,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
       const cx = (rect.width / 2 - v.x) / v.zoom;
       const cy = (rect.height / 2 - v.y) / v.zoom;
       for (const [id, p] of posRef.current) {
+        if (id.startsWith(TABLE)) continue;
         const c = centre(p);
         const score = (c.x - cx) ** 2 + (c.y - cy) ** 2;
         if (score < bestScore) [best, bestScore] = [id, score];
@@ -519,7 +654,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
     } else {
       const from = centre(cur);
       for (const [id, p] of posRef.current) {
-        if (id === selectedNode) continue;
+        if (id === selectedNode || id.startsWith(TABLE)) continue;
         const c = centre(p);
         const along = (c.x - from.x) * dx + (c.y - from.y) * dy;
         if (along < 1) continue;
@@ -726,8 +861,10 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
       }
       ids = near;
     }
+    // A table's card is there when any question that lands on its rows is.
+    for (const t of tables) if (links.some((e) => e.from === t.id && ids.has(e.to))) ids.add(t.id);
     return ids;
-  }, [g.nodes, links, standsFor, folded, hiddenFacts, showDead, focus, selectedNode]);
+  }, [g.nodes, links, tables, standsFor, folded, hiddenFacts, showDead, focus, selectedNode]);
 
   const q = query.trim().toLowerCase();
   const matches = (n: GraphNode) => !q || `${n.id} ${n.name}`.toLowerCase().includes(q);
@@ -791,8 +928,9 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
         layoutEdges.map((e) => [e.from, e.to, e.kind]),
         g.nodes.filter((n) => visible.has(n.id)).map((n) => [n.name.length, badgesOf(n).length, cardOptions.get(n.id)?.length ?? 0]),
         layoutPref.direction,
+        tables.map((t) => [t.id, t.lines.length]),
       ]),
-    [visible, layoutEdges, g.nodes, layoutPref.direction],
+    [visible, layoutEdges, g.nodes, layoutPref.direction, tables],
   );
 
   useEffect(() => {
@@ -811,7 +949,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
           "elk.separateConnectedComponents": "true",
           "elk.spacing.componentComponent": "60",
         },
-        children: nodes.map((n) => ({ id: n.id, width: W, height: cardHeight(n) })),
+        children: [...nodes.map((n) => ({ id: n.id, width: W, height: cardHeight(n) })), ...tables.filter((t) => visible.has(t.id)).map((t) => ({ id: t.id, width: TABLE_W, height: tableHeight(t.lines.length) }))],
         edges: layoutEdges.map((e, i) => {
           const { parent, child } = ws.info(e.kind)?.reversed ? { parent: e.from, child: e.to } : { parent: e.to, child: e.from };
           return { id: `s${i}`, sources: [child], targets: [parent] };
@@ -820,7 +958,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
       .then((res) => {
         if (cancelled) return;
         const target = new Map((res.children ?? []).map((c) => [c.id, { x: c.x ?? 0, y: c.y ?? 0 }]));
-        const ids = nodes.map((n) => n.id);
+        const ids = [...nodes.map((n) => n.id), ...tables.filter((t) => visible.has(t.id)).map((t) => t.id)];
         setLayout({ ids, target });
         updateNodeInternals(ids);
         cancelAnimationFrame(anim.current);
@@ -917,11 +1055,34 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [structureKey]);
 
-  const rfNodes: RFNode<CardData>[] = useMemo(
+  const rfNodes: RFNode<CardData | TableData>[] = useMemo(
     () =>
       [...layout.ids, ...leaving.current.keys()]
-        .filter((id) => ws.byId.has(id) && (pos.has(id) || leaving.current.has(id)))
+        .filter((id) => (ws.byId.has(id) || tables.some((t) => t.id === id)) && (pos.has(id) || leaving.current.has(id)))
         .map((id) => {
+          const table = tables.find((t) => t.id === id);
+          if (table)
+            return {
+              id,
+              type: "table",
+              position: pos.get(id)!,
+              selectable: false,
+              initialWidth: TABLE_W,
+              initialHeight: tableHeight(table.lines.length),
+              data: {
+                name: table.name,
+                direction: layoutPref.direction,
+                count: table.count,
+                columns: table.columns,
+                lines: table.lines,
+                groupBy: table.groupBy,
+                onGroup: (column: string) => {
+                  const { [table.name]: was, ...rest } = layoutPref.groupBy ?? {};
+                  setLayoutPref({ ...layoutPref, groupBy: was === column ? rest : { ...rest, [table.name]: column } });
+                },
+                onPick: (row: string) => onSelect(row),
+              },
+            };
           const node = ws.byId.get(id)!;
           const gone = leaving.current.has(id) && !pos.has(id);
           return {
@@ -948,7 +1109,8 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
               // A row is called by its key, under the tables it's in.
               title: node.row ? String(node.row.key) : node.name,
               options: cardOptions.get(id) ?? [],
-              holds: ws.view!.edges.filter((l) => l.to === id && l.components.includes("part_of") && folded.has(l.from)).map((l) => ws.byId.get(l.from)?.name ?? ""),
+              // What a table's card says its rows are part of doesn't need saying again here.
+              holds: ws.view!.edges.filter((l) => l.to === id && l.components.includes("part_of") && folded.has(l.from) && !tables.some((t) => t.rows.has(l.from))).map((l) => ws.byId.get(l.from)?.name ?? ""),
               kinds: [
                 ...[node, ...(node.parts ?? []).flatMap((p) => ws.byId.get(p) ?? [])].flatMap((n) => (n.row ? [n.row.table] : [])),
                 ...ws.view!.edges.filter((l) => l.from === id && l.components.includes("is_a")).map((l) => ws.byId.get(l.to)?.name ?? ""),
@@ -959,7 +1121,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
           };
         }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [layout, pos, ws.byId, ws.recent, selected, q, linkDrag?.from, linkDrag?.over, layoutPref.direction, folded, cardOptions],
+    [layout, pos, ws.byId, ws.recent, selected, q, linkDrag?.from, linkDrag?.over, layoutPref, folded, cardOptions, tables],
   );
 
   const rfEdges: RFEdge[] = useMemo(
@@ -978,7 +1140,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
             source: ends.child,
             target: ends.parent,
             // What it is, and what it holds, such as an option's weight. A label says what a formula calls it.
-            label: [e.kind === "label" ? String(e.value) : labelOf(e.kind), e.holds].filter(Boolean).join(" · "),
+            label: [e.called ?? (e.kind === "label" ? String(e.value) : labelOf(e.kind)), e.holds].filter(Boolean).join(" · "),
             className: `edge rel-${e.kind} ${arranges ? "" : "free"} ${hot ? "hot" : ""} ${isSel ? "picked" : ""}`,
             animated: e.kind === "depends_on" && hot,
             // Into what reads it or holds it: where it sits on the map doesn't say which way a formula reads.
@@ -1161,13 +1323,15 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
             nodes={rfNodes}
             edges={rfEdges}
             nodeTypes={nodeTypes}
-            onNodeClick={(_, n) => onSelect(n.id)}
+            // A table's card isn't a node: its lines are what's picked.
+            onNodeClick={(_, n) => !n.id.startsWith(TABLE) && onSelect(n.id)}
             onNodeDoubleClick={(_, n) => {
+              if (n.id.startsWith(TABLE)) return;
               onSelect(n.id);
               centreOn(n.id);
             }}
             // A row read by where it is has no edge of its own to show, so the node whose formula reads it is shown.
-            onEdgeClick={(_, e) => onSelect(e.id.startsWith("reads:") ? e.id.slice("reads:".length).split("|")[0] : e.id)}
+            onEdgeClick={(_, e) => !e.id.startsWith(TABLE) && onSelect(e.id.startsWith("reads:") ? e.id.slice("reads:".length).split("|")[0] : e.id)}
             onNodeContextMenu={(e, n) => {
               e.preventDefault();
               onContext({ kind: "node", id: n.id, x: e.clientX, y: e.clientY });

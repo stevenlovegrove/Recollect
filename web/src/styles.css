@@ -3552,3 +3552,48 @@ button.icon.act.revert:hover {
 .card-opt.gone {
   opacity: 0.4;
 }
+
+/* A table whose rows aren't cards: the rows that say the same thing, a line each. */
+.card-table {
+  width: 100%;
+  margin-top: 4px;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.card-table th,
+.card-table td {
+  padding: 1px 6px;
+  text-align: left;
+  vertical-align: top;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.card-table th {
+  color: var(--muted);
+  font-weight: 400;
+  font-family: inherit;
+}
+.card-table th button {
+  all: unset;
+  cursor: pointer;
+}
+.card-table th button:hover,
+.card-table th button.on {
+  color: var(--accent);
+}
+.card-table th button.on {
+  text-decoration: underline;
+}
+/* Which rows a line is about isn't something they say, so it's set apart from what is. */
+.card-table .card-table-key {
+  font-weight: 700;
+  color: var(--text);
+  border-right: 1px solid var(--border);
+  padding-left: 0;
+  font-family: inherit;
+}
+.card-table tbody tr {
+  cursor: pointer;
+}
+.card-table tbody tr:hover td {
+  background: var(--hl);
+}

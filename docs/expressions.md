@@ -451,7 +451,7 @@ Stick and Switch have nothing to say but their names, so the decision lists them
 
 Which door you pick is yours too, so there's no one chance of winning to give: averaging over a choice still to be made means nothing. There is one for each way your choices could go, so the comparison on the Decisions tab gives the least and the most of those, and where they're the same, as two thirds is for Switch whichever door you pick, it says that.
 
-On a map, an option of several questions that has nothing to say but what it's an option or a part of isn't a card: it's drawn on each question, to pin it there, so three doors asked about four times aren't twelve lines.
+On a map, an option of several questions that has nothing to say but what it's an option or a part of isn't a card: it's drawn on each question, to pin it there, so three doors asked about four times aren't twelve lines. Where those options are rows of a table with something to say, a cell of their own or what they're part of, the table has a card: a line for the rows that say the same in every column, with which rows they are set apart from what they say, since that isn't one of their cells. Clicking a column gives a line for each thing it says instead, and the other columns say what they come to across those rows.
 
 What this doesn't do:
 
