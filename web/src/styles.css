@@ -3612,3 +3612,23 @@ button.icon.act.revert:hover {
   color: var(--accent-text);
   text-decoration: none;
 }
+
+/* On a true-or-false value's card: require it, or stop requiring it. */
+.card-require {
+  all: unset;
+  margin-left: auto;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--muted);
+}
+.card-require:hover {
+  border-color: var(--c-requires);
+  color: var(--c-requires);
+}
+.card-require.on {
+  border-color: var(--c-requires);
+  color: var(--c-requires);
+}

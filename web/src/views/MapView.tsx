@@ -84,6 +84,9 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
   const { node, direction, selected, recent, dim, entering, leaving, linking, out, kinds, options, holds } = data;
   // The options say how each is believed and what it could land on, so those lines would say it twice.
   const lines = options.length ? data.lines.filter((l) => l.name !== "belief" && l.name !== "chosen") : data.lines;
+  const required = node.components.some((c) => c.name === "requires");
+  // A value that's true or false, worked out or typed in, on a node somebody wrote.
+  const truth = !node.unwritten && (required || node.cells.value?.shown?.kind === "bool");
   return (
     <div
       className={["card", node.unwritten && "unwritten", isDropped(node) && "dead", out && "out", selected && "selected", recent && "recent", dim && "dim", entering && "entering", leaving && "leaving", linking && "linking"].filter(Boolean).join(" ")}
@@ -99,6 +102,20 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
           </span>
         ))}
         {isNote(node) && !kinds.length && <span className="muted small">note</span>}
+        {/* Something true or false is only a value until it's required: then it's a principle, and only the worlds where it holds count. */}
+        {truth && (
+          <button
+            className={`card-require nodrag nopan ${required ? "on" : ""}`}
+            title={required ? "Required: only the worlds where this is true count. Click to make it only a value again" : "Only a value. Click to require it, so only the worlds where it's true count"}
+            aria-pressed={required}
+            onClick={(e) => {
+              e.stopPropagation();
+              data.ws.apply([{ op: required ? "remove" : "add", id: node.id, component: "requires" }], required ? "No longer required" : "Required").catch((err) => alert(String(err)));
+            }}
+          >
+            {required ? "required ✓" : "require"}
+          </button>
+        )}
       </div>
       <div className="card-title" title={node.unwritten ? `${node.name}: nobody wrote this row. It's worked out from its table, and isn't saved.` : node.name}>
         {node.unwritten && <span className="unwritten-mark">{UNWRITTEN} </span>}

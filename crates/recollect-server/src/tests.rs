@@ -451,20 +451,32 @@ async fn the_philosophy_samples_leave_what_their_arguments_say() {
     near(prob(&open, "What you do isn't up to you", "value"), 0.0);
     near(chance(&open, free, "accept"), 0.5);
 
-    // The trolley: the two judgements leave one set of principles, and it forbids the loop.
+    // The trolley: what you do in each case is yours, and nothing is required, so every way is open.
     c.open("trolley").await;
     let v = c.view(json!({})).await;
-    assert_eq!(v["worlds"]["count"], "1");
-    near(chance(&v, "Do what saves the most lives", "accept"), 1.0);
-    near(chance(&v, "Never kill, whatever it prevents", "reject"), 1.0);
-    near(chance(&v, "Never use a person merely as a means", "accept"), 1.0);
-    near(prob(&v, "You may send it round the loop", "value"), 0.0);
-    // Whether a case uses someone isn't put in: it's whether the five are saved only because they're there.
-    let uses = |case: &str| cell(&v, case, "uses_someone")["shown"]["always"].clone();
-    assert_eq!((uses("Case[Switch]"), uses("Case[Footbridge]"), uses("Case[Loop]")), (json!(false), json!(true), json!(true)), "{}", cell(&v, "Case[Switch]", "uses_someone"));
-    // Insist the loop is all right too, by giving up the principle that forbids it, and nothing fits.
-    let stuck = c.view(pin(&v, &[("Never use a person merely as a means", "reject")])).await;
-    assert_eq!(stuck["worlds"]["count"], "0");
+    let (pull, push, round) = ("Pull the switch?", "Push the man?", "Send it round the loop?");
+    let (most, none, means) = ("The most lives are saved", "You kill no one", "No one is used as a means");
+    assert_eq!(v["worlds"]["count"], "8");
+    // What most people would do saves fewer than it could and kills someone, but uses nobody, unless
+    // the loop is taken too: that's worked out from the loop being stopped by a body.
+    let usual = c.view(pin(&v, &[(pull, "yes"), (push, "no")])).await;
+    assert_eq!(cell(&usual, most, "value")["shown"]["never"], true);
+    assert_eq!(cell(&usual, none, "value")["shown"]["never"], true);
+    assert_eq!(cell(&usual, means, "value")["vars"], json!([var(&v, round)["id"]]));
+    // Requiring a value makes it a principle: only the choices that keep it true are left.
+    let require = |name: &str, on: bool| json!({ "ops": [{ "op": if on { "add" } else { "remove" }, "id": id(&v, name), "component": "requires" }] });
+    c.post("/api/call/apply", require(means, true)).await;
+    let held = c.view(json!({})).await;
+    assert_eq!(held["worlds"]["count"], "2");
+    assert_eq!((option(&held, push, "yes")["possible"].clone(), option(&held, round, "yes")["possible"].clone(), option(&held, pull, "yes")["possible"].clone()), (json!(false), json!(false), json!(true)));
+    // Two principles can leave nothing you may do.
+    c.post("/api/call/apply", require(most, true)).await;
+    assert_eq!(c.view(json!({})).await["worlds"]["count"], "0");
+    // And saving the most on its own leaves exactly one thing: act every time.
+    c.post("/api/call/apply", require(means, false)).await;
+    let saved = c.view(json!({})).await;
+    assert_eq!(saved["worlds"]["count"], "1");
+    assert_eq!(option(&saved, push, "no")["possible"], false);
 
     // Reason or experience: each answer stands until the objection to it is accepted, so with the
     // objections open the three are as likely as each other, and with both accepted only the gap is left.

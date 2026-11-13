@@ -1,8 +1,0 @@
-id: 01a1d3b1-4f8c-7060-8e30-305c1af66d77
-components:
-- notes
-cells:
-  body: 'You can pull a switch to send the trolley down a side track, where one person is standing. The trolley is sent away from the five for good. The one person dies because they happen to be there: with the side track empty, the five would be saved just the same.'
-  body_stops_it: false
-  name: Case[Switch]
-  sent_away: true

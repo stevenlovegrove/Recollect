@@ -1,9 +1,0 @@
-id: 01a1d3b1-4f8c-7060-8e30-30612852fe6c
-components:
-- notes
-- value
-cells:
-  body: 'Not something put in, but what follows from the principles that fit the other two judgements. If it comes out a way you can''t accept, something has to give: one of the judgements, or the principles, or the formulas that connect them.'
-  name: You may send it round the loop
-formulas:
-  value: Case[Loop].permitted

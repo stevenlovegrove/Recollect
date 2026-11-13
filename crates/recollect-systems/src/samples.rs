@@ -39,13 +39,13 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "two-children", title: "Two children", about: "A family has two children, and you're told that at least one of them is a boy. What is the probability that both are boys? The intuitive answer is a half, but it's a third: there are three equally likely families with at least one boy (an elder boy and a younger girl, an elder girl and a younger boy, and two boys), and only one of them has two boys. The answer changes if you're told something more specific. Pin the elder child as a boy and the probability that both are boys becomes a half, because that also rules out the family where only the younger is a boy.", group: "reasoning", systems: &["plan"], build: two_children },
     Sample { name: "socks", title: "Socks in the wash", about: "Two, three or four pairs of socks went in the wash, and you don't know which. Every pair is different from the others. You pull out three socks without looking, and no two of them match. What does that tell you about how many pairs went in? Before you looked, each number of pairs was equally likely. Afterwards two pairs is ruled out, because any three socks from two pairs must include a match, and four pairs is more likely than three, at about 59% to 41%, because three socks are less likely to include a match when there are more pairs to draw from. Each sock is drawn from those in the wash that aren't out already.", group: "reasoning", systems: &["plan"], build: socks },
     Sample { name: "free-will", title: "Free will, step by step", about: "Can we act freely if everything we do was settled before we were born? This lays out the argument that we can't, a step at a time. Four premises are each accepted or rejected: that everything is settled by what came before, that the past and the laws of nature aren't up to you, that what follows from things not up to you isn't up to you either, and that we act freely. Two steps are worked out from them, ending in the conclusion that what you do isn't up to you. Nothing says the four premises conflict: that follows from the steps, and from one requirement that an act can't be both up to you and not. Each position philosophers hold is the premise it gives up. Pin the premises you're surest of and see which one has to go.", group: "philosophy", systems: &["plan"], build: free_will },
-    Sample { name: "trolley", title: "The trolley problem", about: "A runaway trolley will kill five people. In one case you can pull a switch to send it down a side track, where it will kill one. In another you can only stop it by pushing a man off a footbridge into its path. Most people say pulling the switch is all right and pushing the man is not, though five are saved at the cost of one either way. Here each case says only what physically happens, and whether it uses someone as a means is worked out from that: would the five still be saved if that person weren't there? Three moral principles are each accepted or rejected, what they permit follows by formula, and the two common judgements go in as evidence. What's left are the principles that fit your judgements, and they settle a third case, the loop, in a way you may not like. That back and forth between principles and cases is what philosophers call reflective equilibrium.", group: "philosophy", systems: &["plan"], build: trolley },
+    Sample { name: "trolley", title: "The trolley problem", about: "A runaway trolley will kill five people. In one case you can pull a switch to send it down a side track, where it will kill one. In another you can only stop it by pushing a man off a footbridge into its path. In a third, the side track loops back, and the one person on it stops the trolley with their body. What you do in each case is yours to choose. Three things are worked out from your choices, each true or false: whether the most lives are saved, whether you kill no one, and whether no one is used as a means. Each is only a value until you require it, which turns it into a principle: then only the choices that keep it true are left. Require one from its card and see what it permits, then require two and see whether anything is left. Most people would pull the switch and wouldn't push the man. Pin those two and see which values survive, and what they say about the loop.", group: "philosophy", systems: &["plan"], build: trolley },
     Sample { name: "reason-or-experience", title: "Reason or experience?", about: "Where does knowledge come from? One answer is reason alone, and the opposite answer is experience alone. Any answer has to explain two things: why mathematics couldn't have been otherwise, and why we have to look to find out how the world is. Each answer explains one of them, and claims the other too, which stands until you accept the objection to it. The objections are there to accept or reject. Accept both and neither answer survives, so what's left is the gap: an answer nobody has named yet. This is a dialectic, with a thesis, its antithesis, and the need for a synthesis that keeps what each got right. Name one, and say what it explains, to close the gap.", group: "philosophy", systems: &["plan"], build: reason_or_experience },
     Sample { name: "zebra", title: "The zebra puzzle", about: "Who owns the zebra, and who drinks water? A table for each kind of thing, whose rows choose a house, and the clues written as they read: Nationality[English].chosen = Colour[Red].chosen. About 3 × 10¹⁷ combinations, and the clues leave exactly one.", group: "puzzle", systems: &[], build: zebra },
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "22";
+pub const FORMAT: &str = "23";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -687,30 +687,30 @@ fn free_will(b: &mut Build) {
 }
 
 fn trolley(b: &mut Build) {
-    let (save, kill, means) = ("Do what saves the most lives", "Never kill, whatever it prevents", "Never use a person merely as a means");
-    claim(b, save, "A principle. What matters is how things turn out, and five deaths are worse than one.");
-    claim(b, kill, "A principle. Some things you may not do, and killing someone is one of them, even to stop more deaths that you wouldn't be the one causing.");
-    claim(b, means, "A principle. You may not treat a person as a tool: it's one thing for someone to die as a side effect of what you do, and another for their death to be how you do it.");
-    // Each case says only what physically happens. Whether it uses someone as a means is worked out from
-    // that, by asking whether the five would still be saved if that person weren't there.
-    b.note("Case", "A case says two things about what happens if you act: whether the trolley is sent away from the five for good, and whether someone's body stops it. The rest is worked out, by the same formulas for every case.");
-    b.formula_on("Case", "saves_five", "self.sent_away || self.body_stops_it");
-    b.formula_on("Case", "saves_five_without_them", "self.sent_away");
-    b.formula_on("Case", "uses_someone", "self.saves_five && !self.saves_five_without_them");
-    b.formula_on("Case", "permitted", r#"self.saves_five && save.chosen.value = "accept" && kill.chosen.value = "reject" && !(means.chosen.value = "accept" && self.uses_someone)"#);
-    b.label("Case", save, "save").label("Case", kill, "kill").label("Case", means, "means");
-    for (case, sent_away, body_stops_it, about) in [
-        ("Switch", true, false, "You can pull a switch to send the trolley down a side track, where one person is standing. The trolley is sent away from the five for good. The one person dies because they happen to be there: with the side track empty, the five would be saved just the same."),
-        ("Footbridge", false, true, "You're on a footbridge beside a large man. Pushing him onto the track would stop the trolley. It isn't sent anywhere: his body is what stops it, so without him the five would die."),
-        ("Loop", false, true, "As the switch, except the side track loops back to the main one. The trolley isn't sent away for good: it would come round and kill the five, but the one person on the loop is heavy enough to stop it."),
-    ] {
-        let row = format!("Case[{case}]");
-        b.put(&row, "sent_away", json!(sent_away)).put(&row, "body_stops_it", json!(body_stops_it)).note(&row, about);
+    // What you do in each case is yours to choose, and says only what physically happens if you do it:
+    // whether the trolley is sent away from the five for good, and whether someone's body stops it.
+    let cases = [
+        ("Pull the switch?", true, false, "The trolley will kill five people. You can pull a switch to send it down a side track, where one person is standing. That sends it away from the five for good. The one person dies because they happen to be there: with the side track empty, the five would be saved just the same."),
+        ("Push the man?", false, true, "You're on a footbridge beside a large man. Pushing him onto the track would stop the trolley. It isn't sent anywhere: his body is what stops it, so without him the five would die."),
+        ("Send it round the loop?", false, true, "As the switch, except the side track loops back to the main one. The trolley isn't sent away for good: it would come round and kill the five, but the one person on the loop is heavy enough to stop it."),
+    ];
+    for (case, sent_away, body_stops_it, about) in cases {
+        b.add(case, DECISION).set(case, OPTIONS, Options(vec!["yes".to_string(), "no".to_string()])).note(case, about);
+        b.put(case, "sent_away", json!(sent_away)).put(case, "body_stops_it", json!(body_stops_it));
     }
-    seen(b, "You may pull the switch", "Case[Switch].permitted", "What most people say. It rules out any set of principles that forbids it.");
-    seen(b, "You may not push the man", "!Case[Footbridge].permitted", "Also what most people say, and it's what makes this a problem: the numbers are the same as for the switch.");
-    b.formula("You may send it round the loop", "Case[Loop].permitted");
-    b.note("You may send it round the loop", "Not something put in, but what follows from the principles that fit the other two judgements. If it comes out a way you can't accept, something has to give: one of the judgements, or the principles, or the formulas that connect them.");
+    // What can be said of what you choose, each true or false. None is required: requiring one is
+    // holding yourself to it, which leaves only the choices that keep it true.
+    let values = [
+        ("The most lives are saved", r#"all(c in case: (c.chosen.value = "yes") = (c.sent_away || c.body_stops_it))"#, "True when you act in every case where acting saves the five, which is all three. As a principle, it's that only how things turn out matters."),
+        ("You kill no one", r#"all(c in case: c.chosen.value = "no")"#, "True when you act in none of them, since in each the one person dies by what you do. As a principle, it's that some things may not be done whatever they prevent."),
+        ("No one is used as a means", r#"all(c in case: !(c.chosen.value = "yes" && c.body_stops_it && !c.sent_away))"#, "True unless you act where the five are saved only because someone's body stops the trolley. That's worked out from what each case says happens: would the five still be saved if that person weren't there? As a principle, it's that you may not treat a person as a tool."),
+    ];
+    for (value, formula, about) in values {
+        b.formula(value, formula).note(value, &format!("{about} It's a value until it's required. Require it, from its card, to see what it leaves you free to do."));
+        for (case, ..) in cases {
+            b.label(value, case, "case");
+        }
+    }
 }
 
 fn reason_or_experience(b: &mut Build) {
