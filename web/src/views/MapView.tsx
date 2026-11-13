@@ -155,21 +155,12 @@ type TableData = {
   groupBy: string | null;
   onGroup: (column: string) => void;
   onPick: (id: string) => void;
+  /** The row that's selected, if one of these is. */
+  selected: string | null;
 };
 
-/** Which rows, in few words: runs of numbers as ranges, and names as they are. */
-function rowsText(rows: GraphNode[]) {
-  const keys = rows.map((r) => r.row?.key ?? r.name);
-  if (!keys.every((k) => typeof k === "number")) return keys.join(", ");
-  const nums = (keys as number[]).slice().sort((a, b) => a - b);
-  const runs: [number, number][] = [];
-  for (const n of nums) {
-    const last = runs[runs.length - 1];
-    if (last && n === last[1] + 1) last[1] = n;
-    else runs.push([n, n]);
-  }
-  return runs.map(([a, b]) => (a === b ? `${a}` : b === a + 1 ? `${a}, ${b}` : `${a}–${b}`)).join(", ");
-}
+/** The most rows one line of a table's card names before it says how many more there are. */
+const MOST_ROWS = 12;
 
 /**
  * A table's rows in as few lines as say everything: rows that say the same in every column share a line.
@@ -200,7 +191,7 @@ function tableHeight(lines: number) {
 
 /** A table whose rows aren't cards: what they are, and what they say, in as few lines as it takes. */
 function TableCard({ data }: NodeProps<RFNode<TableData>>) {
-  const { name, direction, count, columns, lines, groupBy, onGroup, onPick } = data;
+  const { name, direction, count, columns, lines, groupBy, onGroup, onPick, selected } = data;
   return (
     <div className="card table-card" style={{ width: TABLE_W }}>
       <Handle type="source" position={direction === "down" ? Position.Top : Position.Left} />
@@ -223,8 +214,24 @@ function TableCard({ data }: NodeProps<RFNode<TableData>>) {
         </thead>
         <tbody>
           {lines.slice(0, MOST_LINES).map((l) => (
-            <tr key={l.rows[0].id} onClick={() => onPick(l.rows[0].id)} title={l.rows.map((r) => r.name).join(", ")}>
-              <td className="card-table-key">{rowsText(l.rows)}</td>
+            <tr key={l.rows[0].id}>
+              <td className="card-table-key">
+                {/* Each row is a node of its own, so each is there to pick. */}
+                {l.rows.slice(0, MOST_ROWS).map((r) => (
+                  <button
+                    key={r.id}
+                    className={`card-row ${r.id === selected ? "picked" : ""}`}
+                    title={`${r.name}: show it in the inspector`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPick(r.id);
+                    }}
+                  >
+                    {String(r.row?.key ?? r.name)}
+                  </button>
+                ))}
+                {l.rows.length > MOST_ROWS && <span className="muted"> +{l.rows.length - MOST_ROWS}</span>}
+              </td>
               {l.values.map((v, i) => (
                 <td key={columns[i]}>{v}</td>
               ))}
@@ -1081,6 +1088,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
                   setLayoutPref({ ...layoutPref, groupBy: was === column ? rest : { ...rest, [table.name]: column } });
                 },
                 onPick: (row: string) => onSelect(row),
+                selected: selected && table.rows.has(selected) ? selected : null,
               },
             };
           const node = ws.byId.get(id)!;

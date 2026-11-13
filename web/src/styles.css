@@ -3591,9 +3591,24 @@ button.icon.act.revert:hover {
   padding-left: 0;
   font-family: inherit;
 }
-.card-table tbody tr {
+/* A row in a table's card: a node like any other, to pick for the inspector. */
+.card-row {
+  all: unset;
   cursor: pointer;
+  font-weight: 700;
+  padding: 0 4px;
+  margin-right: 2px;
+  border-radius: 4px;
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+  text-underline-offset: 2px;
 }
-.card-table tbody tr:hover td {
+.card-row:hover {
   background: var(--hl);
+  text-decoration-color: var(--accent);
+}
+.card-row.picked {
+  background: var(--accent);
+  color: var(--accent-text);
+  text-decoration: none;
 }
