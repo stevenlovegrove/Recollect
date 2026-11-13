@@ -38,14 +38,14 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "bertrands-box", title: "Bertrand's box", about: "There are three boxes. One holds two gold coins, one holds two silver coins, and one holds a gold coin and a silver coin. You pick a box at random and take a coin from it without looking, and the coin is gold. What is the probability that the other coin in the same box is also gold? It's tempting to say a half, since the box must be either the one with two gold coins or the mixed one. The answer is two thirds: there are three gold coins you could be holding, all equally likely, and two of them are in the box with two gold. Here it's three questions, each asked inside the one before: which box, which coin you take from it, and which coin is left.", group: "reasoning", systems: &["plan"], build: bertrands_box },
     Sample { name: "two-children", title: "Two children", about: "A family has two children, and you're told that at least one of them is a boy. What is the probability that both are boys? The intuitive answer is a half, but it's a third: there are three equally likely families with at least one boy (an elder boy and a younger girl, an elder girl and a younger boy, and two boys), and only one of them has two boys. The answer changes if you're told something more specific. Pin the elder child as a boy and the probability that both are boys becomes a half, because that also rules out the family where only the younger is a boy.", group: "reasoning", systems: &["plan"], build: two_children },
     Sample { name: "socks", title: "Socks in the wash", about: "Two, three or four pairs of socks went in the wash, and you don't know which. Every pair is different from the others. You pull out three socks without looking, and no two of them match. What does that tell you about how many pairs went in? Before you looked, each number of pairs was equally likely. Afterwards two pairs is ruled out, because any three socks from two pairs must include a match, and four pairs is more likely than three, at about 59% to 41%, because three socks are less likely to include a match when there are more pairs to draw from. Each sock is drawn from those in the wash that aren't out already.", group: "reasoning", systems: &["plan"], build: socks },
-    Sample { name: "free-will", title: "Free will: three claims that can't all be true", about: "Three claims about free will each seem right on their own: everything that happens is settled by what came before, an act that was settled beforehand isn't free, and we do act freely. They can't all be true together, so at least one has to go, and each way of giving one up is a position philosophers hold. Each claim is something you accept or reject, and one requirement says they aren't all accepted. Pin the two you're surest of and see that the third is forced, and which position that makes you.", group: "philosophy", systems: &["plan"], build: free_will },
-    Sample { name: "trolley", title: "The trolley problem", about: "A runaway trolley will kill five people. In one case you can pull a switch to send it down a side track, where it will kill one. In another you can only stop it by pushing a man off a footbridge into its path. Most people say pulling the switch is all right and pushing the man is not, though five are saved at the cost of one either way. Here three moral principles are each accepted or rejected, what they permit in each case follows by one rule, and those two common judgements go in as evidence. What's left are the principles that fit your judgements, and they settle a third case, the loop, in a way you may not like. That back and forth between principles and cases is what philosophers call reflective equilibrium.", group: "philosophy", systems: &["plan"], build: trolley },
-    Sample { name: "reason-or-experience", title: "Reason or experience?", about: "Where does knowledge come from? One answer is reason alone, and the opposite answer is experience alone. Each explains something the other can't: reason explains why mathematics couldn't have been otherwise, and experience explains why we have to look to find out how the world is. Put in both as things any answer has to explain, and neither answer survives. What's left is the gap: an answer nobody has named yet. This is a dialectic, with a thesis, its antithesis, and the need for a synthesis that keeps what each got right. Name one, and say what it explains, to close the gap.", group: "philosophy", systems: &["plan"], build: reason_or_experience },
+    Sample { name: "free-will", title: "Free will, step by step", about: "Can we act freely if everything we do was settled before we were born? This lays out the argument that we can't, a step at a time. Four premises are each accepted or rejected: that everything is settled by what came before, that the past and the laws of nature aren't up to you, that what follows from things not up to you isn't up to you either, and that we act freely. Two steps are worked out from them, ending in the conclusion that what you do isn't up to you. Nothing says the four premises conflict: that follows from the steps, and from one requirement that an act can't be both up to you and not. Each position philosophers hold is the premise it gives up. Pin the premises you're surest of and see which one has to go.", group: "philosophy", systems: &["plan"], build: free_will },
+    Sample { name: "trolley", title: "The trolley problem", about: "A runaway trolley will kill five people. In one case you can pull a switch to send it down a side track, where it will kill one. In another you can only stop it by pushing a man off a footbridge into its path. Most people say pulling the switch is all right and pushing the man is not, though five are saved at the cost of one either way. Here each case says only what physically happens, and whether it uses someone as a means is worked out from that: would the five still be saved if that person weren't there? Three moral principles are each accepted or rejected, what they permit follows by formula, and the two common judgements go in as evidence. What's left are the principles that fit your judgements, and they settle a third case, the loop, in a way you may not like. That back and forth between principles and cases is what philosophers call reflective equilibrium.", group: "philosophy", systems: &["plan"], build: trolley },
+    Sample { name: "reason-or-experience", title: "Reason or experience?", about: "Where does knowledge come from? One answer is reason alone, and the opposite answer is experience alone. Any answer has to explain two things: why mathematics couldn't have been otherwise, and why we have to look to find out how the world is. Each answer explains one of them, and claims the other too, which stands until you accept the objection to it. The objections are there to accept or reject. Accept both and neither answer survives, so what's left is the gap: an answer nobody has named yet. This is a dialectic, with a thesis, its antithesis, and the need for a synthesis that keeps what each got right. Name one, and say what it explains, to close the gap.", group: "philosophy", systems: &["plan"], build: reason_or_experience },
     Sample { name: "zebra", title: "The zebra puzzle", about: "Who owns the zebra, and who drinks water? A table for each kind of thing, whose rows choose a house, and the clues written as they read: Nationality[English].chosen = Colour[Red].chosen. About 3 × 10¹⁷ combinations, and the clues leave exactly one.", group: "puzzle", systems: &[], build: zebra },
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "21";
+pub const FORMAT: &str = "22";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -650,66 +650,86 @@ fn claim(b: &mut Build, name: &str, about: &str) {
 }
 
 fn free_will(b: &mut Build) {
-    let (settled, unfree, free) = ("Everything that happens is settled by what came before", "An act that was settled beforehand isn't free", "We act freely");
-    claim(b, settled, "Determinism. Every event, including everything you do, follows from the state of the world before it and the laws of nature.");
-    claim(b, unfree, "Incompatibilism. If what you'd do was already settled before you were born, you couldn't have done otherwise, and so it wasn't up to you.");
-    claim(b, free, "What it feels like from the inside, and what blame and praise seem to assume: at least some of what we do is up to us.");
-    let all = [("settled", settled), ("unfree", unfree), ("free", free)];
-    seen(b, "They can't all be true", r#"!(settled.chosen.value = "accept" && unfree.chosen.value = "accept" && free.chosen.value = "accept")"#, "If everything is settled beforehand, and what's settled beforehand isn't free, then nothing we do is free. So accepting any two of them means rejecting the third.");
-    // Each way of giving up exactly one is a position with a name.
-    for (name, formula, about) in [
-        ("Hard determinism", r#"settled.chosen.value = "accept" && unfree.chosen.value = "accept" && free.chosen.value = "reject""#, "Gives up free will: everything is settled, that rules freedom out, so we aren't free."),
-        ("Libertarianism", r#"settled.chosen.value = "reject" && unfree.chosen.value = "accept" && free.chosen.value = "accept""#, "Gives up determinism: we're free, freedom needs an open future, so not everything is settled."),
-        ("Compatibilism", r#"settled.chosen.value = "accept" && unfree.chosen.value = "reject" && free.chosen.value = "accept""#, "Gives up the idea that the two conflict: an act can be settled beforehand and still be yours, if it comes from what you want."),
+    // The argument that being settled beforehand rules out freedom, a step at a time. Only the premises
+    // are accepted or rejected: what follows from them is worked out, so the conflict isn't put in.
+    let (settled, past, transfer, free) = (
+        "Everything that happens is settled by what came before",
+        "The past and the laws of nature aren't up to you",
+        "What follows from things that aren't up to you isn't up to you either",
+        "We act freely",
+    );
+    claim(b, settled, "A premise: determinism. Every event, including everything you do, follows from the state of the world before it and the laws of nature.");
+    claim(b, past, "A premise. You can't change what happened before you were born, or what the laws of nature are.");
+    claim(b, transfer, "A premise, and the one the argument turns on. If you have no say over some things, you have no say over whatever they make inevitable.");
+    claim(b, free, "A premise: what it feels like from the inside, and what blame and praise assume. At least some of what we do is up to us.");
+    let follows = "What you do follows from the past and the laws";
+    b.formula(follows, r#"settled.chosen.value = "accept""#).label(follows, settled, "settled");
+    b.note(follows, "The first step, and only what being settled means: if everything is settled by what came before, then so is what you do.");
+    let not_up = "What you do isn't up to you";
+    b.formula(not_up, r#"follows && past.chosen.value = "accept" && transfer.chosen.value = "accept""#);
+    b.label(not_up, follows, "follows").label(not_up, past, "past").label(not_up, transfer, "transfer");
+    b.note(not_up, "The second step. What you do follows from the past and the laws, those aren't up to you, and what follows from what isn't up to you isn't up to you either. It holds exactly when all three do: reject any one, and the argument doesn't reach this.");
+    seen(b, "An act can't be both up to you and not", r#"!(not_up && free.chosen.value = "accept")"#, "The only thing put in rather than worked out, and it's just that a thing and its opposite can't both hold. With the steps above, it's what stops all four premises being accepted together.");
+    b.label("An act can't be both up to you and not", not_up, "not_up").label("An act can't be both up to you and not", free, "free");
+    // Each position is the premise it gives up to stay consistent.
+    let all = [("settled", settled), ("past", past), ("transfer", transfer), ("free", free)];
+    for (name, gives_up, about) in [
+        ("Hard determinism", "free", "Accepts the whole argument, and so gives up freedom: nothing we do is up to us."),
+        ("Libertarianism", "settled", "Keeps freedom and the argument's steps, and so gives up determinism: not everything is settled beforehand."),
+        ("Compatibilism", "transfer", "Keeps both determinism and freedom, and so gives up the step between them: an act can be inevitable and still be yours, if it comes from what you want."),
     ] {
-        b.formula(name, formula).note(name, about);
+        let formula = all.iter().map(|(label, _)| format!(r#"{label}.chosen.value = "{}""#, if *label == gives_up { "reject" } else { "accept" })).collect::<Vec<_>>().join(" && ");
+        b.formula(name, &formula).note(name, about);
         for (label, node) in all {
             b.label(name, node, label);
         }
-    }
-    for (label, node) in all {
-        b.label("They can't all be true", node, label);
     }
 }
 
 fn trolley(b: &mut Build) {
     let (save, kill, means) = ("Do what saves the most lives", "Never kill, whatever it prevents", "Never use a person merely as a means");
-    claim(b, save, "What matters is how things turn out, and five deaths are worse than one.");
-    claim(b, kill, "Some things you may not do, and killing someone is one of them, even to stop more deaths that you wouldn't be the one causing.");
-    claim(b, means, "You may not treat a person as a tool: it's one thing for someone to die as a side effect of what you do, and another for their death to be how you do it.");
-    // One rule for every case: you may act if saving more is what counts, killing isn't ruled out
-    // altogether, and it doesn't use someone as a means in a way that's ruled out.
-    b.note("Case", "Each case says whether stopping the trolley uses the one who dies as the means of stopping it. Whether you may act follows from that and from the three principles, by the same rule for every case.");
-    b.formula_on("Case", "permitted", r#"save.chosen.value = "accept" && kill.chosen.value = "reject" && !(means.chosen.value = "accept" && self.uses_someone)"#);
+    claim(b, save, "A principle. What matters is how things turn out, and five deaths are worse than one.");
+    claim(b, kill, "A principle. Some things you may not do, and killing someone is one of them, even to stop more deaths that you wouldn't be the one causing.");
+    claim(b, means, "A principle. You may not treat a person as a tool: it's one thing for someone to die as a side effect of what you do, and another for their death to be how you do it.");
+    // Each case says only what physically happens. Whether it uses someone as a means is worked out from
+    // that, by asking whether the five would still be saved if that person weren't there.
+    b.note("Case", "A case says two things about what happens if you act: whether the trolley is sent away from the five for good, and whether someone's body stops it. The rest is worked out, by the same formulas for every case.");
+    b.formula_on("Case", "saves_five", "self.sent_away || self.body_stops_it");
+    b.formula_on("Case", "saves_five_without_them", "self.sent_away");
+    b.formula_on("Case", "uses_someone", "self.saves_five && !self.saves_five_without_them");
+    b.formula_on("Case", "permitted", r#"self.saves_five && save.chosen.value = "accept" && kill.chosen.value = "reject" && !(means.chosen.value = "accept" && self.uses_someone)"#);
     b.label("Case", save, "save").label("Case", kill, "kill").label("Case", means, "means");
-    for (case, uses, about) in [
-        ("Switch", false, "You can pull a switch to send the trolley down a side track, where one person is standing. They die because they happen to be there: if the side track were empty, the five would be saved just the same."),
-        ("Footbridge", true, "You're on a footbridge beside a large man. Pushing him onto the track would stop the trolley. His body is what stops it: without him there, the five would die."),
-        ("Loop", true, "As the switch, except the side track loops back to the main one. The trolley would come round and kill the five, but the one person on the loop is heavy enough to stop it. So this time their body is what saves the five."),
+    for (case, sent_away, body_stops_it, about) in [
+        ("Switch", true, false, "You can pull a switch to send the trolley down a side track, where one person is standing. The trolley is sent away from the five for good. The one person dies because they happen to be there: with the side track empty, the five would be saved just the same."),
+        ("Footbridge", false, true, "You're on a footbridge beside a large man. Pushing him onto the track would stop the trolley. It isn't sent anywhere: his body is what stops it, so without him the five would die."),
+        ("Loop", false, true, "As the switch, except the side track loops back to the main one. The trolley isn't sent away for good: it would come round and kill the five, but the one person on the loop is heavy enough to stop it."),
     ] {
         let row = format!("Case[{case}]");
-        b.put(&row, "uses_someone", json!(uses)).note(&row, about);
+        b.put(&row, "sent_away", json!(sent_away)).put(&row, "body_stops_it", json!(body_stops_it)).note(&row, about);
     }
     seen(b, "You may pull the switch", "Case[Switch].permitted", "What most people say. It rules out any set of principles that forbids it.");
     seen(b, "You may not push the man", "!Case[Footbridge].permitted", "Also what most people say, and it's what makes this a problem: the numbers are the same as for the switch.");
     b.formula("You may send it round the loop", "Case[Loop].permitted");
-    b.note("You may send it round the loop", "Not something put in, but what follows from the principles that fit the other two judgements. If it comes out a way you can't accept, something has to give: one of the judgements, or the principles, or the rule that connects them.");
+    b.note("You may send it round the loop", "Not something put in, but what follows from the principles that fit the other two judgements. If it comes out a way you can't accept, something has to give: one of the judgements, or the principles, or the formulas that connect them.");
 }
 
 fn reason_or_experience(b: &mut Build) {
     let answer = "Where does knowledge come from?";
     b.add(answer, DECISION).add(answer, UNCERTAIN);
     b.note(answer, "Not yours to choose: one answer is right. Each answer says what it can explain, and what any answer has to explain is put in as evidence.");
-    let answers: [(&str, bool, bool, &str); 2] = [
-        ("From reason alone", true, false, "The thesis. Real knowledge is worked out by thinking, as geometry is, and the senses only mislead. This explains why mathematics is certain. It can't explain why thinking alone never tells you what's in the next room."),
-        ("From experience alone", false, true, "The antithesis. The mind starts empty, and everything in it comes through the senses. This explains why we have to look. It can't explain why two and two couldn't have made five: experience only says what has happened so far."),
-    ];
-    for (name, necessity, observation, about) in answers {
-        b.put(name, "explains_necessity", json!(necessity)).put(name, "explains_observation", json!(observation)).note(name, about).option(name, answer, Some(2.0));
-    }
+    // An answer explains what it's built to explain. What it claims to explain as well stands only until
+    // the objection to that is accepted, so its failing isn't put in: it follows from the objection.
+    let (must, look) = ("Experience only says what has happened, never what must", "Thinking alone never tells you what is in the next room");
+    claim(b, must, "An objection to experience alone. Seeing that two and two made four every time so far doesn't show they couldn't make five. If this is right, experience can't be where that kind of certainty comes from.");
+    claim(b, look, "An objection to reason alone. However carefully you think, you can't work out what the weather is. If this is right, reason can't be all there is to knowing about the world.");
+    let (reason, experience) = ("From reason alone", "From experience alone");
+    b.note(reason, "The thesis. Real knowledge is worked out by thinking, as geometry is. That explains why mathematics couldn't be otherwise. It also says thinking is enough for knowing the world, which stands unless the objection to that is accepted.");
+    b.put(reason, "explains_necessity", json!(true)).formula_on(reason, "explains_observation", r#"objection.chosen.value = "reject""#).label(reason, look, "objection").option(reason, answer, Some(2.0));
+    b.note(experience, "The antithesis. The mind starts empty, and everything in it comes through the senses. That explains why we have to look. It also says experience accounts for mathematics, which stands unless the objection to that is accepted.");
+    b.put(experience, "explains_observation", json!(true)).formula_on(experience, "explains_necessity", r#"objection.chosen.value = "reject""#).label(experience, must, "objection").option(experience, answer, Some(2.0));
     b.add("Something else", UNKNOWN).option("Something else", answer, Some(1.0));
-    b.note("Something else", "A gap: an answer nobody has named. Once both things to explain are in, it's the only one left, which is the plan's way of saying a synthesis is needed. To name one, add an option that says it explains both, such as that experience supplies what we know and the mind supplies the form it has to take, and then close this gap.");
-    // An answer nobody has named hasn't said it can't, so only an answer that says it can't is ruled out.
+    b.note("Something else", "A gap: an answer nobody has named. Accept both objections and it's the only one left, which is the plan's way of saying a synthesis is needed. To name one, add an option that says it explains both, such as that experience supplies what we know and the mind supplies the form it has to take, and then close this gap.");
+    // An answer nobody has named hasn't said it can't, so only an answer that turns out not to is ruled out.
     seen(b, "It has to explain why mathematics couldn't be otherwise", "or(answer.chosen.explains_necessity, true)", "Two and two don't just happen to make four. An answer has to say where that kind of certainty comes from.");
     seen(b, "It has to explain why we have to look", "or(answer.chosen.explains_observation, true)", "Nobody can work out from an armchair what the weather is. An answer has to say why finding out about the world takes observation.");
     for evidence in ["It has to explain why mathematics couldn't be otherwise", "It has to explain why we have to look"] {

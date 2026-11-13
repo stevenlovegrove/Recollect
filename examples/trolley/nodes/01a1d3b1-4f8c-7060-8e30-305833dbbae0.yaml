@@ -1,0 +1,12 @@
+id: 01a1d3b1-4f8c-7060-8e30-305833dbbae0
+components:
+- decision
+- notes
+- options
+- uncertain
+cells:
+  body: A principle. What matters is how things turn out, and five deaths are worse than one.
+  name: Do what saves the most lives
+  options:
+  - accept
+  - reject

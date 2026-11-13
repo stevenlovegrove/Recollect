@@ -1,0 +1,30 @@
+id: 01a1d3b1-4f83-750f-9f56-e752da866d95
+components:
+- notes
+- value
+cells:
+  body: 'Keeps both determinism and freedom, and so gives up the step between them: an act can be inevitable and still be yours, if it comes from what you want.'
+  name: Compatibilism
+formulas:
+  value: settled.chosen.value = "accept" && past.chosen.value = "accept" && transfer.chosen.value = "reject" && free.chosen.value = "accept"
+links:
+- to: 01a1d3b1-4f83-750f-9f56-e749d05dfca1
+  components:
+  - label
+  cells:
+    called: settled
+- to: 01a1d3b1-4f83-750f-9f56-e74ae43e80cd
+  components:
+  - label
+  cells:
+    called: past
+- to: 01a1d3b1-4f83-750f-9f56-e74b884e5ba3
+  components:
+  - label
+  cells:
+    called: transfer
+- to: 01a1d3b1-4f83-750f-9f56-e74cf0f0ec55
+  components:
+  - label
+  cells:
+    called: free

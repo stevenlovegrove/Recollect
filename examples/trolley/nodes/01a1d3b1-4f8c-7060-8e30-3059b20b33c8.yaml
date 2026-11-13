@@ -1,0 +1,12 @@
+id: 01a1d3b1-4f8c-7060-8e30-3059b20b33c8
+components:
+- decision
+- notes
+- options
+- uncertain
+cells:
+  body: A principle. Some things you may not do, and killing someone is one of them, even to stop more deaths that you wouldn't be the one causing.
+  name: Never kill, whatever it prevents
+  options:
+  - accept
+  - reject

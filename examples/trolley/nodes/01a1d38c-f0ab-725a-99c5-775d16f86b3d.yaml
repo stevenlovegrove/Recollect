@@ -1,7 +1,0 @@
-id: 01a1d38c-f0ab-725a-99c5-775d16f86b3d
-components:
-- notes
-cells:
-  body: 'You''re on a footbridge beside a large man. Pushing him onto the track would stop the trolley. His body is what stops it: without him there, the five would die.'
-  name: Case[Footbridge]
-  uses_someone: true

@@ -1,0 +1,12 @@
+id: 01a1d3b1-4f83-750f-9f56-e74cf0f0ec55
+components:
+- decision
+- notes
+- options
+- uncertain
+cells:
+  body: 'A premise: what it feels like from the inside, and what blame and praise assume. At least some of what we do is up to us.'
+  name: We act freely
+  options:
+  - accept
+  - reject

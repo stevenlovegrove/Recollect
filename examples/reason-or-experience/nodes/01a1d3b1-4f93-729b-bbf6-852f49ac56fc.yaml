@@ -1,0 +1,20 @@
+id: 01a1d3b1-4f93-729b-bbf6-852f49ac56fc
+components:
+- notes
+cells:
+  body: The antithesis. The mind starts empty, and everything in it comes through the senses. That explains why we have to look. It also says experience accounts for mathematics, which stands unless the objection to that is accepted.
+  explains_observation: true
+  name: From experience alone
+formulas:
+  explains_necessity: objection.chosen.value = "reject"
+links:
+- to: 01a1d3b1-4f93-729b-bbf6-852b795053d6
+  components:
+  - alternative
+  cells:
+    weight: 2.0
+- to: 01a1d3b1-4f93-729b-bbf6-852c52ad1535
+  components:
+  - label
+  cells:
+    called: objection

@@ -1,0 +1,25 @@
+id: 01a1d3b1-4f83-750f-9f56-e74e37508bcd
+components:
+- notes
+- value
+cells:
+  body: 'The second step. What you do follows from the past and the laws, those aren''t up to you, and what follows from what isn''t up to you isn''t up to you either. It holds exactly when all three do: reject any one, and the argument doesn''t reach this.'
+  name: What you do isn't up to you
+formulas:
+  value: follows && past.chosen.value = "accept" && transfer.chosen.value = "accept"
+links:
+- to: 01a1d3b1-4f83-750f-9f56-e74ae43e80cd
+  components:
+  - label
+  cells:
+    called: past
+- to: 01a1d3b1-4f83-750f-9f56-e74b884e5ba3
+  components:
+  - label
+  cells:
+    called: transfer
+- to: 01a1d3b1-4f83-750f-9f56-e74d36c587b7
+  components:
+  - label
+  cells:
+    called: follows

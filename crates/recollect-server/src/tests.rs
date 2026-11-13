@@ -428,22 +428,28 @@ async fn the_philosophy_samples_leave_what_their_arguments_say() {
     let prob = |v: &Value, name: &str, c: &str| cell(v, name, c)["shown"]["prob"].as_f64().unwrap_or_else(|| panic!("{name}: {}", cell(v, name, c)));
     let near = |a: f64, b: f64| assert!((a - b).abs() < 1e-9, "{a} not {b}");
 
-    // Free will: of the eight ways to take three claims, only accepting all three is out, and each named
-    // position is one of the seven left.
+    // Free will: nothing says the four premises conflict. The steps do, so of the sixteen ways to take
+    // them only accepting all four is out, and each named position is one of the fifteen left.
     c.open("free-will").await;
     let v = c.view(json!({})).await;
-    let (settled, unfree, free) = ("Everything that happens is settled by what came before", "An act that was settled beforehand isn't free", "We act freely");
-    assert_eq!(v["worlds"]["count"], "7");
+    let (settled, past, transfer, free) = ("Everything that happens is settled by what came before", "The past and the laws of nature aren't up to you", "What follows from things that aren't up to you isn't up to you either", "We act freely");
+    assert_eq!(v["worlds"]["count"], "15");
     for position in ["Hard determinism", "Libertarianism", "Compatibilism"] {
-        near(prob(&v, position, "value"), 1.0 / 7.0);
+        near(prob(&v, position, "value"), 1.0 / 15.0);
     }
-    // Accept any two, and the third is rejected, which is one of the positions.
-    let hard = c.view(pin(&v, &[(settled, "accept"), (unfree, "accept")])).await;
+    // Accept the argument's three premises, and its conclusion holds and freedom goes.
+    let hard = c.view(pin(&v, &[(settled, "accept"), (past, "accept"), (transfer, "accept")])).await;
+    near(prob(&hard, "What you do isn't up to you", "value"), 1.0);
     near(chance(&hard, free, "reject"), 1.0);
     near(prob(&hard, "Hard determinism", "value"), 1.0);
-    let compatible = c.view(pin(&v, &[(settled, "accept"), (free, "accept")])).await;
-    near(chance(&compatible, unfree, "reject"), 1.0);
+    // Keep determinism and freedom, and it's the step between them that has to go.
+    let compatible = c.view(pin(&v, &[(settled, "accept"), (past, "accept"), (free, "accept")])).await;
+    near(chance(&compatible, transfer, "reject"), 1.0);
     near(prob(&compatible, "Compatibilism", "value"), 1.0);
+    // Reject a premise, and the argument doesn't reach its conclusion, so freedom is left open.
+    let open = c.view(pin(&v, &[(settled, "reject")])).await;
+    near(prob(&open, "What you do isn't up to you", "value"), 0.0);
+    near(chance(&open, free, "accept"), 0.5);
 
     // The trolley: the two judgements leave one set of principles, and it forbids the loop.
     c.open("trolley").await;
@@ -453,17 +459,29 @@ async fn the_philosophy_samples_leave_what_their_arguments_say() {
     near(chance(&v, "Never kill, whatever it prevents", "reject"), 1.0);
     near(chance(&v, "Never use a person merely as a means", "accept"), 1.0);
     near(prob(&v, "You may send it round the loop", "value"), 0.0);
+    // Whether a case uses someone isn't put in: it's whether the five are saved only because they're there.
+    let uses = |case: &str| cell(&v, case, "uses_someone")["shown"]["always"].clone();
+    assert_eq!((uses("Case[Switch]"), uses("Case[Footbridge]"), uses("Case[Loop]")), (json!(false), json!(true), json!(true)), "{}", cell(&v, "Case[Switch]", "uses_someone"));
     // Insist the loop is all right too, by giving up the principle that forbids it, and nothing fits.
     let stuck = c.view(pin(&v, &[("Never use a person merely as a means", "reject")])).await;
     assert_eq!(stuck["worlds"]["count"], "0");
 
-    // Reason or experience: each explains what the other can't, so only the answer nobody has named is left.
+    // Reason or experience: each answer stands until the objection to it is accepted, so with the
+    // objections open the three are as likely as each other, and with both accepted only the gap is left.
     c.open("reason-or-experience").await;
     let v = c.view(json!({})).await;
     let answer = "Where does knowledge come from?";
-    near(chance(&v, answer, "From reason alone"), 0.0);
-    near(chance(&v, answer, "From experience alone"), 0.0);
-    near(chance(&v, answer, "Something else"), 1.0);
+    let (must, look) = ("Experience only says what has happened, never what must", "Thinking alone never tells you what is in the next room");
+    for a in ["From reason alone", "From experience alone", "Something else"] {
+        near(chance(&v, answer, a), 1.0 / 3.0);
+    }
+    let one = c.view(pin(&v, &[(must, "accept")])).await;
+    near(chance(&one, answer, "From experience alone"), 0.0);
+    near(chance(&one, answer, "From reason alone"), 0.5);
+    let both = c.view(pin(&v, &[(must, "accept"), (look, "accept")])).await;
+    near(chance(&both, answer, "From reason alone"), 0.0);
+    near(chance(&both, answer, "From experience alone"), 0.0);
+    near(chance(&both, answer, "Something else"), 1.0);
 }
 
 #[tokio::test]
