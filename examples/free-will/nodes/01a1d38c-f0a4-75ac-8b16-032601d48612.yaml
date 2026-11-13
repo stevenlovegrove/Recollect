@@ -1,0 +1,12 @@
+id: 01a1d38c-f0a4-75ac-8b16-032601d48612
+components:
+- decision
+- notes
+- options
+- uncertain
+cells:
+  body: Incompatibilism. If what you'd do was already settled before you were born, you couldn't have done otherwise, and so it wasn't up to you.
+  name: An act that was settled beforehand isn't free
+  options:
+  - accept
+  - reject

@@ -1,0 +1,12 @@
+id: 01a1d38c-f0ab-725a-99c5-775a7afec992
+components:
+- decision
+- notes
+- options
+- uncertain
+cells:
+  body: 'You may not treat a person as a tool: it''s one thing for someone to die as a side effect of what you do, and another for their death to be how you do it.'
+  name: Never use a person merely as a means
+  options:
+  - accept
+  - reject

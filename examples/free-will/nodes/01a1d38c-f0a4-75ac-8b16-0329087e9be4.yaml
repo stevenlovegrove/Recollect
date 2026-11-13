@@ -1,0 +1,25 @@
+id: 01a1d38c-f0a4-75ac-8b16-0329087e9be4
+components:
+- notes
+- value
+cells:
+  body: 'Gives up free will: everything is settled, that rules freedom out, so we aren''t free.'
+  name: Hard determinism
+formulas:
+  value: settled.chosen.value = "accept" && unfree.chosen.value = "accept" && free.chosen.value = "reject"
+links:
+- to: 01a1d38c-f0a4-75ac-8b16-032533a30b1f
+  components:
+  - label
+  cells:
+    called: settled
+- to: 01a1d38c-f0a4-75ac-8b16-032601d48612
+  components:
+  - label
+  cells:
+    called: unfree
+- to: 01a1d38c-f0a4-75ac-8b16-03274a211351
+  components:
+  - label
+  cells:
+    called: free

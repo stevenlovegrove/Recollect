@@ -6,6 +6,7 @@ const GROUPS: { title: string; group: string; about: string }[] = [
   { title: "Plans", group: "plan", about: "Work, decisions held open, and what can safely start" },
   { title: "Spreadsheets", group: "sheet", about: "Numbers and formulas, including numbers that differ between worlds" },
   { title: "Reasoning", group: "reasoning", about: "What's uncertain, how likely each way is, and what's worth finding out" },
+  { title: "Philosophy", group: "philosophy", about: "Claims that can't all hold, and which of them the arguments leave standing" },
   { title: "Puzzles", group: "puzzle", about: "Choices and constraints, whose solutions are the worlds left over" },
 ];
 

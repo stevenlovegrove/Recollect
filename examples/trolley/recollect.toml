@@ -1,0 +1,3 @@
+name = "The trolley problem"
+about = "A runaway trolley will kill five people. In one case you can pull a switch to send it down a side track, where it will kill one. In another you can only stop it by pushing a man off a footbridge into its path. Most people say pulling the switch is all right and pushing the man is not, though five are saved at the cost of one either way. Here three moral principles are each accepted or rejected, what they permit in each case follows by one rule, and those two common judgements go in as evidence. What's left are the principles that fit your judgements, and they settle a third case, the loop, in a way you may not like. That back and forth between principles and cases is what philosophers call reflective equilibrium."
+systems = ["plan"]

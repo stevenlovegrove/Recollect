@@ -1,0 +1,10 @@
+id: 01a1d38c-f0ab-725a-99c5-7760b2734cb1
+components:
+- notes
+- requires
+- value
+cells:
+  body: 'Also what most people say, and it''s what makes this a problem: the numbers are the same as for the switch.'
+  name: You may not push the man
+formulas:
+  value: '!Case[Footbridge].permitted'

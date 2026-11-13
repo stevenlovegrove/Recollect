@@ -1,0 +1,8 @@
+id: 01a1d38c-f0b1-72ac-8d84-4255c723d6ee
+components:
+- decision
+- notes
+- uncertain
+cells:
+  body: 'Not yours to choose: one answer is right. Each answer says what it can explain, and what any answer has to explain is put in as evidence.'
+  name: Where does knowledge come from?

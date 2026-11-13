@@ -417,6 +417,55 @@ async fn the_classic_problems_have_their_known_answers() {
     assert_eq!(v["worlds"]["count"], "240");
 }
 
+/// The philosophy samples: what each argument leaves standing.
+#[tokio::test]
+async fn the_philosophy_samples_leave_what_their_arguments_say() {
+    let c = Client::new();
+    let var = |v: &Value, name: &str| v["worlds"]["vars"].as_array().unwrap().iter().find(|x| x["name"] == name).unwrap_or_else(|| panic!("no {name}")).clone();
+    let option = |v: &Value, q: &str, o: &str| var(v, q)["options"].as_array().unwrap().iter().find(|x| x["name"] == o).unwrap_or_else(|| panic!("no {o}")).clone();
+    let chance = |v: &Value, q: &str, o: &str| option(v, q, o)["chance"].as_f64().unwrap();
+    let pin = |v: &Value, picks: &[(&str, &str)]| Value::Object(picks.iter().map(|(q, o)| (var(v, q)["id"].as_str().unwrap().to_string(), option(v, q, o)["id"].clone())).collect());
+    let prob = |v: &Value, name: &str, c: &str| cell(v, name, c)["shown"]["prob"].as_f64().unwrap_or_else(|| panic!("{name}: {}", cell(v, name, c)));
+    let near = |a: f64, b: f64| assert!((a - b).abs() < 1e-9, "{a} not {b}");
+
+    // Free will: of the eight ways to take three claims, only accepting all three is out, and each named
+    // position is one of the seven left.
+    c.open("free-will").await;
+    let v = c.view(json!({})).await;
+    let (settled, unfree, free) = ("Everything that happens is settled by what came before", "An act that was settled beforehand isn't free", "We act freely");
+    assert_eq!(v["worlds"]["count"], "7");
+    for position in ["Hard determinism", "Libertarianism", "Compatibilism"] {
+        near(prob(&v, position, "value"), 1.0 / 7.0);
+    }
+    // Accept any two, and the third is rejected, which is one of the positions.
+    let hard = c.view(pin(&v, &[(settled, "accept"), (unfree, "accept")])).await;
+    near(chance(&hard, free, "reject"), 1.0);
+    near(prob(&hard, "Hard determinism", "value"), 1.0);
+    let compatible = c.view(pin(&v, &[(settled, "accept"), (free, "accept")])).await;
+    near(chance(&compatible, unfree, "reject"), 1.0);
+    near(prob(&compatible, "Compatibilism", "value"), 1.0);
+
+    // The trolley: the two judgements leave one set of principles, and it forbids the loop.
+    c.open("trolley").await;
+    let v = c.view(json!({})).await;
+    assert_eq!(v["worlds"]["count"], "1");
+    near(chance(&v, "Do what saves the most lives", "accept"), 1.0);
+    near(chance(&v, "Never kill, whatever it prevents", "reject"), 1.0);
+    near(chance(&v, "Never use a person merely as a means", "accept"), 1.0);
+    near(prob(&v, "You may send it round the loop", "value"), 0.0);
+    // Insist the loop is all right too, by giving up the principle that forbids it, and nothing fits.
+    let stuck = c.view(pin(&v, &[("Never use a person merely as a means", "reject")])).await;
+    assert_eq!(stuck["worlds"]["count"], "0");
+
+    // Reason or experience: each explains what the other can't, so only the answer nobody has named is left.
+    c.open("reason-or-experience").await;
+    let v = c.view(json!({})).await;
+    let answer = "Where does knowledge come from?";
+    near(chance(&v, answer, "From reason alone"), 0.0);
+    near(chance(&v, answer, "From experience alone"), 0.0);
+    near(chance(&v, answer, "Something else"), 1.0);
+}
+
 #[tokio::test]
 async fn the_plan_answers_where_work_stands_and_what_decisions_need() {
     let c = Client::new();

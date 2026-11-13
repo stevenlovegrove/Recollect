@@ -1,0 +1,10 @@
+id: 01a1d38c-f0ab-725a-99c5-775f59b82d9f
+components:
+- notes
+- requires
+- value
+cells:
+  body: What most people say. It rules out any set of principles that forbids it.
+  name: You may pull the switch
+formulas:
+  value: Case[Switch].permitted

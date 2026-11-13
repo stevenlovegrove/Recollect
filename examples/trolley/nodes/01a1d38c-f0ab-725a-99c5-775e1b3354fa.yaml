@@ -1,0 +1,7 @@
+id: 01a1d38c-f0ab-725a-99c5-775e1b3354fa
+components:
+- notes
+cells:
+  body: As the switch, except the side track loops back to the main one. The trolley would come round and kill the five, but the one person on the loop is heavy enough to stop it. So this time their body is what saves the five.
+  name: Case[Loop]
+  uses_someone: true

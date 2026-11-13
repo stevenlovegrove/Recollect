@@ -1,0 +1,24 @@
+id: 01a1d38c-f0ab-725a-99c5-775bc55b068b
+components:
+- notes
+cells:
+  body: Each case says whether stopping the trolley uses the one who dies as the means of stopping it. Whether you may act follows from that and from the three principles, by the same rule for every case.
+  name: Case
+formulas:
+  permitted: save.chosen.value = "accept" && kill.chosen.value = "reject" && !(means.chosen.value = "accept" && self.uses_someone)
+links:
+- to: 01a1d38c-f0ab-725a-99c5-7758261b39be
+  components:
+  - label
+  cells:
+    called: save
+- to: 01a1d38c-f0ab-725a-99c5-77591d3942c0
+  components:
+  - label
+  cells:
+    called: kill
+- to: 01a1d38c-f0ab-725a-99c5-775a7afec992
+  components:
+  - label
+  cells:
+    called: means

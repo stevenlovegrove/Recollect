@@ -1,0 +1,7 @@
+id: 01a1d38c-f0ab-725a-99c5-775ce94b6b04
+components:
+- notes
+cells:
+  body: 'You can pull a switch to send the trolley down a side track, where one person is standing. They die because they happen to be there: if the side track were empty, the five would be saved just the same.'
+  name: Case[Switch]
+  uses_someone: false

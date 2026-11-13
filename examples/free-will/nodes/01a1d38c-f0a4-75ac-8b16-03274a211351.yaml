@@ -1,0 +1,12 @@
+id: 01a1d38c-f0a4-75ac-8b16-03274a211351
+components:
+- decision
+- notes
+- options
+- uncertain
+cells:
+  body: 'What it feels like from the inside, and what blame and praise seem to assume: at least some of what we do is up to us.'
+  name: We act freely
+  options:
+  - accept
+  - reject
