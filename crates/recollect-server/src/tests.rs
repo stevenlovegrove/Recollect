@@ -399,7 +399,8 @@ async fn the_classic_problems_have_their_known_answers() {
     c.open("two-children").await;
     let v = c.view(json!({})).await;
     near(prob(&v, "Both are boys"), 1.0 / 3.0);
-    let pinned = c.view(json!({ var(&v, "The elder")["id"].as_str().unwrap(): id(&v, "The elder is a boy") })).await;
+    let boy = var(&v, "The elder")["options"].as_array().unwrap().iter().find(|o| o["name"] == "boy").unwrap()["id"].clone();
+    let pinned = c.view(json!({ var(&v, "The elder")["id"].as_str().unwrap(): boy })).await;
     near(prob(&pinned, "Both are boys"), 0.5);
 
     // Socks: three different socks can't come from two pairs, and are likelier from four than from three.

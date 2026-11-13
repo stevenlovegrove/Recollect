@@ -1,4 +1,4 @@
-id: 01a1d191-085a-771c-b8e2-32ffbf1dfd53
+id: 01a1d2c4-c5d7-75ca-9d93-429472549bbf
 components:
 - notes
 - requires
@@ -7,14 +7,14 @@ cells:
   body: This rules out only two girls. Of the three families left, boy and boy, boy and girl, girl and boy, one has two boys.
   name: At least one is a boy
 formulas:
-  value: elder.chosen.boy || younger.chosen.boy
+  value: elder.chosen.value = "boy" || younger.chosen.value = "boy"
 links:
-- to: 01a1d191-085a-771c-b8e2-32f9496d0e53
+- to: 01a1d2c4-c5d7-75ca-9d93-42926c2e9590
   components:
   - label
   cells:
     called: elder
-- to: 01a1d191-085a-771c-b8e2-32fc38e535cd
+- to: 01a1d2c4-c5d7-75ca-9d93-429349e3dc10
   components:
   - label
   cells:

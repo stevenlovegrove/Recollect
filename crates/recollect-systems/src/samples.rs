@@ -42,7 +42,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "18";
+pub const FORMAT: &str = "19";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -578,11 +578,14 @@ fn bertrands_box(b: &mut Build) {
 }
 
 fn two_children(b: &mut Build) {
-    doubt(b, "The elder", "boy", &[("The elder is a boy", json!(true), 1.0), ("The elder is a girl", json!(false), 1.0)]);
-    doubt(b, "The younger", "boy", &[("The younger is a boy", json!(true), 1.0), ("The younger is a girl", json!(false), 1.0)]);
+    // Each child is one or the other, as likely as not, and neither answer has anything more to say, so
+    // each question lists them.
+    for child in ["The elder", "The younger"] {
+        b.add(child, DECISION).add(child, UNCERTAIN).set(child, OPTIONS, Options(vec!["boy".to_string(), "girl".to_string()]));
+    }
     let both = [("elder", "The elder"), ("younger", "The younger")];
-    seen(b, "At least one is a boy", "elder.chosen.boy || younger.chosen.boy", "This rules out only two girls. Of the three families left, boy and boy, boy and girl, girl and boy, one has two boys.");
-    b.formula("Both are boys", "elder.chosen.boy && younger.chosen.boy");
+    seen(b, "At least one is a boy", r#"elder.chosen.value = "boy" || younger.chosen.value = "boy""#, "This rules out only two girls. Of the three families left, boy and boy, boy and girl, girl and boy, one has two boys.");
+    b.formula("Both are boys", r#"elder.chosen.value = "boy" && younger.chosen.value = "boy""#);
     for (label, child) in both {
         b.label("At least one is a boy", child, label).label("Both are boys", child, label);
     }

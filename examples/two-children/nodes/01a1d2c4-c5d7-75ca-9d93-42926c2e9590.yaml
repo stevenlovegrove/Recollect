@@ -1,0 +1,10 @@
+id: 01a1d2c4-c5d7-75ca-9d93-42926c2e9590
+components:
+- decision
+- options
+- uncertain
+cells:
+  name: The elder
+  options:
+  - boy
+  - girl
