@@ -19,7 +19,7 @@ import ELK from "elkjs/lib/elk.bundled.js";
 import type { GraphNode } from "../api";
 import type { Workspace } from "../workspace";
 import { badgesOf, compColor, dominant, isDropped, isNote, label as labelOf, nodeColor } from "../theme";
-import { Brackets, CompBadges, edgeKey, edgeText, parseEdgeKey, reading } from "../bits";
+import { Brackets, CompBadges, beliefText, edgeKey, edgeText, parseEdgeKey, reading } from "../bits";
 import { type SummaryLine, summaryOf } from "../summary";
 import { DdItem, Dropdown } from "../Dropdown";
 import { Key, isTyping } from "../Shortcuts";
@@ -39,6 +39,17 @@ type Filter = string;
 
 function nodeHeight(n: GraphNode) {
   return 50 + Math.ceil(n.name.length / 29) * 17;
+}
+
+/** How much taller a card is for the options drawn on it, which wrap onto as many rows as they need. */
+function optionsHeight(options: { name: string; chance: number | null }[]) {
+  let [rows, used] = [options.length ? 1 : 0, 0];
+  for (const o of options) {
+    const w = 14 + 5.5 * (o.name.length + (o.chance === null ? 0 : 4)) + 4;
+    if (used + w > W - 22 && used > 0) [rows, used] = [rows + 1, 0];
+    used += w;
+  }
+  return rows ? rows * 22 + 22 : 0;
 }
 
 /** Which way a map reads: what comes first goes at the top, or on the left. */
@@ -63,10 +74,16 @@ type CardData = {
   /** The names of what it's a kind of. */
   kinds: string[];
   title: string;
+  /** For a question whose options are drawn on it rather than as cards: each, to pin. */
+  options: { choice: string; id: string; name: string; chance: number | null; picked: boolean; possible: boolean }[];
+  /** The names of its parts that aren't drawn as cards. */
+  holds: string[];
 };
 
 function Card({ data }: NodeProps<RFNode<CardData>>) {
-  const { node, direction, selected, recent, dim, entering, leaving, linking, out, lines, kinds } = data;
+  const { node, direction, selected, recent, dim, entering, leaving, linking, out, kinds, options, holds } = data;
+  // The options say how each is believed and what it could land on, so those lines would say it twice.
+  const lines = options.length ? data.lines.filter((l) => l.name !== "belief" && l.name !== "chosen") : data.lines;
   return (
     <div
       className={["card", node.unwritten && "unwritten", isDropped(node) && "dead", out && "out", selected && "selected", recent && "recent", dim && "dim", entering && "entering", leaving && "leaving", linking && "linking"].filter(Boolean).join(" ")}
@@ -92,6 +109,29 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
           <span className="card-foot-k" title={`${l.about ? `${l.about}. ` : ""}${labelOf(l.name)}: ${l.text.length > 400 ? `${l.text.slice(0, 400)}…` : l.text}`}>{labelOf(l.name)}</span> <span className="card-foot-v"><Brackets text={l.text} /></span>
         </div>
       ))}
+      {options.length > 0 && (
+        <div className="card-opts nodrag nopan">
+          {options.map((o) => (
+            <button
+              key={o.id}
+              className={`card-opt ${o.picked ? "picked" : ""} ${o.possible ? "" : "gone"}`}
+              title={o.picked ? `Pinned to ${o.name}. Click to unpin` : `See everything as if it were ${o.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                data.ws.pin(o.choice, o.picked ? null : o.id);
+              }}
+            >
+              {o.name}
+              {o.chance !== null && <span className="muted"> {beliefText(o.chance)}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+      {holds.length > 0 && (
+        <div className="card-foot">
+          <span className="card-foot-k">Has</span> <span className="card-foot-v">{holds.join(", ")}</span>
+        </div>
+      )}
       <Handle type="target" position={direction === "down" ? Position.Bottom : Position.Right} />
     </div>
   );
@@ -189,7 +229,7 @@ const FIT_MS = 450;
 const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
 /** How this map is laid out, per workspace and per browser. It's fine if it can't be remembered. */
-type LayoutPref = { direction: Direction; layoutBy: Record<string, boolean> };
+type LayoutPref = { direction: Direction; layoutBy: Record<string, boolean>; /** Draw an option of several questions on each of them, not as a card. */ fold?: boolean };
 
 function loadLayoutPref(dir: string): LayoutPref {
   try {
@@ -361,6 +401,32 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
     refit.current = true;
   };
   const refit = useRef(false);
+  // An option of several questions, with nothing to say but what it's an option or a part of, would be a
+  // card with a line to each of them, and the lines would be most of the map. It's drawn on each instead.
+  const folded = useMemo(() => {
+    const out = new Set<string>();
+    if (layoutPref.fold === false) return out;
+    const into = new Set(g.edges.map((e) => e.to));
+    const from = new Map<string, typeof g.edges>();
+    for (const e of g.edges) from.set(e.from, [...(from.get(e.from) ?? []), e]);
+    const asked = new Set(g.worlds.vars.map((v) => v.id));
+    for (const [id, edges] of from) {
+      const plain = edges.every((e) => e.components.every((c) => c === "alternative" || c === "part_of"));
+      if (plain && !into.has(id) && !asked.has(id) && edges.filter((e) => e.components.includes("alternative")).length > 1) out.add(id);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [g.edges, g.worlds.vars, layoutPref.fold]);
+  // The options each question has drawn on it, where any of them isn't a card.
+  const cardOptions = useMemo(() => {
+    const out = new Map<string, CardData["options"]>();
+    const short = (o: string, name: string) => String(ws.byId.get(o)?.row?.key ?? name);
+    for (const asked of g.worlds.vars)
+      if (asked.options.some((o) => folded.has(o.id)))
+        out.set(asked.id, asked.options.map((o) => ({ choice: asked.id, id: o.id, name: short(o.id, o.name), chance: asked.uncertain ? o.chance : null, picked: o.picked, possible: o.possible })));
+    return out;
+  }, [g.worlds.vars, folded, ws.byId]);
+  const cardHeight = (n: GraphNode) => nodeHeight(n) + optionsHeight(cardOptions.get(n.id) ?? []);
   const updateNodeInternals = useUpdateNodeInternals();
   const [showDead, setShowDead] = useState(false);
   const [focus, setFocus] = useState(0);
@@ -638,7 +704,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
 
   // A node is shown if any of its facts (or "none") is enabled.
   const visible = useMemo(() => {
-    let ids = new Set(g.nodes.filter((n) => !standsFor.has(n.id) || standsFor.get(n.id) === n.id).filter((n) => (showDead || !isDropped(n)) && factsFor(n).some((c) => !hiddenFacts.has(c))).map((n) => n.id));
+    let ids = new Set(g.nodes.filter((n) => !folded.has(n.id) && (!standsFor.has(n.id) || standsFor.get(n.id) === n.id)).filter((n) => (showDead || !isDropped(n)) && factsFor(n).some((c) => !hiddenFacts.has(c))).map((n) => n.id));
     if (focus > 0 && selectedNode && ids.has(selectedNode)) {
       const near = new Set([selectedNode]);
       let frontier = [selectedNode];
@@ -658,7 +724,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
       ids = near;
     }
     return ids;
-  }, [g.nodes, links, standsFor, hiddenFacts, showDead, focus, selectedNode]);
+  }, [g.nodes, links, standsFor, folded, hiddenFacts, showDead, focus, selectedNode]);
 
   const q = query.trim().toLowerCase();
   const matches = (n: GraphNode) => !q || `${n.id} ${n.name}`.toLowerCase().includes(q);
@@ -720,7 +786,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
       JSON.stringify([
         [...visible].sort(),
         layoutEdges.map((e) => [e.from, e.to, e.kind]),
-        g.nodes.filter((n) => visible.has(n.id)).map((n) => [n.name.length, badgesOf(n).length]),
+        g.nodes.filter((n) => visible.has(n.id)).map((n) => [n.name.length, badgesOf(n).length, cardOptions.get(n.id)?.length ?? 0]),
         layoutPref.direction,
       ]),
     [visible, layoutEdges, g.nodes, layoutPref.direction],
@@ -742,7 +808,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
           "elk.separateConnectedComponents": "true",
           "elk.spacing.componentComponent": "60",
         },
-        children: nodes.map((n) => ({ id: n.id, width: W, height: nodeHeight(n) })),
+        children: nodes.map((n) => ({ id: n.id, width: W, height: cardHeight(n) })),
         edges: layoutEdges.map((e, i) => {
           const { parent, child } = ws.info(e.kind)?.reversed ? { parent: e.from, child: e.to } : { parent: e.to, child: e.from };
           return { id: `s${i}`, sources: [child], targets: [parent] };
@@ -862,7 +928,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
             selectable: !gone,
             // Known sizes up front: lets the minimap draw before React Flow measures.
             initialWidth: W,
-            initialHeight: nodeHeight(node),
+            initialHeight: cardHeight(node),
             selected: id === selected,
             data: {
               ws,
@@ -878,6 +944,8 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
               lines: summaryOf(ws, node),
               // A row is called by its key, under the tables it's in.
               title: node.row ? String(node.row.key) : node.name,
+              options: cardOptions.get(id) ?? [],
+              holds: ws.view!.edges.filter((l) => l.to === id && l.components.includes("part_of") && folded.has(l.from)).map((l) => ws.byId.get(l.from)?.name ?? ""),
               kinds: [
                 ...[node, ...(node.parts ?? []).flatMap((p) => ws.byId.get(p) ?? [])].flatMap((n) => (n.row ? [n.row.table] : [])),
                 ...ws.view!.edges.filter((l) => l.from === id && l.components.includes("is_a")).map((l) => ws.byId.get(l.to)?.name ?? ""),
@@ -888,7 +956,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
           };
         }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [layout, pos, ws.byId, ws.recent, selected, q, linkDrag?.from, linkDrag?.over, layoutPref.direction],
+    [layout, pos, ws.byId, ws.recent, selected, q, linkDrag?.from, linkDrag?.over, layoutPref.direction, folded, cardOptions],
   );
 
   const rfEdges: RFEdge[] = useMemo(
@@ -1133,6 +1201,14 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
                 onClick={() => setLayoutPref({ ...layoutPref, direction: layoutPref.direction === "down" ? "right" : "down" })}
               >
                 {layoutPref.direction === "down" ? "↓" : "→"}
+              </ControlButton>
+              <ControlButton
+                className={layoutPref.fold === false ? "mini-toggle" : "mini-toggle on"}
+                title={layoutPref.fold === false ? "Options of several questions are cards. Click to draw them on each question instead" : "Options of several questions are drawn on each question. Click to draw them as cards"}
+                aria-pressed={layoutPref.fold !== false}
+                onClick={() => setLayoutPref({ ...layoutPref, fold: layoutPref.fold === false })}
+              >
+                ⋯
               </ControlButton>
               <ControlButton
                 className={mini.open ? "mini-toggle on" : "mini-toggle"}

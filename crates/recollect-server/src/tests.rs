@@ -332,6 +332,15 @@ async fn the_classic_problems_have_their_known_answers() {
     assert_eq!(v["worlds"]["count"], "24");
     near(prob(&c.view(pin(&v, &[(choice, "Stick")])).await, "You win the car"), 1.0 / 3.0);
     near(prob(&c.view(pin(&v, &[(choice, "Switch")])).await, "You win the car"), 2.0 / 3.0);
+    // Which door you pick is yours too, so there's no one chance of winning, but there is one for each way
+    // your choices could go: a third to two thirds, and two thirds whichever door once you switch.
+    let over = |v: &Value| (cell(v, "You win the car", "value")["over"]["low"].as_f64().unwrap(), cell(v, "You win the car", "value")["over"]["high"].as_f64().unwrap());
+    let (low, high) = over(&v);
+    near(low, 1.0 / 3.0);
+    near(high, 2.0 / 3.0);
+    let (low, high) = over(&c.view(pin(&v, &[(choice, "Switch")])).await);
+    near(low, 2.0 / 3.0);
+    near(high, 2.0 / 3.0);
     // Whichever door you pick, and before Monty moves, the car is as likely behind each.
     for mine in 1..=3 {
         let mine_name = format!("Door[{mine}]");

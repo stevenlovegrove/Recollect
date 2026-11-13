@@ -461,8 +461,8 @@ pub fn install(reg: &mut Registry) {
         .default_formula(WEIGHT)
         .initial(json!(1.0));
     reg.cell::<RuledOut>(ALTERNATIVE, "That this option has been ruled out, and why.").initial(json!(true));
-    reg.edge(WITHIN, "Only the options that are part of whatever that choice lands on are options here, so this comes after it.").arranges().source_has(NARROWED).target_has(CHOICE);
-    reg.edge(EXCLUDES, "Whatever that choice lands on isn't an option here, so this comes after it.").arranges().source_has(NARROWED).target_has(CHOICE);
+    reg.edge(WITHIN, "Only the options that are part of whatever that choice lands on are options here, so this comes after it.").arranges().reversed().source_has(NARROWED).target_has(CHOICE);
+    reg.edge(EXCLUDES, "Whatever that choice lands on isn't an option here, so this comes after it.").arranges().reversed().source_has(NARROWED).target_has(CHOICE);
     reg.edge(DEPENDS_ON, "Waits for that.").orders().source_has(PART).target_has(PART);
     reg.cell::<WaitFor>(DEPENDS_ON, "What it waits for: that to be done, or decided.").default_value(WaitFor::Done);
 

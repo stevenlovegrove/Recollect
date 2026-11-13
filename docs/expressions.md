@@ -425,7 +425,7 @@ Which door is left?           one of the same three, excludes yours and Monty's
 
 - **Each world normalises over what's left.** With the car behind your door, Monty has two doors at a half each. Otherwise he has one, and it's certain. The weights on the options are what they were: an option's chance is its weight out of the weights of what's left. Under the surface, each set of options that can be left has a variable of its own.
 - **It isn't the same as a `requires`.** A rule saying "the door he opens isn't yours or the car's" keeps two worlds when the car is behind your door and one when it isn't, so it would make the car twice as likely to be behind your door as it should be, which is the famous wrong answer. A constraint rules out worlds; `excludes` says what there is to choose from.
-- **It's what orders them.** A question comes after the ones it leaves out, and a map puts it beneath them. Two that leave out each other are a loop, and reported as one.
+- **It's what orders them.** A question comes after the ones it leaves out, and a map puts it above them, as it puts a formula above what it reads: what comes first is at the bottom, and what follows from it above. Two that leave out each other are a loop, and reported as one.
 - **Pinning one is finding something out.** Pinning "Monty opens door 3" narrows to the worlds where that's what he does, which says something about the car. Settling it for good says the same, so a what-if and the real thing still can't disagree.
 - **With nothing left, it lands on nothing,** as a decision with no options does.
 
@@ -446,7 +446,9 @@ Stick or switch?   yours: Stick, which stands for your pick, or Switch, which st
 You win the car:   choice.chosen = car.chosen
 ```
 
-A formula reading `chosen` follows it, so `choice.chosen` is a door, and the comparison on the Decisions tab is still between Stick and Switch. `chose(choice, stick)` asks about the option itself.
+A formula reading `chosen` follows it, so `choice.chosen` is a door, and the comparison on the Decisions tab is still between Stick and Switch. Which door you pick is yours too, so there's no one chance of winning to give: averaging over a choice still to be made means nothing. There is one for each way your choices could go, so the comparison gives the least and the most of those, and where they're the same, as two thirds is for Switch whichever door you pick, it says that.
+
+On a map, an option of several questions that has nothing to say but what it's an option or a part of isn't a card: it's drawn on each question, to pin it there, so three doors asked about four times aren't twelve lines. `chose(choice, stick)` asks about the option itself.
 
 What this doesn't do:
 

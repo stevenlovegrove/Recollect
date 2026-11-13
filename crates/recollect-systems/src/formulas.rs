@@ -1339,7 +1339,7 @@ pub fn install(reg: &mut Registry) {
 
     // It reads as the nodes it could be, as `chosen` does, so what's read through it is known to be.
     reg.cell::<Lands>(CHOICE, "").builtin(lands).shown(|c| shown_val(&c.0.0)).internal();
-    reg.edge(STANDS_FOR, "This option is whatever that choice lands on: choosing it is choosing that.").target_has(CHOICE);
+    reg.edge(STANDS_FOR, "This option is whatever that choice lands on: choosing it is choosing that.").arranges().reversed().target_has(CHOICE);
 
     reg.component(OPTIONS, "A choice from a plain list, such as colours: each is a node with that name and value.").requires(CHOICE);
     reg.cell::<Options>(OPTIONS, "What it can land on.").initial(json!([]));

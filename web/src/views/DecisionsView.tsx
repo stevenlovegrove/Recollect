@@ -373,6 +373,16 @@ function Summary({ cell, vars }: { cell: Cell | undefined; vars: VarView[] }) {
   if (s?.kind === "bool") {
     if (s.always) return <span className="yes">✓</span>;
     if (s.never) return <span className="no">✕</span>;
+    // Over a choice still to be made there's no one chance, but there is one for each way it could go.
+    if (waiting && cell.over) {
+      const same = Math.abs(cell.over.high - cell.over.low) < 1e-9;
+      return (
+        <span title={s.when}>
+          ✓ <span className="muted small">{same ? pct(cell.over.low) : `${pct(cell.over.low)} to ${pct(cell.over.high)}`}</span>
+          <span className="range muted small">{same ? `whatever you choose for ${choices.map((v) => v.name).join(" and ")}` : waiting}</span>
+        </span>
+      );
+    }
     return (
       <span title={s.when}>
         {waiting ? <span className="muted small">{waiting}</span> : <>✓ <span className="muted small">{pct(s.prob)}</span></>}

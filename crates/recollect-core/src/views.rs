@@ -3,6 +3,7 @@
 //! consistent with those picks, worked out here by the same code, so a what-if and the real thing
 //! can't disagree.
 
+use std::cell::Cell as StdCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use recollect_graph::worlds::{Bool, Picks, Space, Var};
@@ -43,8 +44,18 @@ pub struct CellView {
     /// Whether it differs in any world at all, whatever's pinned or ruled out.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub varies: bool,
+    /// Where it differs over choices that are someone's to make: how likely it is, at the least and the
+    /// most, over the ways those could go. They aren't averaged over, since nobody rolls a die for them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub over: Option<Over>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Over {
+    pub low: f64,
+    pub high: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -374,7 +385,8 @@ fn cell_view(g: &Graph, e: Entity, c: &str, lens: &Lens, labels: &Labels, vars: 
         _ => None,
     };
     let beneath = g.kind_beneath(e, c);
-    let cell = |value, shown, open: Vec<String>, varies, error| CellView { source, kind, beneath, formula: formula.clone(), value, shown, vars: open, varies, error };
+    let over = StdCell::new(None);
+    let cell = |value, shown, open: Vec<String>, varies, error| CellView { source, kind, beneath, formula: formula.clone(), value, shown, vars: open, varies, over: over.take(), error };
     if let Some(shown) = shown_of(g, e, c) {
         return match shown {
             Ok(None) => None,
@@ -396,6 +408,9 @@ fn cell_view(g: &Graph, e: Entity, c: &str, lens: &Lens, labels: &Labels, vars: 
                 let mut open: Vec<String> = if settled(&narrowed, in_play) { Vec::new() } else { narrowed.vars().iter().map(Var::name).collect() };
                 open.sort();
                 open.dedup();
+                if !open.is_empty() {
+                    over.set(over_choices(g, &narrowed, in_play));
+                }
                 Some(cell(value, Some(show(&narrowed, labels, in_play)), open, !s.vars().is_empty(), None))
             }
         };
@@ -405,6 +420,29 @@ fn cell_view(g: &Graph, e: Entity, c: &str, lens: &Lens, labels: &Labels, vars: 
         Err(err) => Some(cell(None, None, Vec::new(), false, Some(labels.error(&err, g)))),
         Ok(Some(v)) => Some(cell(Some(v), None, Vec::new(), false, None)),
     }
+}
+
+/// How likely something is for each way the open choices it differs over could go, where those are
+/// someone's to make: the least and the most. Nothing, if it doesn't differ over any, or over too many.
+fn over_choices(g: &Graph, s: &Shown, in_play: &Bool) -> Option<Over> {
+    /// The most ways the choices could go that this looks at.
+    const MOST: usize = 64;
+    let Shown::Bool(b) = s else { return None };
+    let own = |v: &Var| v.name().parse::<Entity>().is_ok_and(|e| g.has(e, plan::DECISION) && !g.has(e, UNCERTAIN) && !g.has(e, plan::NARROWED));
+    let mut choices: Vec<Var> = b.vars().into_iter().filter(own).collect();
+    choices.sort_by_key(Var::name);
+    choices.dedup_by_key(|v| v.name());
+    if choices.is_empty() || choices.iter().map(|v| v.options().len()).product::<usize>() > MOST {
+        return None;
+    }
+    let mut ways = vec![in_play.clone()];
+    for v in &choices {
+        ways = ways.iter().flat_map(|w| v.options().into_iter().map(move |o| w & &v.is(&o))).collect();
+    }
+    let odds: Vec<f64> = ways.iter().filter(|w| w.prob() > 0.0).map(|w| (b & w).prob() / w.prob()).collect();
+    let low = odds.iter().copied().fold(f64::INFINITY, f64::min);
+    let high = odds.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    (!odds.is_empty()).then_some(Over { low, high })
 }
 
 /// Whether a cell is plumbing, which only makes sense to what reads it.

@@ -3521,3 +3521,34 @@ button.icon.act.revert:hover {
     min-width: 0;
   }
 }
+
+/* A question's options, drawn on its card: each pins it. */
+.card-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+.card-opt {
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.card-opt:hover {
+  border-color: var(--accent);
+}
+.card-opt.picked {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.card-opt.picked .muted {
+  color: inherit;
+}
+.card-opt.gone {
+  opacity: 0.4;
+}

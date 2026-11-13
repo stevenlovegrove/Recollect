@@ -31,6 +31,8 @@ export interface Cell {
   vars?: string[];
   /** Whether it differs in any world at all, whatever's pinned or ruled out. */
   varies?: boolean;
+  /** How likely it is, at the least and the most, over the ways the open choices that are yours could go. */
+  over?: { low: number; high: number };
   error?: string;
 }
 
