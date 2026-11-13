@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use serde::Serialize;
 use serde_json::json;
 
+use recollect_graph::chance::{self, Num, Reader, Share, Term};
 use recollect_graph::worlds::{Bool, Cond, Picks, Space, Worldly};
 use recollect_graph::{Cell, CellType, Cx, Entity, Error, Graph, Op, Registry, Severity, Shown, cell};
 
@@ -43,11 +44,11 @@ pub const DEPENDS_ON: &str = "depends_on";
 /// How long a task takes, in days. It can be typed in or worked out, so it can differ between worlds.
 /// `None` where a formula says that isn't known, which makes its dates unknowable.
 #[cell]
-pub struct Estimate(pub Worldly<Option<f64>>);
+pub struct Estimate(pub Worldly<Option<Num>>);
 
 impl Estimate {
     pub fn days(d: f64) -> Self {
-        Estimate(Worldly::plain(Some(d)))
+        Estimate(Worldly::plain(Some(Num::Plain(d))))
     }
 }
 
@@ -474,7 +475,7 @@ pub fn install(reg: &mut Registry) {
     reg.edge(PART_OF, "Part of that: all of a node's parts are needed.").arranges().source_has(PART).target_has(PART);
     reg.edge(ALTERNATIVE, "One of that decision's options.").arranges().source_has(OPTION).target_has(DECISION);
     reg.cell::<Weight>(ALTERNATIVE, "How far this option is believed, before any evidence, against the others.")
-        .compiles(compiler::<Weight>(Type::Number, |c| formulas::number_cases(c, "a weight").map(Weight)))
+        .compiles(compiler::<Weight>(Type::Number, |c| formulas::plain_number_cases(c, "a weight").map(Weight)))
         .default_formula(WEIGHT)
         .initial(json!(1.0));
     reg.cell::<RuledOut>(ALTERNATIVE, "That this option has been ruled out, and why.").initial(json!(true));
@@ -595,11 +596,32 @@ fn checks(reg: &mut Registry) {
     });
 
     reg.check(TASK, "oversized_task", Notice, |cx| {
-        let big = cx.own::<Estimate>()?.is_some_and(|e| !e.0.0.holds(|d| d.is_some_and(|d| d > 5.0)).is_never());
-        if !big || all_done(cx)? || !live_parts(cx)?.is_empty() {
+        let Some(estimate) = cx.own::<Estimate>()? else { return Ok(vec![]) };
+        let mut how_often: Option<chance::Chance> = None;
+        let mut big = false;
+        for (_, days) in estimate.0.0.cases() {
+            match days {
+                Some(Num::Plain(d)) => big |= *d > BIG_TASK,
+                // Whether an uncertain estimate is over is a matter of chance, unless it can't be.
+                Some(Num::Rand(r)) => match chance::bin(chance::Op::Lt, &Term::Num(BIG_TASK), &Term::Rand(*r)) {
+                    Term::Flag(over) => big |= over,
+                    over => {
+                        let c = Reader::new().chance(&[Share { weight: 1.0, value: over }]);
+                        if c.chance >= LIKELY_BIG && how_often.as_ref().is_none_or(|h| c.chance > h.chance) {
+                            how_often = Some(c);
+                        }
+                    }
+                },
+                None => {}
+            }
+        }
+        if !(big || how_often.is_some()) || all_done(cx)? || !live_parts(cx)?.is_empty() {
             return Ok(vec![]);
         }
-        Ok(vec!["a big task with no breakdown".to_string()])
+        Ok(vec![match how_often.filter(|_| !big) {
+            Some(c) => format!("a task with no breakdown that's big in about {:.0}% of {} draws", c.chance * 100.0, c.draws),
+            None => "a big task with no breakdown".to_string(),
+        }])
     });
 
     reg.check(PART, "dropped_part_of_live_work", Notice, |cx| {
@@ -992,11 +1014,34 @@ pub struct WorkItem {
     pub scope: Option<Blocker>,
 }
 
-fn estimate_text(c: &Cond<Option<f64>>) -> String {
-    let known: Vec<f64> = c.cases().iter().filter_map(|(_, d)| **d).collect();
-    let (low, high) = (known.iter().copied().fold(f64::INFINITY, f64::min), known.iter().copied().fold(f64::NEG_INFINITY, f64::max));
+/// How many days make a task big enough to want breaking down.
+const BIG_TASK: f64 = 5.0;
+/// How likely an uncertain estimate has to be to go over that before it's worth saying. A view should
+/// be able to say this, and can't yet: see `docs/distributions.md`.
+const LIKELY_BIG: f64 = 0.5;
+
+fn estimate_text(c: &Cond<Option<Num>>) -> String {
+    let mut reader = Reader::new();
+    let mut uncertain = false;
+    // An uncertain one reads as where it falls nine times in ten.
+    let known: Vec<(f64, f64)> = c
+        .cases()
+        .iter()
+        .filter_map(|(_, d)| match d {
+            None => None,
+            Some(Num::Plain(d)) => Some((*d, *d)),
+            Some(Num::Rand(r)) => {
+                uncertain = true;
+                let s = reader.summary(&[Share { weight: 1.0, value: Term::Rand(*r) }]);
+                Some((s.low, s.high))
+            }
+        })
+        .collect();
+    let (low, high) = (known.iter().map(|k| k.0).fold(f64::INFINITY, f64::min), known.iter().map(|k| k.1).fold(f64::NEG_INFINITY, f64::max));
     if known.is_empty() {
         "?".to_string()
+    } else if uncertain {
+        format!("about {} to {}", chance::figures(low), chance::figures(high))
     } else if low == high {
         low.to_string()
     } else {

@@ -1030,7 +1030,7 @@ fn remaining(cx: &Cx) -> Cell<Remaining> {
     let mut total = space.pure(0.0);
     for t in cx.scan(TASK) {
         let open = &cx.value::<Need>(t)?.0 & &cx.value::<Done>(t)?.open();
-        let days = cx.get::<Estimate>(t)?.map_or_else(|| space.pure(Some(0.0)), |e| e.0.0).map(|d| d.unwrap_or(0.0));
+        let days = cx.get::<Estimate>(t)?.map_or_else(|| space.pure(Some(0.0)), |e| e.0.0.plain()).map(|d| d.unwrap_or(0.0));
         let term = Cond::when(&open, &days, &space.pure(0.0));
         total = total.zip(&term, |a, b| a + b);
     }

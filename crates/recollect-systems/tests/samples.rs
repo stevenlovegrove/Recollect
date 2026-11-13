@@ -146,16 +146,16 @@ fn the_plan_samples_hold_their_decisions_open() {
     let show = |b: &Bool| b.show_with(&|s| names.get(s).cloned().unwrap_or_else(|| s.to_string()));
     assert_eq!(show(&o.get::<Need>("Lay out the pages").0), "How do we publish it?∈{As a printed booklet,As a PDF}");
     assert!(o.get::<Need>("Agree who approves it").0.is_always());
-    let end = o.get::<Finish>("How do we publish it?").0.0;
+    let end = o.get::<Finish>("How do we publish it?").0.0.plain();
     let at = |option: &str| *end.at(&BTreeMap::from([(o.id("How do we publish it?").to_string(), o.id(option).to_string())]));
     assert_eq!((at("As a printed booklet"), at("As a PDF"), at("As a website"), at("Something else")), (Some(5.0), Some(7.0), Some(4.0), None));
     assert!(matches!(plan::pressure(g, o.id("How do we publish it?")).unwrap(), Pressure::Free(_)));
 
     let o = open("critical-path");
-    let slack = |n: &str| *o.get::<Slack>(n).0.0.at(&BTreeMap::new());
+    let slack = |n: &str| *o.get::<Slack>(n).0.0.plain().at(&BTreeMap::new());
     assert_eq!(slack("Wire the rooms"), Some(2.0));
     assert_eq!(slack("Frame the walls"), Some(0.0));
-    assert_eq!(*o.get::<Finish>("Paint").0.0.at(&BTreeMap::new()), Some(9.0));
+    assert_eq!(*o.get::<Finish>("Paint").0.0.plain().at(&BTreeMap::new()), Some(9.0));
 }
 
 #[test]

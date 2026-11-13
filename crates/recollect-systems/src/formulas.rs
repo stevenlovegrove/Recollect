@@ -16,8 +16,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use recollect_graph::table::Key;
+use recollect_graph::chance::{self, Num, Std, Term};
 use recollect_graph::worlds::{Bool, Cond, Space, Worldly};
-use recollect_graph::{Backed, Cell, CellType, Compile, Computed, Cx, Entity, Error, Graph, Registry, Shown, cell};
+use recollect_graph::{Backed, Cell, CellType, Compile, Computed, Cx, Entity, Error, Graph, Registry, Severity, Shown, cell};
 use serde_json::{Value, json};
 
 use crate::expr::{self, BinOp, CORE, Expr, Type, Val};
@@ -175,6 +176,17 @@ enum Part {
     Round(Id, Id),
     Floor(Id),
     Ceil(Id),
+    /// `exp`, `ln` or `sqrt`.
+    Math(chance::Un, Id),
+    /// A standard draw: which of this formula's draws it is. No two parts are the same draw, which is
+    /// what makes each place one is written a quantity of its own.
+    Draw(Std, u32),
+    /// A three-point estimate: a uniform draw, then the least, the likeliest and the most.
+    Tri(Id, Id, Id, Id),
+    /// Each whole number from one to another, equally.
+    Integers(Id, Id, u32),
+    /// True this often.
+    Bernoulli(Id, u32),
 }
 
 impl Part {
@@ -189,16 +201,21 @@ impl Part {
             Part::Round(a, b) => Part::Round(to[a], to[b]),
             Part::Floor(a) => Part::Floor(to[a]),
             Part::Ceil(a) => Part::Ceil(to[a]),
+            Part::Math(op, a) => Part::Math(op, to[a]),
+            Part::Tri(u, a, b, c) => Part::Tri(to[u], to[a], to[b], to[c]),
+            Part::Integers(a, b, site) => Part::Integers(to[a], to[b], site),
+            Part::Bernoulli(p, site) => Part::Bernoulli(to[p], site),
             other => other,
         }
     }
 
     fn parts(&self) -> Vec<Id> {
         match self {
-            Part::Lit(_) | Part::Read { .. } | Part::Has(..) | Part::Chose(..) => vec![],
-            Part::Field(a, _) | Part::Not(a) | Part::Neg(a) | Part::Defined(a) | Part::Floor(a) | Part::Ceil(a) => vec![*a],
-            Part::Bin(_, a, b) | Part::Round(a, b) => vec![*a, *b],
+            Part::Lit(_) | Part::Read { .. } | Part::Has(..) | Part::Chose(..) | Part::Draw(..) => vec![],
+            Part::Field(a, _) | Part::Not(a) | Part::Neg(a) | Part::Defined(a) | Part::Floor(a) | Part::Ceil(a) | Part::Math(_, a) | Part::Bernoulli(a, _) => vec![*a],
+            Part::Bin(_, a, b) | Part::Round(a, b) | Part::Integers(a, b, _) => vec![*a, *b],
             Part::If(a, b, c) => vec![*a, *b, *c],
+            Part::Tri(u, a, b, c) => vec![*u, *a, *b, *c],
         }
     }
 }
@@ -234,6 +251,8 @@ struct Expander<'c, 'a> {
     labels: BTreeMap<String, Vec<Entity>>,
     parts: RefCell<Vec<Part>>,
     steps: StdCell<usize>,
+    /// How many draws have been written so far.
+    draws: StdCell<u32>,
 }
 
 impl<'c, 'a> Expander<'c, 'a> {
@@ -246,7 +265,7 @@ impl<'c, 'a> Expander<'c, 'a> {
                 labels.entry(name).or_default().push(to);
             }
         }
-        Ok(Expander { cx, labels, parts: RefCell::new(Vec::new()), steps: StdCell::new(0) })
+        Ok(Expander { cx, labels, parts: RefCell::new(Vec::new()), steps: StdCell::new(0), draws: StdCell::new(0) })
     }
 
     fn add(&self, p: Part) -> Id {
@@ -257,6 +276,31 @@ impl<'c, 'a> Expander<'c, 'a> {
 
     fn lit(&self, v: Val) -> Id {
         self.add(Part::Lit(v))
+    }
+
+    /// The next draw this formula writes. Expanding is the same every time, so it's the same draw every
+    /// time, and a formula that's written out once for each node of a group has one for each.
+    fn site(&self) -> u32 {
+        self.draws.set(self.draws.get() + 1);
+        self.draws.get() - 1
+    }
+
+    fn bin(&self, op: BinOp, a: Id, b: Id) -> Id {
+        self.add(Part::Bin(op, a, b))
+    }
+
+    /// `value` where `ok` holds, and undefined where it doesn't, as a spread below 0 is.
+    fn only_if(&self, ok: Id, value: Id) -> Id {
+        let undefined = self.lit(Val::Undefined);
+        self.add(Part::If(ok, value, undefined))
+    }
+
+    /// `mean + sd * z`, for a standard draw `z`.
+    fn normal(&self, mean: Id, sd: Id) -> Id {
+        let z = self.add(Part::Draw(Std::Normal, self.site()));
+        let value = self.bin(BinOp::Add, mean, self.bin(BinOp::Mul, sd, z));
+        let zero = self.lit(Val::Num(0.0));
+        self.only_if(self.bin(BinOp::Ge, sd, zero), value)
     }
 
     fn read(&self, node: Entity, path: &[String]) -> Id {
@@ -669,6 +713,63 @@ impl<'c, 'a> Expander<'c, 'a> {
                 let a = self.expand(&args[0], scope)?;
                 Ok(self.add(Part::Ceil(a)))
             }
+            "exp" | "ln" | "sqrt" => {
+                wants(1)?;
+                let a = self.expand(&args[0], scope)?;
+                let op = match name {
+                    "exp" => chance::Un::Exp,
+                    "ln" => chance::Un::Ln,
+                    _ => chance::Un::Sqrt,
+                };
+                Ok(self.add(Part::Math(op, a)))
+            }
+            // What's uncertain. Each is written in terms of a standard draw, so its arguments can be
+            // anything a number can, and it's undefined where they make no sense.
+            "normal" | "lognormal" => {
+                wants(2)?;
+                let (mean, sd) = (self.expand(&args[0], scope)?, self.expand(&args[1], scope)?);
+                let value = self.normal(mean, sd);
+                Ok(if name == "normal" { value } else { self.add(Part::Math(chance::Un::Exp, value)) })
+            }
+            "between" => {
+                wants(2)?;
+                let (low, high) = (self.expand(&args[0], scope)?, self.expand(&args[1], scope)?);
+                // Nine times in ten a bell curve is within 1.645 spreads of its middle.
+                let (two, wide) = (self.lit(Val::Num(2.0)), self.lit(Val::Num(2.0 * 1.6448536269514722)));
+                let mean = self.bin(BinOp::Div, self.bin(BinOp::Add, low, high), two);
+                let sd = self.bin(BinOp::Div, self.bin(BinOp::Sub, high, low), wide);
+                Ok(self.normal(mean, sd))
+            }
+            "uniform" => {
+                wants(2)?;
+                let (low, high) = (self.expand(&args[0], scope)?, self.expand(&args[1], scope)?);
+                let u = self.add(Part::Draw(Std::Uniform, self.site()));
+                let value = self.bin(BinOp::Add, low, self.bin(BinOp::Mul, self.bin(BinOp::Sub, high, low), u));
+                Ok(self.only_if(self.bin(BinOp::Le, low, high), value))
+            }
+            "exponential" => {
+                wants(1)?;
+                let mean = self.expand(&args[0], scope)?;
+                let wait = self.add(Part::Draw(Std::Exponential, self.site()));
+                let zero = self.lit(Val::Num(0.0));
+                Ok(self.only_if(self.bin(BinOp::Gt, mean, zero), self.bin(BinOp::Mul, mean, wait)))
+            }
+            "triangular" => {
+                wants(3)?;
+                let (low, likely, high) = (self.expand(&args[0], scope)?, self.expand(&args[1], scope)?, self.expand(&args[2], scope)?);
+                let u = self.add(Part::Draw(Std::Uniform, self.site()));
+                Ok(self.add(Part::Tri(u, low, likely, high)))
+            }
+            "integers" => {
+                wants(2)?;
+                let (low, high) = (self.expand(&args[0], scope)?, self.expand(&args[1], scope)?);
+                Ok(self.add(Part::Integers(low, high, self.site())))
+            }
+            "bernoulli" => {
+                wants(1)?;
+                let p = self.expand(&args[0], scope)?;
+                Ok(self.add(Part::Bernoulli(p, self.site())))
+            }
             _ => unreachable!("every name in CORE is here"),
         }
     }
@@ -684,6 +785,14 @@ fn drill(mut t: Type, fields: &[String]) -> Type {
         };
     }
     t
+}
+
+fn math_name(op: chance::Un) -> &'static str {
+    match op {
+        chance::Un::Exp => "exp",
+        chance::Un::Ln => "ln",
+        _ => "sqrt",
+    }
 }
 
 fn numberish(t: &Type) -> bool {
@@ -735,6 +844,23 @@ fn type_of(cx: &Cx, part: &Part, types: &[Type]) -> Result<Type, Error> {
         Part::Floor(x) | Part::Ceil(x) => {
             let x = &types[*x];
             if numberish(x) { Ok(Type::Number) } else { failed(format!("rounding needs a number, not {}", x.word())) }
+        }
+        Part::Math(op, x) => {
+            let x = &types[*x];
+            if numberish(x) { Ok(Type::Number) } else { failed(format!("{} needs a number, not {}", math_name(*op), x.word())) }
+        }
+        Part::Draw(..) => Ok(Type::Number),
+        Part::Tri(_, a, b, c) => match [a, b, c].into_iter().find(|x| !numberish(&types[**x])) {
+            None => Ok(Type::Number),
+            Some(x) => failed(format!("triangular needs numbers, not {}", types[*x].word())),
+        },
+        Part::Integers(a, b, _) => match [a, b].into_iter().find(|x| !numberish(&types[**x])) {
+            None => Ok(Type::Number),
+            Some(x) => failed(format!("integers needs numbers, not {}", types[*x].word())),
+        },
+        Part::Bernoulli(p, _) => {
+            let p = &types[*p];
+            if numberish(p) { Ok(Type::Bool) } else { failed(format!("bernoulli needs a chance, not {}", p.word())) }
         }
         Part::Bin(op, a, b) => {
             let (ta, tb) = (&types[*a], &types[*b]);
@@ -821,17 +947,159 @@ fn too_many<T>(a: &Cond<Val>, b: &Cond<Val>) -> Result<T, Error> {
     failed(format!("this has more than {MOST_CASES} different values across worlds, depending on {}{more}", shown.join(", ")))
 }
 
+/// A value as the table of uncertain expressions takes one, if it's a number or a truth.
+fn term(v: &Val) -> Option<Term> {
+    Some(match v {
+        Val::Undefined => Term::Undefined,
+        Val::Num(n) => Term::Num(*n),
+        Val::Bool(b) => Term::Flag(*b),
+        Val::Rand(r) => Term::Rand(*r),
+        _ => return None,
+    })
+}
+
+fn val(t: Term) -> Val {
+    match t {
+        Term::Undefined => Val::Undefined,
+        Term::Num(n) => Val::num(n),
+        Term::Flag(b) => Val::Bool(b),
+        Term::Rand(r) => Val::Rand(r),
+    }
+}
+
+fn is_rand(v: &Val) -> bool {
+    matches!(v, Val::Rand(_))
+}
+
+fn number_like(v: &Val) -> bool {
+    match v {
+        Val::Undefined | Val::Num(_) => true,
+        Val::Rand(r) => !r.is_truth(),
+        _ => false,
+    }
+}
+
+fn truth_like(v: &Val) -> bool {
+    match v {
+        Val::Undefined | Val::Bool(_) => true,
+        Val::Rand(r) => r.is_truth(),
+        _ => false,
+    }
+}
+
+fn any_rand(c: &Cond<Val>) -> bool {
+    c.cases().iter().any(|(_, v)| is_rand(v))
+}
+
+/// Something uncertain is in it somewhere, so it can't be held as diagrams alone.
+fn uncertain(e: &Ev) -> bool {
+    matches!(e, Ev::Data(c) if any_rand(c))
+}
+
+/// Two values in every world at once, as a pair.
+fn pairs(a: &Cond<Val>, b: &Cond<Val>) -> Result<Cond<(Val, Val)>, Error> {
+    if a.len().saturating_mul(b.len()) > MOST_PAIRS {
+        return too_many(a, b);
+    }
+    Ok(a.zip(b, |x, y| (x.clone(), y.clone())))
+}
+
 /// `f` on two numbers, undefined if either is, and `wrong` set if anything else turns up, which only
-/// a value of unknown type can get as far as here.
-fn numbers(a: &Val, b: &Val, f: impl Fn(f64, f64) -> Val, wrong: &StdCell<bool>) -> Val {
+/// a value of unknown type can get as far as here. If either is uncertain, it's `op` on them as
+/// expressions, which means the same in every draw.
+fn numbers(a: &Val, b: &Val, op: chance::Op, f: impl Fn(f64, f64) -> Val, wrong: &StdCell<bool>) -> Val {
     match (a, b) {
         (Val::Num(x), Val::Num(y)) => f(*x, *y),
-        (Val::Undefined, Val::Num(_) | Val::Undefined) | (Val::Num(_), Val::Undefined) => Val::Undefined,
+        _ if !number_like(a) || !number_like(b) => {
+            wrong.set(true);
+            Val::Undefined
+        }
+        (Val::Undefined, _) | (_, Val::Undefined) => Val::Undefined,
+        _ => val(chance::bin(op, &term(a).expect("a number"), &term(b).expect("a number"))),
+    }
+}
+
+/// The same, for one number.
+fn number(a: &Val, op: chance::Un, f: impl Fn(f64) -> f64, wrong: &StdCell<bool>) -> Val {
+    match a {
+        Val::Num(x) => Val::num(f(*x)),
+        Val::Undefined => Val::Undefined,
+        Val::Rand(r) if !r.is_truth() => val(chance::un(op, &Term::Rand(*r))),
         _ => {
             wrong.set(true);
             Val::Undefined
         }
     }
+}
+
+/// What a draw is called: the node and cell it's written for, and which of that formula's draws it is.
+/// The `~` is what says it's a matter of chance, where a choice is called by its node alone.
+fn draw_name(cx: &Cx, site: u32) -> String {
+    format!("~{}/{}#{site}", cx.id(), cx.cell())
+}
+
+/// The most whole numbers `integers` lists out as a variable of their own. Past this they're drawn.
+const MOST_LISTED: f64 = 1000.0;
+
+/// Each whole number from one to another, equally. A short list is a variable, as an uncertain decision
+/// is, so what's worked out from it is exact. A long one, or one whose ends are uncertain, is drawn.
+fn integers(cx: &Cx, low: &Cond<Val>, high: &Cond<Val>, site: u32) -> Result<Cond<Val>, Error> {
+    let name = draw_name(cx, site);
+    let ends = pairs(low, high)?;
+    let several = ends.len() > 1;
+    let mut out = pure(Val::Undefined);
+    for (when, (low, high)) in ends.cases() {
+        let here = match (low, high) {
+            (Val::Num(a), Val::Num(b)) if a.fract() != 0.0 || b.fract() != 0.0 || a > b => pure(Val::Undefined),
+            (Val::Num(a), Val::Num(b)) if b - a < MOST_LISTED => {
+                let options: Vec<(String, f64, bool)> = (0..=(b - a) as i64).map(|i| ((a + i as f64).to_string(), 1.0, false)).collect();
+                // The same draw with other ends is another variable, so it says which it is.
+                let name = if several { format!("{name}[{a}..{b}]") } else { name.clone() };
+                Space::global().var(&name, &options).value().map(|o| Val::num(o.parse().expect("written as a number just above")))
+            }
+            (low, high) if number_like(low) && number_like(high) => {
+                let u = Term::Rand(chance::draw(Std::Uniform, &name));
+                let (low, high) = (term(low).expect("a number"), term(high).expect("a number"));
+                let width = chance::bin(chance::Op::Add, &chance::bin(chance::Op::Sub, &high, &low), &Term::Num(1.0));
+                let value = chance::un(chance::Un::Floor, &chance::bin(chance::Op::Add, &low, &chance::bin(chance::Op::Mul, &width, &u)));
+                // Only whole ends, the right way round, mean anything.
+                let whole = |x: &Term| chance::bin(chance::Op::Eq, x, &chance::un(chance::Un::Floor, x));
+                let ok = chance::bin(chance::Op::And, &chance::bin(chance::Op::Le, &low, &high), &chance::bin(chance::Op::And, &whole(&low), &whole(&high)));
+                pure(val(chance::pick(&ok, &value, &Term::Undefined)))
+            }
+            _ => return failed("integers needs numbers"),
+        };
+        out = Cond::when(&when, &here, &out);
+    }
+    Ok(out)
+}
+
+/// True this often. A plain chance is a variable with two outcomes, so it's exact. An uncertain one is
+/// a draw falling under it.
+fn bernoulli(cx: &Cx, p: &Cond<Val>, site: u32) -> Result<Cond<Val>, Error> {
+    let name = draw_name(cx, site);
+    let several = p.len() > 1;
+    let mut out = pure(Val::Undefined);
+    for (when, p) in p.cases() {
+        let here = match p {
+            Val::Undefined => pure(Val::Undefined),
+            Val::Num(p) if !(0.0..=1.0).contains(p) => pure(Val::Undefined),
+            Val::Num(p) if *p == 0.0 || *p == 1.0 => pure(Val::Bool(*p == 1.0)),
+            Val::Num(p) => {
+                let name = if several { format!("{name}[{p}]") } else { name.clone() };
+                let options = [("true".to_string(), *p, false), ("false".to_string(), 1.0 - p, false)];
+                Space::global().var(&name, &options).value().map(|o| Val::Bool(o == "true"))
+            }
+            Val::Rand(r) if !r.is_truth() => {
+                let (u, p) = (Term::Rand(chance::draw(Std::Uniform, &name)), Term::Rand(*r));
+                let ok = chance::bin(chance::Op::And, &chance::bin(chance::Op::Le, &Term::Num(0.0), &p), &chance::bin(chance::Op::Le, &p, &Term::Num(1.0)));
+                pure(val(chance::pick(&ok, &chance::bin(chance::Op::Lt, &u, &p), &Term::Undefined)))
+            }
+            _ => return failed("bernoulli needs a chance: a number from 0 to 1"),
+        };
+        out = Cond::when(&when, &here, &out);
+    }
+    Ok(out)
 }
 
 /// A formula's value across worlds.
@@ -885,9 +1153,13 @@ fn flag_cell(c: Option<Worldly<Option<bool>>>) -> Ev {
     }
 }
 
-fn number_cell(c: Option<Worldly<Option<f64>>>) -> Ev {
+fn number_cell(c: Option<Worldly<Option<Num>>>) -> Ev {
     match c {
-        Some(c) => Ev::Data(c.0.map(|d| d.map_or(Val::Undefined, Val::num))),
+        Some(c) => Ev::Data(c.0.map(|d| match d {
+            None => Val::Undefined,
+            Some(Num::Plain(n)) => Val::num(*n),
+            Some(Num::Rand(r)) => Val::Rand(*r),
+        })),
         None => Ev::Data(pure(Val::Undefined)),
     }
 }
@@ -898,6 +1170,12 @@ fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
         Part::Lit(v) => Ev::Data(pure(v.clone())),
         Part::Read { node, component, fields } => read_cell(cx, *node, component, fields)?,
         Part::Field(of, fields) => Ev::Data(field_of(cx, &values[*of].data(), fields)?),
+        // Whether something uncertain is defined can differ from draw to draw.
+        Part::Defined(a) if uncertain(&values[*a]) => Ev::Data(values[*a].data().map(|v| match v {
+            Val::Undefined => Val::Bool(false),
+            Val::Rand(r) => val(chance::un(chance::Un::Defined, &Term::Rand(*r))),
+            _ => Val::Bool(true),
+        })),
         Part::Defined(a) => {
             let undefined = match &values[*a] {
                 Ev::Truth { undefined, .. } => undefined.clone(),
@@ -914,15 +1192,60 @@ fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
             let Some(chosen) = cx.get::<Chosen>(*choice)? else { return failed("chose needs a choice") };
             Ev::Truth { yes: chosen.lands_on(*option), undefined: space.never() }
         }
+        Part::Not(a) if uncertain(&values[*a]) => {
+            let wrong = StdCell::new(false);
+            let out = values[*a].data().map(|v| match v {
+                Val::Bool(b) => Val::Bool(!b),
+                Val::Undefined => Val::Undefined,
+                Val::Rand(r) if r.is_truth() => val(chance::un(chance::Un::Not, &Term::Rand(*r))),
+                _ => {
+                    wrong.set(true);
+                    Val::Undefined
+                }
+            });
+            if wrong.get() {
+                return failed("! needs true or false");
+            }
+            Ev::Data(out)
+        }
         Part::Not(a) => {
             let (yes, undefined) = values[*a].truth()?;
             Ev::Truth { yes: &!&yes & &!&undefined, undefined }
         }
         Part::Neg(a) => {
             let wrong = StdCell::new(false);
-            let out = values[*a].data().map(|v| numbers(&Val::Num(0.0), v, |z, x| Val::num(z - x), &wrong));
+            let out = values[*a].data().map(|v| numbers(&Val::Num(0.0), v, chance::Op::Sub, |z, x| Val::num(z - x), &wrong));
             if wrong.get() {
                 return failed("- needs a number");
+            }
+            Ev::Data(out)
+        }
+        // Which side it is differs from draw to draw, so it's both, with the condition deciding in each.
+        Part::If(cond, a, b) if uncertain(&values[*cond]) => {
+            let sides = pairs(&values[*a].data(), &values[*b].data())?;
+            let cond = values[*cond].data();
+            if cond.len().saturating_mul(sides.len()) > MOST_PAIRS {
+                return failed(format!("this has more than {MOST_CASES} different values across worlds"));
+            }
+            let wrong = StdCell::new(None);
+            let out = cond.zip(&sides, |c, (x, y)| match c {
+                Val::Bool(true) => x.clone(),
+                Val::Bool(false) => y.clone(),
+                Val::Undefined => Val::Undefined,
+                Val::Rand(r) if r.is_truth() => match (term(x), term(y)) {
+                    (Some(x), Some(y)) => val(chance::pick(&Term::Rand(*r), &x, &y)),
+                    _ => {
+                        wrong.set(Some("an uncertain condition can only choose between numbers, or between truths, so far"));
+                        Val::Undefined
+                    }
+                },
+                _ => {
+                    wrong.set(Some("if needs true or false to decide on"));
+                    Val::Undefined
+                }
+            });
+            if let Some(why) = wrong.get() {
+                return failed(why);
             }
             Ev::Data(out)
         }
@@ -938,7 +1261,7 @@ fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
         Part::Round(x, places) => {
             let wrong = StdCell::new(false);
             let out = zip(&values[*x].data(), &values[*places].data(), |x, p| {
-                numbers(x, p, |x, p| {
+                numbers(x, p, chance::Op::Round, |x, p| {
                     let scale = 10f64.powf(p);
                     Val::num((x * scale).round() / scale)
                 }, &wrong)
@@ -951,12 +1274,44 @@ fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
         Part::Floor(x) | Part::Ceil(x) => {
             let up = matches!(part, Part::Ceil(_));
             let wrong = StdCell::new(false);
-            let out = values[*x].data().map(|x| numbers(x, &Val::Num(0.0), |x, _| Val::num(if up { x.ceil() } else { x.floor() }), &wrong));
+            let out = values[*x].data().map(|x| number(x, if up { chance::Un::Ceil } else { chance::Un::Floor }, |x| if up { x.ceil() } else { x.floor() }, &wrong));
             if wrong.get() {
                 return failed("rounding needs a number");
             }
             Ev::Data(out)
         }
+        Part::Math(op, x) => {
+            let wrong = StdCell::new(false);
+            let plain = |x: f64| match op {
+                chance::Un::Exp => x.exp(),
+                chance::Un::Ln => x.ln(),
+                _ => x.sqrt(),
+            };
+            let out = values[*x].data().map(|x| number(x, *op, plain, &wrong));
+            if wrong.get() {
+                return failed(format!("{} needs a number", math_name(*op)));
+            }
+            Ev::Data(out)
+        }
+        Part::Draw(std, site) => Ev::Data(pure(Val::Rand(chance::draw(*std, &draw_name(cx, *site))))),
+        Part::Tri(u, low, likely, high) => {
+            let ends = pairs(&values[*low].data(), &values[*high].data())?;
+            let (u, likely) = (values[*u].data(), values[*likely].data());
+            let wrong = StdCell::new(false);
+            let out = likely.zip(&ends, |likely, (low, high)| match (term(low), term(likely), term(high)) {
+                (Some(low), Some(likely), Some(high)) if [&low, &likely, &high].iter().all(|t| !matches!(t, Term::Flag(_))) => (low, likely, high),
+                _ => {
+                    wrong.set(true);
+                    (Term::Undefined, Term::Undefined, Term::Undefined)
+                }
+            });
+            if wrong.get() {
+                return failed("triangular needs numbers");
+            }
+            Ev::Data(u.zip(&out, |u, (low, likely, high)| val(chance::tri(&term(u).expect("a draw"), low, likely, high))))
+        }
+        Part::Integers(low, high, site) => Ev::Data(integers(cx, &values[*low].data(), &values[*high].data(), *site)?),
+        Part::Bernoulli(p, site) => Ev::Data(bernoulli(cx, &values[*p].data(), *site)?),
         Part::Bin(op, a, b) => binary(*op, &values[*a], &values[*b])?,
     })
 }
@@ -964,6 +1319,23 @@ fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
 fn binary(op: BinOp, a: &Ev, b: &Ev) -> Result<Ev, Error> {
     let sym = op.symbol();
     match op {
+        // With something uncertain on either side it's still three-valued, in every draw.
+        BinOp::And | BinOp::Or if uncertain(a) || uncertain(b) => {
+            let wrong = StdCell::new(false);
+            let cop = if op == BinOp::And { chance::Op::And } else { chance::Op::Or };
+            let out = zip(&a.data(), &b.data(), |x, y| {
+                if truth_like(x) && truth_like(y) {
+                    val(chance::bin(cop, &term(x).expect("a truth"), &term(y).expect("a truth")))
+                } else {
+                    wrong.set(true);
+                    Val::Undefined
+                }
+            })?;
+            if wrong.get() {
+                return failed(format!("{sym} needs true or false"));
+            }
+            Ok(Ev::Data(out))
+        }
         BinOp::And | BinOp::Or => {
             let ((ay, au), (by, bu)) = (a.truth()?, b.truth()?);
             // Nearly always, nothing's undefined, and a puzzle does this for every constraint.
@@ -976,7 +1348,7 @@ fn binary(op: BinOp, a: &Ev, b: &Ev) -> Result<Ev, Error> {
             let undefined = &!&yes & &!&no;
             Ok(Ev::Truth { yes, undefined })
         }
-        BinOp::Eq | BinOp::Ne if matches!((a, b), (Ev::Truth { .. }, _) | (_, Ev::Truth { .. })) => {
+        BinOp::Eq | BinOp::Ne if matches!((a, b), (Ev::Truth { .. }, _) | (_, Ev::Truth { .. })) && !uncertain(a) && !uncertain(b) => {
             let ((ay, au), (by, bu)) = (a.truth()?, b.truth()?);
             let undefined = &au | &bu;
             let same = &ay.iff(&by) & &!&undefined;
@@ -984,18 +1356,34 @@ fn binary(op: BinOp, a: &Ev, b: &Ev) -> Result<Ev, Error> {
             Ok(Ev::Truth { yes, undefined })
         }
         BinOp::Eq | BinOp::Ne => {
+            let cop = if op == BinOp::Eq { chance::Op::Eq } else { chance::Op::Ne };
             let same = zip(&a.data(), &b.data(), |x, y| match (x, y) {
                 (Val::Undefined, _) | (_, Val::Undefined) => Val::Undefined,
+                // Two numbers, or two truths, are the same in some draws and not in others. Anything else
+                // is never the same as something uncertain.
+                (Val::Rand(_), _) | (_, Val::Rand(_)) if (number_like(x) && number_like(y)) || (truth_like(x) && truth_like(y)) => val(chance::bin(cop, &term(x).expect("checked"), &term(y).expect("checked"))),
                 _ => Val::Bool((x == y) == (op == BinOp::Eq)),
             })?;
+            if any_rand(&same) {
+                return Ok(Ev::Data(same));
+            }
             let e = Ev::Data(same);
             let (yes, undefined) = e.truth()?;
             Ok(Ev::Truth { yes, undefined })
         }
         BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Max | BinOp::Min => {
             let wrong = StdCell::new(false);
+            let cop = match op {
+                BinOp::Add => chance::Op::Add,
+                BinOp::Sub => chance::Op::Sub,
+                BinOp::Mul => chance::Op::Mul,
+                BinOp::Pow => chance::Op::Pow,
+                BinOp::Max => chance::Op::Max,
+                BinOp::Min => chance::Op::Min,
+                _ => chance::Op::Div,
+            };
             let out = zip(&a.data(), &b.data(), |x, y| {
-                numbers(x, y, |x, y| {
+                numbers(x, y, cop, |x, y| {
                     Val::num(match op {
                         BinOp::Add => x + y,
                         BinOp::Sub => x - y,
@@ -1015,18 +1403,18 @@ fn binary(op: BinOp, a: &Ev, b: &Ev) -> Result<Ev, Error> {
         }
         BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
             let wrong = StdCell::new(false);
+            // Above is below, the other way round.
+            let flipped = matches!(op, BinOp::Gt | BinOp::Ge);
+            let strict = matches!(op, BinOp::Lt | BinOp::Gt);
             let out = zip(&a.data(), &b.data(), |x, y| {
-                numbers(x, y, |x, y| {
-                    Val::Bool(match op {
-                        BinOp::Lt => x < y,
-                        BinOp::Le => x <= y,
-                        BinOp::Gt => x > y,
-                        _ => x >= y,
-                    })
-                }, &wrong)
+                let (x, y) = if flipped { (y, x) } else { (x, y) };
+                numbers(x, y, if strict { chance::Op::Lt } else { chance::Op::Le }, |x, y| Val::Bool(if strict { x < y } else { x <= y }), &wrong)
             })?;
             if wrong.get() {
                 return failed(format!("{sym} needs numbers"));
+            }
+            if any_rand(&out) {
+                return Ok(Ev::Data(out));
             }
             let (yes, undefined) = Ev::Data(out).truth()?;
             Ok(Ev::Truth { yes, undefined })
@@ -1116,14 +1504,33 @@ fn free_compiler() -> Compile {
 
 /// What a formula gives a cell that holds true or false. Undefined is `None`.
 pub fn flag_cases(c: Cond<Val>, what: &str) -> Result<Worldly<Option<bool>>, Error> {
+    if any_rand(&c) {
+        return failed(format!("{what} can't be a matter of chance yet: it has to be true or false in each world"));
+    }
     if let Some((_, bad)) = c.cases().iter().find(|(_, v)| !matches!(v, Val::Bool(_) | Val::Undefined)) {
         return failed(format!("{what} is true or false, not {}", Type::of(bad).word()));
     }
     Ok(Worldly(c.map(|v| if let Val::Bool(b) = v { Some(*b) } else { None })))
 }
 
-/// What a formula gives a cell that holds a number. Undefined is `None`.
-pub fn number_cases(c: Cond<Val>, what: &str) -> Result<Worldly<Option<f64>>, Error> {
+/// What a formula gives a cell that holds a number, which may be uncertain. Undefined is `None`.
+pub fn number_cases(c: Cond<Val>, what: &str) -> Result<Worldly<Option<Num>>, Error> {
+    if let Some((_, bad)) = c.cases().iter().find(|(_, v)| !number_like(v)) {
+        return failed(format!("{what} is a number, not {}", Type::of(bad).word()));
+    }
+    Ok(Worldly(c.map(|v| match v {
+        Val::Num(n) => Some(Num::Plain(*n)),
+        Val::Rand(r) => Some(Num::Rand(*r)),
+        _ => None,
+    })))
+}
+
+/// What a formula gives a cell that holds a number that has to be a plain one in each world, as what
+/// makes the worlds does.
+pub fn plain_number_cases(c: Cond<Val>, what: &str) -> Result<Worldly<Option<f64>>, Error> {
+    if any_rand(&c) {
+        return failed(format!("{what} can't be uncertain: it has to be one number in each world"));
+    }
     if let Some((_, bad)) = c.cases().iter().find(|(_, v)| !matches!(v, Val::Num(_) | Val::Undefined)) {
         return failed(format!("{what} is a number, not {}", Type::of(bad).word()));
     }
@@ -1173,6 +1580,13 @@ fn render(closed: &Closed) -> String {
             Part::Round(a, b) => format!("round({}, {})", out[*a], out[*b]),
             Part::Floor(a) => format!("floor({})", out[*a]),
             Part::Ceil(a) => format!("ceil({})", out[*a]),
+            Part::Math(op, a) => format!("{}({})", math_name(*op), out[*a]),
+            Part::Draw(Std::Normal, site) => format!("normal#{site}"),
+            Part::Draw(Std::Uniform, site) => format!("uniform#{site}"),
+            Part::Draw(Std::Exponential, site) => format!("exponential#{site}"),
+            Part::Tri(_, a, b, c) => format!("triangular({}, {}, {})", out[*a], out[*b], out[*c]),
+            Part::Integers(a, b, _) => format!("integers({}, {})", out[*a], out[*b]),
+            Part::Bernoulli(p, _) => format!("bernoulli({})", out[*p]),
         };
         out.push(if text.len() > LONGEST { "…".to_string() } else { text });
     }
@@ -1326,6 +1740,13 @@ pub fn install(reg: &mut Registry) {
     reg.cell::<At>(AT, "Where a choice goes on a board.").initial(json!({ "row": 0, "col": 0 }));
 
     reg.component(REQUIRES, "Only the worlds where this node's value is true count.").icon("✦").requires(VALUE).constraint(|g, e| Ok(g.get::<ValueCell>(e)?.map(|v| truth(&v))));
+    // Ruling out the draws where it's false and ruling out the options that don't meet it are two
+    // things, and this doesn't do either yet, so it says so rather than quietly doing neither.
+    reg.check(REQUIRES, "requires_something_uncertain", Severity::Invariant, |cx| {
+        // A value that can't be worked out says so itself, and isn't this check's to refuse.
+        let chancy = cx.own::<ValueCell>().ok().flatten().is_some_and(|v| any_rand(&v.0.0));
+        Ok(if chancy { vec!["what's required is a matter of chance, and requiring that isn't worked out yet: see docs/distributions.md".to_string()] } else { vec![] })
+    });
 
     reg.component(MACRO, "A function of your own, which formulas call by labelling this node.").icon("ƒ");
     reg.cell::<Macro>(MACRO, "Its parameters, and the formula it stands for.").initial(json!({ "params": [], "body": "0" }));

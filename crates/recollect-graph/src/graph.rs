@@ -1016,7 +1016,7 @@ impl Graph {
     pub fn run<R>(&self, e: Entity, f: impl Fn(&Cx) -> R) -> R {
         self.reading(|s| {
             s.engine.borrow_mut().reads.push(Vec::new());
-            let out = f(&Cx { s, id: e, origin: e });
+            let out = f(&Cx { s, id: e, origin: e, cell: String::new() });
             s.engine.borrow_mut().reads.pop();
             out
         })
@@ -1402,7 +1402,7 @@ impl Session<'_> {
         // Written on a kind, it reads what the kind's formula names from there. A default is about the
         // entity it's for.
         let origin = self.g.backing_at(key.0, &key.1).map_or(key.0, |(_, at)| if at == Entity::whole() { key.0 } else { at });
-        let value = stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || (c.eval)(&Cx { s: *self, id: key.0, origin }));
+        let value = stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || (c.eval)(&Cx { s: *self, id: key.0, origin, cell: key.1.clone() }));
         let mut engine = self.engine.borrow_mut();
         let mut deps = engine.reads.pop().expect("pushed above");
         engine.evaluating.pop();
@@ -1428,12 +1428,18 @@ pub struct Cx<'a> {
     s: Session<'a>,
     id: Entity,
     origin: Entity,
+    cell: String,
 }
 
 impl Cx<'_> {
     /// The entity this is working a cell out for.
     pub fn id(&self) -> Entity {
         self.id
+    }
+
+    /// The cell this is working out, or nothing if it's only trying something: see `Graph::run`.
+    pub fn cell(&self) -> &str {
+        &self.cell
     }
 
     /// Where what's being worked out is written: the same entity, or the kind it takes it from.

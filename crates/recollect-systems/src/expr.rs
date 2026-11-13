@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use recollect_graph::Entity;
+use recollect_graph::chance::Rand;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A value in one world. Undefined is `null`, the same as `None` in a `Cond<Option<T>>`, so what a
@@ -22,6 +23,9 @@ pub enum Val {
     /// It's written `{"ref": handle}`.
     #[serde(serialize_with = "ref_out", deserialize_with = "ref_in")]
     Ref(Entity),
+    /// A number, or a truth, that's uncertain: an expression over draws. See `docs/distributions.md`.
+    /// It's written `{"rand": …}`.
+    Rand(Rand),
     Record(BTreeMap<String, Val>),
 }
 
@@ -79,6 +83,9 @@ impl Type {
             Val::Text(_) => Type::Text,
             Val::List(_) => Type::List,
             Val::Ref(_) => Type::Ref,
+            // Whether something's uncertain isn't part of its type, as whether it differs between worlds isn't.
+            Val::Rand(r) if r.is_truth() => Type::Bool,
+            Val::Rand(_) => Type::Number,
             Val::Record(fields) => Type::Record(fields.iter().map(|(k, v)| (k.clone(), Type::of(v))).collect()),
         }
     }
@@ -167,7 +174,11 @@ pub enum Expr {
 }
 
 /// What's evaluated as itself, rather than being expanded into something else.
-pub const CORE: &[&str] = &["if", "defined", "has", "chose", "round", "floor", "ceil", "max", "min", "distinct"];
+pub const CORE: &[&str] = &["if", "defined", "has", "chose", "round", "floor", "ceil", "max", "min", "distinct", "exp", "ln", "sqrt", "normal", "lognormal", "uniform", "triangular", "exponential", "between", "integers", "bernoulli"];
+
+/// The functions that are something uncertain: each place one is written is a draw of its own. See
+/// `docs/distributions.md`.
+pub const DISTRIBUTIONS: &[&str] = &["normal", "lognormal", "uniform", "triangular", "exponential", "between", "integers", "bernoulli"];
 
 /// Functions that expand into one copy of their body for each node in a group.
 pub const FOLDS: &[&str] = &["sum", "product", "all", "any", "count", "max", "min", "distinct"];

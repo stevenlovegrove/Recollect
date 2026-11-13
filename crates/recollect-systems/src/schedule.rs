@@ -8,6 +8,7 @@
 //! Each of these is a formula any node can type over, with nothing here that a formula on some other
 //! cell couldn't do.
 
+use recollect_graph::chance::Num;
 use recollect_graph::worlds::{Cond, Space, Worldly};
 use recollect_graph::{Cx, Error, Registry, Shown, cell};
 use serde::{Deserialize, Serialize};
@@ -21,34 +22,34 @@ pub const SCHEDULE: &str = "schedule";
 
 /// When it starts, per world. `None` where a gap makes that unknowable.
 #[cell]
-pub struct Start(pub Worldly<Option<f64>>);
+pub struct Start(pub Worldly<Option<Num>>);
 
 /// When it finishes, per world. Where it isn't needed it finishes at 0, so waiting on it costs nothing.
 #[cell]
-pub struct Finish(pub Worldly<Option<f64>>);
+pub struct Finish(pub Worldly<Option<Num>>);
 
 /// How late it could start without moving the end of the plan.
 #[cell]
-pub struct LatestStart(pub Worldly<Option<f64>>);
+pub struct LatestStart(pub Worldly<Option<Num>>);
 
 /// How late it could finish without moving the end of the plan.
 #[cell]
-pub struct LatestFinish(pub Worldly<Option<f64>>);
+pub struct LatestFinish(pub Worldly<Option<Num>>);
 
 /// How far it could slip without moving the end of the plan. `None` where it isn't needed.
 #[cell]
-pub struct Slack(pub Worldly<Option<f64>>);
+pub struct Slack(pub Worldly<Option<Num>>);
 
 /// When the last task finishes, for the graph as a whole.
 #[cell]
-pub struct PlanEnd(pub Worldly<Option<f64>>);
+pub struct PlanEnd(pub Worldly<Option<Num>>);
 
 /// When something happens, in one world.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Span {
-    pub start: Option<f64>,
-    pub finish: Option<f64>,
-    pub slack: Option<f64>,
+    pub start: Option<Num>,
+    pub finish: Option<Num>,
+    pub slack: Option<Num>,
 }
 
 /// When it happens, in the worlds that need it, and `None` in those that don't: what to draw, where
@@ -76,7 +77,7 @@ const LATEST_START: &str = "if(is_leaf(), self.latest_finish - days(), min(p in 
 const SLACK: &str = "if(self.need, self.latest_finish - self.finish, undefined)";
 
 fn dates(cx: &Cx) -> Result<Option<Dates>, Error> {
-    let span = cx.own_value::<Start>()?.0.0.zip(&cx.own_value::<Finish>()?.0.0, |s, f| (*s, *f)).zip(&cx.own_value::<Slack>()?.0.0, |(start, finish), slack| Some(Span { start: *start, finish: *finish, slack: *slack }));
+    let span = cx.own_value::<Start>()?.0.0.zip(&cx.own_value::<Finish>()?.0.0, |s, f| (s.clone(), f.clone())).zip(&cx.own_value::<Slack>()?.0.0, |(start, finish), slack| Some(Span { start: start.clone(), finish: finish.clone(), slack: slack.clone() }));
     Ok(Some(Dates(Cond::when(&cx.own_value::<Need>()?.0, &span, &Space::global().pure(None)))))
 }
 

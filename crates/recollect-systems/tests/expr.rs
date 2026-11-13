@@ -721,7 +721,7 @@ fn a_formula_can_ask_which_way_a_decision_went_and_set_an_estimate() {
 
     let (how, gpu, cpu) = (g.id("how").to_string(), g.id("gpu").to_string(), g.id("cpu").to_string());
     let at = |o: &String| BTreeMap::from([(how.clone(), o.clone())]);
-    let finish = g.get::<Finish>("train").unwrap().unwrap().0.0;
+    let finish = g.get::<Finish>("train").unwrap().unwrap().0.0.plain();
     assert_eq!((finish.at(&at(&gpu)), finish.at(&at(&cpu))), (&Some(3.0), &Some(5.0)));
 
     // A date that depends on itself through its own estimate is a loop.
@@ -730,7 +730,7 @@ fn a_formula_can_ask_which_way_a_decision_went_and_set_an_estimate() {
 
     // And one a formula can't work out makes the date unknowable, not an error.
     g.formula_on("train", Estimate::NAME, "if(chose(how, gpu), undefined, 5)");
-    let finish = g.get::<Finish>("train").unwrap().unwrap().0.0;
+    let finish = g.get::<Finish>("train").unwrap().unwrap().0.0.plain();
     assert_eq!((finish.at(&at(&gpu)), finish.at(&at(&cpu))), (&None, &Some(5.0)));
     g.assert_round_trips();
 }

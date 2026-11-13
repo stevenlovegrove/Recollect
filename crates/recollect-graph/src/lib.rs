@@ -5,6 +5,7 @@
 // So the attribute macros can name this crate from inside it too.
 extern crate self as recollect_graph;
 
+pub mod chance;
 pub mod graph;
 pub mod log;
 pub mod name;
