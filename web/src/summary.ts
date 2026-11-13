@@ -59,8 +59,24 @@ export function cellLine(ws: Workspace, n: GraphNode, c: string): SummaryLine | 
   return { name: c, text: reads, about: info?.about, component: info?.component, trivial: !!r?.never };
 }
 
+/**
+ * How strongly something true or false is believed: how likely it is among the worlds in play. Over a
+ * choice that's still yours to make there's no one answer, so it's the least and the most over the ways
+ * that could go. Evidence is what the worlds in play are, so it has none of its own.
+ */
+function truthBelief(ws: Workspace, n: GraphNode): SummaryLine[] {
+  const cell = n.cells.value;
+  const r = reading(cell);
+  if (!cell || !r || r.always || r.never || n.components.some((c) => c.name === "requires")) return [];
+  const vars = ws.view!.worlds.vars;
+  const yours = (cell.vars ?? []).some((id) => vars.some((v) => v.id === id && !v.uncertain));
+  const over = cell.over;
+  const text = !yours ? beliefText(r.prob) : !over ? null : beliefText(over.low) === beliefText(over.high) ? beliefText(over.low) : `${beliefText(over.low)} to ${beliefText(over.high)}, depending on what you choose`;
+  return text ? [{ name: "belief", text, about: BELIEF_MEANS, component: "value", trivial: false }] : [];
+}
+
 function summaryLines(ws: Workspace, n: GraphNode): SummaryLine[] {
-  const beliefs = beliefLines(ws, n);
+  const beliefs = [...beliefLines(ws, n), ...truthBelief(ws, n)];
   const out = [...beliefs];
   // Cells it says every node of its kind has, without saying what they come to, are listed by name.
   const declared: string[] = [];
