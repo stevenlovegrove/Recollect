@@ -283,9 +283,9 @@ Claude can say "this depends on that", and with formulas it can say "this has to
 
 ### The separate systems become one model
 
-Because a plan's cells can be read and estimates can vary, the plan and its costs are the same graph. `effort()` is the plan's days in every world. On Calibration it's 6 days for CAD, 8 for free-form and 5 for the checkerboard. Shared work counts once, because it's a sum over tasks and not a rollup through parents, which would double-count anything with two parents. A task with no estimate makes the total undefined, which is honest, and `or(t.estimate, 0)` says otherwise. A gap in play makes it undefined too, since the gap adds no task.
+Because a plan's cells can be read and estimates can vary, the plan and its costs are the same graph. `effort()` is the plan's days in every world. On the handbook plan it's 6 days for the printed booklet, 8 for the PDF and 5 for the website. Shared work counts once, because it's a sum over tasks and not a rollup through parents, which would double-count anything with two parents. A task with no estimate makes the total undefined, which is honest, and `or(t.estimate, 0)` says otherwise. A gap in play makes it undefined too, since the gap adds no task.
 
-Add a `requires` node saying `effort() <= 6`, and free-form is ruled out, with a readable reason. A decision's estimate and its dates can depend on each other, so "the GPU option is faster, but only if we've bought the GPU" is a formula.
+Add a `requires` node saying `effort() <= 6`, and the PDF is ruled out, with a readable reason. A decision's estimate and its dates can depend on each other, so "the GPU option is faster, but only if we've bought the GPU" is a formula.
 
 ### Saying what's missing
 
@@ -333,7 +333,7 @@ The limits are 10,000 distinct values for one formula, 4,000,000 pairs for one s
 
 **The held-out test is the one that matters.** Every sample was written alongside the code, so none of them shows the library is enough. These are solved using only data, through `propose`, with no Rust:
 
-1. A budget cap on the Calibration plan, with estimates depending on a decision, which crosses systems.
+1. A budget cap on the handbook plan, with estimates depending on a decision, which crosses systems.
 2. A logic puzzle with a clause that isn't a pair: at most one of three people is lying.
 3. A tiered price and a loan repayment, using a macro of its own.
 
@@ -341,7 +341,7 @@ If a new one needs Rust, that's the finding, and it goes in this document.
 
 ## Open questions
 
-1. **Should `requires` narrow the plan's views?** Say a budget node rules out free-form. It could dim that option on the Decisions tab and hide its work, or only show it on the Worlds tab with a notice saying why. It does only the Worlds tab today.
+1. **Should `requires` narrow the plan's views?** Say a budget node rules out the PDF. It could dim that option on the Decisions tab and hide its work, or only show it on the Worlds tab with a notice saying why. It does only the Worlds tab today.
 2. **Should a choice be able to read as its own answer?** `a.chosen.value` is explicit, but a puzzle says it a lot. A choice could say which of its cells read through to what it lands on, so `a` alone would mean `a.chosen.value`.
 
 ## Kinds

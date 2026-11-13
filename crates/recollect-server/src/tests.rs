@@ -159,20 +159,20 @@ async fn a_circular_reference_is_an_error_in_those_cells_and_heals() {
 #[tokio::test]
 async fn a_world_narrows_every_value_exactly() {
     let c = Client::new();
-    c.open("calibration").await;
+    c.open("handbook").await;
     let open = c.view(json!({})).await;
-    assert_eq!(when(&open, "Static captures", "need"), "Which approach?∈{From the CAD model,Free-form search}");
+    assert_eq!(when(&open, "Lay out the pages", "need"), "How do we publish it?∈{As a printed booklet,As a PDF}");
     assert_eq!(open["worlds"]["count"], "4");
     let var = &open["worlds"]["vars"][0];
-    assert_eq!(var["name"], "Which approach?");
+    assert_eq!(var["name"], "How do we publish it?");
     assert_eq!(var["options"].as_array().unwrap().len(), 4);
 
-    let picked = json!({ id(&open, "Which approach?"): id(&open, "With a checkerboard") });
+    let picked = json!({ id(&open, "How do we publish it?"): id(&open, "As a website") });
     let v = c.view(picked).await;
-    assert!(cell(&v, "Static captures", "need")["shown"]["never"].as_bool().unwrap());
-    assert!(cell(&v, "Board detector", "need")["shown"]["always"].as_bool().unwrap());
+    assert!(cell(&v, "Lay out the pages", "need")["shown"]["never"].as_bool().unwrap());
+    assert!(cell(&v, "Build the site", "need")["shown"]["always"].as_bool().unwrap());
     assert_eq!(v["worlds"]["count"], "1");
-    let cases = cell(&v, "Which approach?", "finish")["shown"]["cases"].as_array().unwrap();
+    let cases = cell(&v, "How do we publish it?", "finish")["shown"]["cases"].as_array().unwrap();
     assert_eq!(cases.len(), 1);
     assert_eq!(cases[0]["value"], 4.0);
 
@@ -183,29 +183,29 @@ async fn a_world_narrows_every_value_exactly() {
 #[tokio::test]
 async fn deciding_commits_and_reopening_brings_it_all_back() {
     let c = Client::new();
-    c.open("calibration").await;
+    c.open("handbook").await;
     let open = c.view(json!({})).await;
-    let cad = id(&open, "From the CAD model");
-    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": "Which approach?", "cell": "chosen", "value": { "ref": cad } }], "why": "it's accurate enough" })).await;
+    let cad = id(&open, "As a printed booklet");
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": "How do we publish it?", "cell": "chosen", "value": { "ref": cad } }], "why": "everyone asked for paper" })).await;
     let v = c.view(json!({})).await;
-    assert!(cell(&v, "Export extrinsics from CAD", "need")["shown"]["always"].as_bool().unwrap());
+    assert!(cell(&v, "Get it printed", "need")["shown"]["always"].as_bool().unwrap());
     assert!(v["worlds"]["vars"].as_array().unwrap().is_empty(), "no open choices now");
 
     let (_, history) = (StatusCode::OK, c.history(None).await);
-    assert_eq!(history[0]["why"], "it's accurate enough");
+    assert_eq!(history[0]["why"], "everyone asked for paper");
     assert_eq!(history[0]["author"], "you");
     let seq = history[0]["seq"].as_u64().unwrap();
     c.post("/api/call/undo", json!({ "seq": seq, "why": "changed my mind" })).await;
-    assert_eq!(when(&c.view(json!({})).await, "Static captures", "need"), when(&open, "Static captures", "need"));
+    assert_eq!(when(&c.view(json!({})).await, "Lay out the pages", "need"), when(&open, "Lay out the pages", "need"));
 }
 
 #[tokio::test]
 async fn a_change_that_breaks_a_rule_is_refused_and_says_why() {
     let c = Client::new();
-    c.open("calibration").await;
+    c.open("handbook").await;
     let v = c.view(json!({})).await;
-    let imu = id(&v, "Fit the IMU time offset");
-    let (status, body) = c.call("POST", "/api/call/apply", Some(json!({ "ops": [{ "op": "set", "id": "Which approach?", "cell": "chosen", "value": { "ref": imu } }] }))).await;
+    let imu = id(&v, "Agree who approves it");
+    let (status, body) = c.call("POST", "/api/call/apply", Some(json!({ "ops": [{ "op": "set", "id": "How do we publish it?", "cell": "chosen", "value": { "ref": imu } }] }))).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body["error"].as_str().unwrap().contains("chosen_must_be_a_live_option"), "{body}");
     assert_eq!(c.view(json!({})).await["last_seq"], v["last_seq"], "and nothing changed");
@@ -214,11 +214,11 @@ async fn a_change_that_breaks_a_rule_is_refused_and_says_why() {
 #[tokio::test]
 async fn adding_a_node_and_linking_it_is_one_event_and_says_what_it_made() {
     let c = Client::new();
-    c.open("calibration").await;
+    c.open("handbook").await;
     let before = c.view(json!({})).await;
     let done = c
         .post("/api/call/apply", json!({ "ops": [
-            { "op": "add_node", "id": "new:a", "name": "Held-out scenes", "components": ["task"], "cells": { "estimate": 2.0 }, "links": [{ "to": "Which approach?", "component": "part_of" }] },
+            { "op": "add_node", "id": "new:a", "name": "Held-out scenes", "components": ["task"], "cells": { "estimate": 2.0 }, "links": [{ "to": "How do we publish it?", "component": "part_of" }] },
             { "op": "add_node", "id": "new:b", "name": "Check them", "components": ["task"], "links": [{ "to": "new:a", "component": "depends_on" }] },
         ], "why": "we'll need these whichever way it goes" }))
         .await;
@@ -420,13 +420,13 @@ async fn the_classic_problems_have_their_known_answers() {
 #[tokio::test]
 async fn the_plan_answers_where_work_stands_and_what_decisions_need() {
     let c = Client::new();
-    c.open("calibration").await;
+    c.open("handbook").await;
     let p = c.post("/api/call/plan", json!({})).await;
     let standing = |p: &Value, name: &str| p["work"].as_array().unwrap().iter().find(|w| w["name"] == name).unwrap()["standing"].clone();
-    assert_eq!(standing(&p, "Fit the IMU time offset"), "now");
-    assert_eq!(standing(&p, "Static captures"), "depends", "two of the three named options need it");
+    assert_eq!(standing(&p, "Agree who approves it"), "now");
+    assert_eq!(standing(&p, "Lay out the pages"), "depends", "two of the three named options need it");
     let d = &p["decisions"][0];
-    assert_eq!(d["name"], "Which approach?");
+    assert_eq!(d["name"], "How do we publish it?");
     assert_eq!(d["pressure"]["state"], "free");
     assert_eq!(d["options"].as_array().unwrap().iter().filter(|o| o["gap"].as_bool().unwrap()).count(), 1);
 }
@@ -442,7 +442,7 @@ async fn a_sheet_workspace_has_no_plan_to_show() {
 #[tokio::test]
 async fn proposals_wait_for_review_and_can_be_taken_in_part() {
     let c = Client::new();
-    c.open("calibration").await;
+    c.open("handbook").await;
     let before = c.view(json!({})).await;
     let p = c.propose("Add two", "both are needed", vec![
         json!({ "op": "add_node", "id": "new:a", "name": "One" }),
@@ -467,7 +467,7 @@ async fn proposals_wait_for_review_and_can_be_taken_in_part() {
 
     // One that wouldn't apply is refused before it gets to anyone.
     let v = c.view(json!({})).await;
-    let refused = c.propose("Bad", "", vec![json!({ "op": "set", "id": "Which approach?", "cell": "chosen", "value": { "ref": id(&v, "One") } })]);
+    let refused = c.propose("Bad", "", vec![json!({ "op": "set", "id": "How do we publish it?", "cell": "chosen", "value": { "ref": id(&v, "One") } })]);
     assert!(refused.is_err());
 }
 
@@ -539,7 +539,7 @@ async fn undo_and_redo_go_back_and_forward_and_the_files_follow() {
 #[tokio::test]
 async fn a_worked_out_cell_can_be_typed_over_and_comes_back() {
     let c = Client::new();
-    c.open("calibration").await;
+    c.open("handbook").await;
     let done = c.post("/api/call/apply", json!({ "ops": [{ "op": "add_node", "id": "new:t", "name": "Mine", "components": ["task"] }] })).await;
     let t = done["created"]["new:t"].as_str().unwrap().to_string();
     let cell = |v: &Value| v["nodes"].as_array().unwrap().iter().find(|n| n["id"] == t.as_str()).unwrap()["cells"]["done"].clone();
@@ -588,18 +588,18 @@ fn paths(list: &Value) -> Vec<&str> {
 #[tokio::test]
 async fn the_files_can_be_read_and_show_what_the_app_is_working_from() {
     let c = Client::new();
-    c.open("calibration").await;
+    c.open("handbook").await;
     let (_, list) = c.call("GET", "/api/files", None).await;
     let paths = paths(&list);
     assert!(paths.contains(&"recollect.toml"), "{paths:?}");
     assert!(!paths.contains(&".recollect.lock"), "{paths:?}");
 
     let v = c.view(json!({})).await;
-    let path = format!("nodes/{}.yaml", id(&v, "Which approach?"));
+    let path = format!("nodes/{}.yaml", id(&v, "How do we publish it?"));
     assert!(paths.contains(&path.as_str()), "{paths:?}");
     let (status, file) = c.call("GET", &format!("/api/file?path={path}"), None).await;
     assert_eq!(status, StatusCode::OK, "{file}");
-    assert!(file["text"].as_str().unwrap().contains("Which approach?"), "{file}");
+    assert!(file["text"].as_str().unwrap().contains("How do we publish it?"), "{file}");
     assert_eq!(file["truncated"], false);
 
     // Reading is all it does, and a change shows up.
@@ -732,13 +732,13 @@ async fn a_working_copy_from_before_samples_changed_is_put_aside_not_misread() {
 #[tokio::test]
 async fn held_out_a_budget_cap_on_a_plan() {
     let c = Client::new();
-    c.open("calibration").await;
+    c.open("handbook").await;
     let v = c.view(json!({})).await;
-    let (approach, cad, free, board) = (id(&v, "Which approach?"), id(&v, "From the CAD model"), id(&v, "Free-form search"), id(&v, "With a checkerboard"));
+    let (approach, cad, free, board) = (id(&v, "How do we publish it?"), id(&v, "As a printed booklet"), id(&v, "As a PDF"), id(&v, "As a website"));
 
-    // Free-form needs a second pass of captures, so what's shared costs more on that path.
+    // A PDF needs the layout checked again once it's tagged, so what's shared costs more on that path.
     let p = c.propose("Cap the effort at six days", "the review is in a week", vec![
-        json!({ "op": "set", "id": "Static captures", "cell": "estimate", "formula": "if(chose(approach, free), 3, 2)", "labels": { "approach": approach, "free": free } }),
+        json!({ "op": "set", "id": "Lay out the pages", "cell": "estimate", "formula": "if(chose(approach, free), 3, 2)", "labels": { "approach": approach, "free": free } }),
         json!({ "op": "add_node", "id": "new:effort", "name": "Effort", "cells": { "value": { "formula": "effort()" } } }),
         json!({ "op": "add_node", "id": "new:cap", "name": "Within six days", "components": ["requires"], "cells": { "value": { "formula": "effort <= 6", "labels": { "effort": "new:effort" } } } }),
     ]).unwrap();
@@ -756,18 +756,18 @@ async fn held_out_a_budget_cap_on_a_plan() {
 
     let cases = cell(&v, "Within six days", "value")["shown"]["cases"].as_array().unwrap().clone();
     let case = |value: Value| cases.iter().find(|c| c["value"] == value).unwrap()["when"]["when"].as_str().unwrap().to_string();
-    assert_eq!(case(json!(false)), "Which approach?=Free-form search");
-    assert_eq!(case(Value::Null), "Which approach?=Something else", "it says what isn't known, and where");
+    assert_eq!(case(json!(false)), "How do we publish it?=As a PDF");
+    assert_eq!(case(Value::Null), "How do we publish it?=Something else", "it says what isn't known, and where");
     assert_eq!(v["worlds"]["constrained"], true);
     let options = v["worlds"]["vars"][0]["options"].as_array().unwrap();
     let possible: Vec<&str> = options.iter().filter(|o| o["possible"].as_bool().unwrap()).map(|o| o["name"].as_str().unwrap()).collect();
-    assert_eq!(possible, vec!["From the CAD model", "With a checkerboard"], "the cap rules out the others, with a reason you can read");
+    assert_eq!(possible, vec!["As a printed booklet", "As a website"], "the cap rules out the others, with a reason you can read");
 
     // And the dates follow the estimate, in each world.
     let free_view = c.view(at(&free)).await;
-    assert_eq!(cell(&free_view, "Static captures", "finish")["value"], 3.0);
+    assert_eq!(cell(&free_view, "Lay out the pages", "finish")["value"], 3.0);
     let cad_view = c.view(at(&cad)).await;
-    assert_eq!(cell(&cad_view, "Static captures", "finish")["value"], 2.0);
+    assert_eq!(cell(&cad_view, "Lay out the pages", "finish")["value"], 2.0);
 }
 
 /// A puzzle clause that isn't about a pair: at most one of three people is lying.
@@ -1106,13 +1106,13 @@ async fn a_hand_edit_nobody_has_noticed_yet_is_brought_in_before_a_change() {
 #[tokio::test]
 async fn taking_a_component_away_takes_its_cells() {
     let c = Client::new();
-    c.open("calibration").await;
-    c.post("/api/call/apply", json!({ "ops": [{ "op": "remove", "id": "Board detector", "component": "task" }], "why": "not a task" })).await;
+    c.open("handbook").await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "remove", "id": "Build the site", "component": "task" }], "why": "not a task" })).await;
     let v = c.view(json!({})).await;
-    assert!(cell(&v, "Board detector", "estimate").is_null(), "{}", node(&v, "Board detector"));
+    assert!(cell(&v, "Build the site", "estimate").is_null(), "{}", node(&v, "Build the site"));
     let (_, history) = (StatusCode::OK, c.history(None).await);
     c.post("/api/call/undo", json!({ "seq": history[0]["seq"] })).await;
-    assert_eq!(cell(&c.view(json!({})).await, "Board detector", "estimate")["value"], 4.0);
+    assert_eq!(cell(&c.view(json!({})).await, "Build the site", "estimate")["value"], 4.0);
 }
 
 /// Labels said with one formula replace that formula's names, and leave alone what another formula on

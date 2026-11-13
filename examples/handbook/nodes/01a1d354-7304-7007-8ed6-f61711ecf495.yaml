@@ -1,0 +1,10 @@
+id: 01a1d354-7304-7007-8ed6-f61711ecf495
+components:
+- notes
+cells:
+  body: An option. It shares nothing with the other two, and is finished after four days.
+  name: As a website
+links:
+- to: 01a1d354-7304-7007-8ed6-f6143ddf5369
+  components:
+  - alternative

@@ -80,7 +80,7 @@ Write with `propose`, which the user reviews in the inbox. Ops are: \
 the same with `from` and `to` in place of `id` for a cell of the edge between two nodes, such as an option's `weight`; \
 {op: link, from, to, component, cells?} and {op: unlink, from, to, component}; {op: delete_node, id}. Writing in a cell of a component \
 a node doesn't have gives it that component. Nodes can be named by handle or by name, and \"new:anything\" stands for a node that \
-doesn't exist yet, the same one wherever it appears in a change-set. So decide on a decision with {op: set, id: \"Which approach?\", \
+doesn't exist yet, the same one wherever it appears in a change-set. So decide on a decision with {op: set, id: \"How do we publish it?\", \
 cell: chosen, value: {ref: <option's handle>}}, and rule an option out with {op: set, from: <option>, to: <decision>, cell: ruled_out, value: \"why\"}.\n\
 \n\
 A node's `value` can be typed in, or a formula, and so can a task's `estimate` and any of the workspace's own cells. That's how to state \

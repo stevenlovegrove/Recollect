@@ -1,9 +1,0 @@
-id: 01a1c1e5-28fa-75d2-bd9b-084383809f6b
-components:
-- decision
-cells:
-  name: Which approach?
-links:
-- to: 01a1c1e5-28fa-75d2-bd9b-08423aac347b
-  components:
-  - part_of

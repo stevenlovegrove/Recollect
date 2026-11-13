@@ -1,0 +1,12 @@
+id: 01a1d354-7304-7007-8ed6-f61d6ea35f8b
+components:
+- notes
+- task
+cells:
+  body: Only needed for the website, and waits for nothing.
+  estimate: 4.0
+  name: Build the site
+links:
+- to: 01a1d354-7304-7007-8ed6-f61711ecf495
+  components:
+  - part_of

@@ -21,7 +21,7 @@ pub struct Sample {
 }
 
 pub const SAMPLES: &[Sample] = &[
-    Sample { name: "calibration", title: "Calibration plan", about: "Three ways to calibrate, plus a gap for what nobody has thought of. The decision is held open, and every value is the exact set of worlds where it's true.", group: "plan", systems: &["plan", "schedule"], build: calibration },
+    Sample { name: "handbook", title: "Publishing a handbook", about: "A first plan to read: a team wants to publish a handbook and hasn't decided how. There are three options, and a gap for one nobody has thought of. Each node's note says what it's there to show. See which work is safe to start whatever is decided, which depends on the decision, and when each option would finish. Pin an option in the bar at the top to see the plan as it would be, with nothing saved.", group: "plan", systems: &["plan", "schedule"], build: handbook },
     Sample { name: "critical-path", title: "Critical path", about: "A plain schedule with no decisions: dates go forward over the dependencies, and slack comes from following them backward.", group: "plan", systems: &["plan", "schedule"], build: critical_path },
     Sample { name: "invoice", title: "Invoice", about: "Two lines, a subtotal, tax and a total. Edit a number and only what it reaches reruns.", group: "sheet", systems: &[], build: invoice },
     Sample { name: "trip-budget", title: "Trip budget", about: "A budget with decisions left open: the total is exact in every world, and so is what would put it over.", group: "sheet", systems: &["plan"], build: trip_budget },
@@ -42,7 +42,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "19";
+pub const FORMAT: &str = "20";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -150,19 +150,35 @@ impl Build {
     }
 }
 
-fn calibration(b: &mut Build) {
-    b.add("Calibrate the lidar and camera", GOAL).note("Calibrate the lidar and camera", "Done when the reprojection error stays under a pixel on held-out scenes.");
-    b.add("Which approach?", DECISION).link("Which approach?", "Calibrate the lidar and camera", PART_OF);
-    for o in ["From the CAD model", "Free-form search", "With a checkerboard"] {
-        b.option(o, "Which approach?", None);
+fn handbook(b: &mut Build) {
+    // A plan small enough to read at once, with one of everything: a goal, a decision held open with a gap
+    // among its options, work needed whichever way it goes, work two options share, work that waits on
+    // other work, and a risk. Each says what it's there to show.
+    let (goal, how) = ("Publish the handbook", "How do we publish it?");
+    b.add(goal, GOAL).note(goal, "A goal: the result that's wanted. It's done when everyone on the team can open the current version. Everything beneath it is there to get it done.");
+    b.add(how, DECISION).link(how, goal, PART_OF);
+    b.note(how, "A decision held open. Nothing has been chosen, so the plan is every way it could go at once, and each piece of work says when it's needed. Pin an option in the bar at the top to see the plan as it would be then, with nothing saved. Choose one on the Decisions tab when you're sure.");
+    for (option, about) in [
+        ("As a printed booklet", "An option. Its work is only needed if this is the one taken: a day to agree approval, two to lay out and three to print, so it's finished after five."),
+        ("As a PDF", "An option. It shares the layout with the booklet, then takes five days to tag, so it's finished after seven."),
+        ("As a website", "An option. It shares nothing with the other two, and is finished after four days."),
+    ] {
+        b.option(option, how, None).note(option, about);
     }
-    b.add("Something else", UNKNOWN).option("Something else", "Which approach?", None);
-    b.task("Fit the IMU time offset", 1.0).link("Fit the IMU time offset", "Which approach?", PART_OF);
-    b.task("Static captures", 2.0).link("Static captures", "From the CAD model", PART_OF).link("Static captures", "Free-form search", PART_OF);
-    b.task("Export extrinsics from CAD", 3.0).link("Export extrinsics from CAD", "From the CAD model", PART_OF).link("Export extrinsics from CAD", "Static captures", DEPENDS_ON);
-    b.task("Global init search", 5.0).link("Global init search", "Free-form search", PART_OF).link("Global init search", "Static captures", DEPENDS_ON);
-    b.task("Board detector", 4.0).link("Board detector", "With a checkerboard", PART_OF);
-    b.add("Diverges on weak geometry", RISK).link("Diverges on weak geometry", "Global init search", "contradicts");
+    b.add("Something else", UNKNOWN).option("Something else", how, None);
+    b.note("Something else", "A gap: an option nobody has named yet. While it's here the plan admits it can't say when it will finish if this is how it goes. Name the option, or close the gap to say these three are all there are.");
+    b.task("Agree who approves it", 1.0).link("Agree who approves it", how, PART_OF);
+    b.note("Agree who approves it", "Part of the decision itself, so it's needed however the handbook is published. That makes it safe to start now, before deciding.");
+    b.task("Lay out the pages", 2.0).link("Lay out the pages", "As a printed booklet", PART_OF).link("Lay out the pages", "As a PDF", PART_OF);
+    b.note("Lay out the pages", "Part of two options, so it's needed if either is taken and not if the website is. It reads as depending on the decision: likely to be wanted, but not certain.");
+    b.task("Get it printed", 3.0).link("Get it printed", "As a printed booklet", PART_OF).link("Get it printed", "Lay out the pages", DEPENDS_ON);
+    b.note("Get it printed", "Waits for the layout, so it can't start until that's done. Its dates follow from that.");
+    b.task("Tag it for screen readers", 5.0).link("Tag it for screen readers", "As a PDF", PART_OF).link("Tag it for screen readers", "Lay out the pages", DEPENDS_ON);
+    b.note("Tag it for screen readers", "Also waits for the layout. It's the longest piece of work here, which is what makes the PDF the slowest option.");
+    b.task("Build the site", 4.0).link("Build the site", "As a website", PART_OF);
+    b.note("Build the site", "Only needed for the website, and waits for nothing.");
+    b.add("The tagging tool mangles tables", RISK).link("The tagging tool mangles tables", "Tag it for screen readers", "contradicts");
+    b.note("The tagging tool mangles tables", "A risk: something that could go wrong, linked to the work it threatens. It only matters in the worlds where that work is needed.");
 }
 
 fn critical_path(b: &mut Build) {

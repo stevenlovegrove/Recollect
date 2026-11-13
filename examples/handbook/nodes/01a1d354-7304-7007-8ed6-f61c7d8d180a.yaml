@@ -1,0 +1,15 @@
+id: 01a1d354-7304-7007-8ed6-f61c7d8d180a
+components:
+- notes
+- task
+cells:
+  body: Also waits for the layout. It's the longest piece of work here, which is what makes the PDF the slowest option.
+  estimate: 5.0
+  name: Tag it for screen readers
+links:
+- to: 01a1d354-7304-7007-8ed6-f616deb83cc0
+  components:
+  - part_of
+- to: 01a1d354-7304-7007-8ed6-f61aff6d094c
+  components:
+  - depends_on
