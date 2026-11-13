@@ -1,0 +1,15 @@
+id: 01a1d3e5-c052-7619-b45b-ef791a1312f0
+components:
+- notes
+- task
+cells:
+  body: Waits for the layout, so it can't start until that's done. Its dates follow from that.
+  estimate: 3.0
+  name: Get it printed
+links:
+- to: 01a1d3e5-c051-742e-82e3-a1b3df5f887f
+  components:
+  - part_of
+- to: 01a1d3e5-c052-7619-b45b-ef78258ce6e1
+  components:
+  - depends_on

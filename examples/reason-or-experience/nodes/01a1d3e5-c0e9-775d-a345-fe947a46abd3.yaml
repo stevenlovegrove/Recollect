@@ -1,0 +1,20 @@
+id: 01a1d3e5-c0e9-775d-a345-fe947a46abd3
+components:
+- notes
+cells:
+  body: The thesis. Real knowledge is worked out by thinking, as geometry is. That explains why mathematics couldn't be otherwise. It also says thinking is enough for knowing the world, which stands unless the objection to that is accepted.
+  explains_necessity: true
+  name: From reason alone
+formulas:
+  explains_observation: objection.chosen.value = "reject"
+links:
+- to: 01a1d3e5-c0e9-775d-a345-fe91d4cd886e
+  components:
+  - alternative
+  cells:
+    weight: 2.0
+- to: 01a1d3e5-c0e9-775d-a345-fe93442992fa
+  components:
+  - label
+  cells:
+    called: objection

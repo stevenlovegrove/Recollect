@@ -1,0 +1,13 @@
+id: 01a1d3e5-c09d-76da-b103-77c8bff16b1b
+components:
+- notes
+cells:
+  body: The cook found the back door unbolted at half past nine.
+  name: Yes, as the cook thinks
+  went_out: true
+links:
+- to: 01a1d3e5-c09d-76da-b103-77c626a9beb7
+  components:
+  - alternative
+  cells:
+    weight: 1.0

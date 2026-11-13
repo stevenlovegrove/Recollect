@@ -1,0 +1,16 @@
+id: 01a1d3e5-c0e9-775d-a345-fe9736fd2b2d
+components:
+- notes
+- requires
+- value
+cells:
+  body: Two and two don't just happen to make four. An answer has to say where that kind of certainty comes from.
+  name: It has to explain why mathematics couldn't be otherwise
+formulas:
+  value: or(answer.chosen.explains_necessity, true)
+links:
+- to: 01a1d3e5-c0e9-775d-a345-fe91d4cd886e
+  components:
+  - label
+  cells:
+    called: answer

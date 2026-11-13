@@ -1,7 +1,0 @@
-id: 01a1d354-7303-7306-94de-d79b5f0e8245
-components:
-- goal
-- notes
-cells:
-  body: 'A goal: the result that''s wanted. It''s done when everyone on the team can open the current version. Everything beneath it is there to get it done.'
-  name: Publish the handbook

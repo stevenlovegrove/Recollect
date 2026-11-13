@@ -1,0 +1,15 @@
+id: 01a1d3e5-c09d-76da-b103-77bc77699593
+components:
+- notes
+- unknown
+cells:
+  arrives: 0
+  body: Someone nobody has thought of yet.
+  from_garden: true
+  name: Someone else
+links:
+- to: 01a1d3e5-c09d-76da-b103-77b801af13e5
+  components:
+  - alternative
+  cells:
+    weight: 1.0

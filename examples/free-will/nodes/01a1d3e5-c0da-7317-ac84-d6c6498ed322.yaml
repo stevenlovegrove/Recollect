@@ -1,0 +1,15 @@
+id: 01a1d3e5-c0da-7317-ac84-d6c6498ed322
+components:
+- notes
+- value
+cells:
+  body: 'The first step, and only what being settled means: if everything is settled by what came before, then so is what you do.'
+  name: What you do follows from the past and the laws
+formulas:
+  value: settled.chosen.value = "accept"
+links:
+- to: 01a1d3e5-c0da-7317-ac84-d6c276f19307
+  components:
+  - label
+  cells:
+    called: settled

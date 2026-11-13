@@ -1,0 +1,12 @@
+id: 01a1d3e5-c0e9-775d-a345-fe92efbc66b3
+components:
+- decision
+- notes
+- options
+- uncertain
+cells:
+  body: An objection to experience alone. Seeing that two and two made four every time so far doesn't show they couldn't make five. If this is right, experience can't be where that kind of certainty comes from.
+  name: Experience only says what has happened, never what must
+  options:
+  - accept
+  - reject

@@ -1,8 +1,0 @@
-id: 01a1d191-6300-703e-8675-5742b5c51839
-components:
-- decision
-- notes
-- uncertain
-cells:
-  body: 'Before the test, you''re anyone: one in a hundred has it.'
-  name: Do you have it?

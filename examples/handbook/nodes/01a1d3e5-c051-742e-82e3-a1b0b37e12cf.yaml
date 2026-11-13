@@ -1,0 +1,19 @@
+id: 01a1d3e5-c051-742e-82e3-a1b0b37e12cf
+components:
+- notes
+cells:
+  body: |-
+    A team wants to publish a handbook and hasn't decided how. This is a small plan to read first, with one of everything in it.
+
+    - **A goal**, and beneath it **a decision held open**, with three options and **a gap** for one nobody has thought of.
+    - **Work** that's needed whichever way it goes, work that two options share, and work that waits on other work.
+    - **A risk**, linked to the work it threatens.
+
+    Every node has a note saying what it's there to show: select one to read it.
+
+    **Things to try**
+
+    - Pin an option in the bar at the top to see the plan as it would be then. Nothing is saved.
+    - Open the **Work** tab to see what's safe to start now.
+    - Open **Decisions** to compare the options, and **Timeline** to see when each would finish.
+  name: About this example

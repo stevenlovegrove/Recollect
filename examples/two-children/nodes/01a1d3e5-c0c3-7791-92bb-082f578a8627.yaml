@@ -1,0 +1,19 @@
+id: 01a1d3e5-c0c3-7791-92bb-082f578a8627
+components:
+- notes
+cells:
+  body: |-
+    A family has two children, and you're told that at least one of them is a boy. What is the probability that both are boys?
+
+    The intuitive answer is a half, but it's **a third**. There are three equally likely families with at least one boy, and only one of them has two:
+
+    - an elder boy and a younger girl
+    - an elder girl and a younger boy
+    - two boys
+
+    The answer changes if you're told something more specific.
+
+    **Things to try**
+
+    - Pin the elder child as a boy. The probability that both are boys becomes a half, because that also rules out the family where only the younger is a boy.
+  name: About this example

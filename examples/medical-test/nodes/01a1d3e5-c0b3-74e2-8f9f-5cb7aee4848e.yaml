@@ -1,0 +1,10 @@
+id: 01a1d3e5-c0b3-74e2-8f9f-5cb7aee4848e
+cells:
+  name: It's clear
+  positive: false
+links:
+- to: 01a1d3e5-c0b3-74e2-8f9f-5cb56156ea43
+  components:
+  - alternative
+  cells:
+    weight: 95.0

@@ -1,0 +1,10 @@
+id: 01a1d3e5-c0c6-74c1-b0b4-66442bc2048e
+components:
+- decision
+- uncertain
+cells:
+  name: The first sock out
+links:
+- to: 01a1d3e5-c0c6-74c1-b0b4-6640d77a1410
+  components:
+  - within

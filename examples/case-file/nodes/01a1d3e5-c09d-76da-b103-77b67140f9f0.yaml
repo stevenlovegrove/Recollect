@@ -1,0 +1,17 @@
+id: 01a1d3e5-c09d-76da-b103-77b67140f9f0
+components:
+- notes
+cells:
+  body: |-
+    A watch went missing from Rosalind Vane's study one evening. It could have been one of three people, or someone nobody has thought of.
+
+    - **Who took it?** is something uncertain, with each suspect weighted by how likely they seemed beforehand.
+    - **Each account** of the evening is an option of a question, saying who gave it and how far it's believed.
+    - **When each suspect could have reached the house** is worked out from those accounts.
+    - **The evidence** is required, so it rules out the worlds it doesn't fit.
+
+    **Things to try**
+
+    - Open the **Worlds** tab for how likely each suspect is, and what's most worth finding out next.
+    - Pin an account to see what follows if it's the true one.
+  name: About this example

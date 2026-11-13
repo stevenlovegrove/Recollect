@@ -1,0 +1,15 @@
+id: 01a1d3e5-c052-7619-b45b-ef78258ce6e1
+components:
+- notes
+- task
+cells:
+  body: 'Part of two options, so it''s needed if either is taken and not if the website is. It reads as depending on the decision: likely to be wanted, but not certain.'
+  estimate: 2.0
+  name: Lay out the pages
+links:
+- to: 01a1d3e5-c051-742e-82e3-a1b3df5f887f
+  components:
+  - part_of
+- to: 01a1d3e5-c051-742e-82e3-a1b4b9591301
+  components:
+  - part_of

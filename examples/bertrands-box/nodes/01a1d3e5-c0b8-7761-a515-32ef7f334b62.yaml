@@ -1,0 +1,12 @@
+id: 01a1d3e5-c0b8-7761-a515-32ef7f334b62
+components:
+- decision
+- notes
+- uncertain
+cells:
+  body: One of the two coins in whichever box it is, each as likely as the other.
+  name: Which coin do you take?
+links:
+- to: 01a1d3e5-c0b8-7761-a515-32ee26b807ab
+  components:
+  - within

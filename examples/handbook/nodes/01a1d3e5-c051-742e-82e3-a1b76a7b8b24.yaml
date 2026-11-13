@@ -1,0 +1,12 @@
+id: 01a1d3e5-c051-742e-82e3-a1b76a7b8b24
+components:
+- notes
+- task
+cells:
+  body: Part of the decision itself, so it's needed however the handbook is published. That makes it safe to start now, before deciding.
+  estimate: 1.0
+  name: Agree who approves it
+links:
+- to: 01a1d3e5-c051-742e-82e3-a1b20d1b97c5
+  components:
+  - part_of

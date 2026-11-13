@@ -21,7 +21,7 @@ pub struct Sample {
 }
 
 pub const SAMPLES: &[Sample] = &[
-    Sample { name: "handbook", title: "Publishing a handbook", about: "A first plan to read: a team wants to publish a handbook and hasn't decided how. There are three options, and a gap for one nobody has thought of. Each node's note says what it's there to show. See which work is safe to start whatever is decided, which depends on the decision, and when each option would finish. Pin an option in the bar at the top to see the plan as it would be, with nothing saved.", group: "plan", systems: &["plan", "schedule"], build: handbook },
+    Sample { name: "handbook", title: "Publishing a handbook", about: "A first plan to read: a team publishing a handbook, with one decision held open.", group: "plan", systems: &["plan", "schedule"], build: handbook },
     Sample { name: "critical-path", title: "Critical path", about: "A plain schedule with no decisions: dates go forward over the dependencies, and slack comes from following them backward.", group: "plan", systems: &["plan", "schedule"], build: critical_path },
     Sample { name: "invoice", title: "Invoice", about: "Two lines, a subtotal, tax and a total. Edit a number and only what it reaches reruns.", group: "sheet", systems: &[], build: invoice },
     Sample { name: "trip-budget", title: "Trip budget", about: "A budget with decisions left open: the total is exact in every world, and so is what would put it over.", group: "sheet", systems: &["plan"], build: trip_budget },
@@ -32,20 +32,20 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "eight-queens", title: "Eight queens", about: "A table with a row for each row of the board, choosing the column its queen is in. One formula on the table says no two share a column or a diagonal. There are 92 boards.", group: "puzzle", systems: &[], build: eight_queens },
     Sample { name: "sudoku", title: "4×4 sudoku", about: "A table of sixteen cells, each choosing a number, and a clue for each row, column and box: distinct(Cell[A1].chosen, Cell[A2].chosen, …). There are 288 grids.", group: "puzzle", systems: &[], build: sudoku },
     Sample { name: "knights-and-knaves", title: "Knights and knaves", about: "A says “we are both knaves”. Knights always tell the truth, and knaves always lie.", group: "puzzle", systems: &[], build: knights_and_knaves },
-    Sample { name: "case-file", title: "The Vane watch", about: "A case file. A watch went from Rosalind Vane's study one evening, and there are three people it could have been, or someone nobody has thought of. Each account is a node saying who gave it, with how far it's believed, and when each suspect could have reached the house is worked out from those. The Worlds tab gives how likely each suspect is, and what's most worth finding out next. Pin what you learn.", group: "reasoning", systems: &["plan"], build: case_file },
-    Sample { name: "monty-hall", title: "Monty Hall", about: "A game show has three doors, with a car behind one and goats behind the other two. You pick a door. The host, Monty, knows where the car is: he opens one of the other two doors to show a goat, then offers you the chance to switch to the door that's left. Should you? Most people say it makes no difference, but switching wins the car two times in three, and sticking only one time in three. Here it's four questions asked in order: where the car is, which door you pick, which door Monty opens, and whether you stick or switch. Pin your pick and the door Monty opens to see the probability that the car is behind each door, and compare sticking with switching on the Decisions tab.", group: "reasoning", systems: &["plan"], build: monty_hall },
-    Sample { name: "medical-test", title: "The positive test", about: "A condition affects one person in a hundred. The test for it comes back positive for 90% of the people who have it, but also for 5% of the people who don't. Your test comes back positive. What is the probability that you have the condition? It feels as if it should be about 90%, but it's only about 15%. People without the condition outnumber those with it by so much that most positive results are false alarms: of 10,000 people tested, 90 positives come from the 100 who have it, and 495 from the 9,900 who don't.", group: "reasoning", systems: &["plan"], build: medical_test },
-    Sample { name: "bertrands-box", title: "Bertrand's box", about: "There are three boxes. One holds two gold coins, one holds two silver coins, and one holds a gold coin and a silver coin. You pick a box at random and take a coin from it without looking, and the coin is gold. What is the probability that the other coin in the same box is also gold? It's tempting to say a half, since the box must be either the one with two gold coins or the mixed one. The answer is two thirds: there are three gold coins you could be holding, all equally likely, and two of them are in the box with two gold. Here it's three questions, each asked inside the one before: which box, which coin you take from it, and which coin is left.", group: "reasoning", systems: &["plan"], build: bertrands_box },
-    Sample { name: "two-children", title: "Two children", about: "A family has two children, and you're told that at least one of them is a boy. What is the probability that both are boys? The intuitive answer is a half, but it's a third: there are three equally likely families with at least one boy (an elder boy and a younger girl, an elder girl and a younger boy, and two boys), and only one of them has two boys. The answer changes if you're told something more specific. Pin the elder child as a boy and the probability that both are boys becomes a half, because that also rules out the family where only the younger is a boy.", group: "reasoning", systems: &["plan"], build: two_children },
-    Sample { name: "socks", title: "Socks in the wash", about: "Two, three or four pairs of socks went in the wash, and you don't know which. Every pair is different from the others. You pull out three socks without looking, and no two of them match. What does that tell you about how many pairs went in? Before you looked, each number of pairs was equally likely. Afterwards two pairs is ruled out, because any three socks from two pairs must include a match, and four pairs is more likely than three, at about 59% to 41%, because three socks are less likely to include a match when there are more pairs to draw from. Each sock is drawn from those in the wash that aren't out already.", group: "reasoning", systems: &["plan"], build: socks },
-    Sample { name: "free-will", title: "Free will, step by step", about: "Can we act freely if everything we do was settled before we were born? This lays out the argument that we can't, a step at a time. Four premises are each accepted or rejected: that everything is settled by what came before, that the past and the laws of nature aren't up to you, that what follows from things not up to you isn't up to you either, and that we act freely. Two steps are worked out from them, ending in the conclusion that what you do isn't up to you. Nothing says the four premises conflict: that follows from the steps, and from one requirement that an act can't be both up to you and not. Each position philosophers hold is the premise it gives up. Pin the premises you're surest of and see which one has to go.", group: "philosophy", systems: &["plan"], build: free_will },
-    Sample { name: "trolley", title: "The trolley problem", about: "A runaway trolley will kill five people. In one case you can pull a switch to send it down a side track, where it will kill one. In another you can only stop it by pushing a man off a footbridge into its path. In a third, the side track loops back, and the one person on it stops the trolley with their body. What you do in each case is yours to choose. Three things are worked out from your choices, each true or false: whether the most lives are saved, whether you kill no one, and whether no one is used as a means. Each is only a value until you require it, which turns it into a principle: then only the choices that keep it true are left. Require one from its card and see what it permits, then require two and see whether anything is left. Most people would pull the switch and wouldn't push the man. Pin those two and see which values survive, and what they say about the loop.", group: "philosophy", systems: &["plan"], build: trolley },
-    Sample { name: "reason-or-experience", title: "Reason or experience?", about: "Where does knowledge come from? One answer is reason alone, and the opposite answer is experience alone. Any answer has to explain two things: why mathematics couldn't have been otherwise, and why we have to look to find out how the world is. Each answer explains one of them, and claims the other too, which stands until you accept the objection to it. The objections are there to accept or reject. Accept both and neither answer survives, so what's left is the gap: an answer nobody has named yet. This is a dialectic, with a thesis, its antithesis, and the need for a synthesis that keeps what each got right. Name one, and say what it explains, to close the gap.", group: "philosophy", systems: &["plan"], build: reason_or_experience },
+    Sample { name: "case-file", title: "The Vane watch", about: "A watch has gone missing: three suspects, conflicting accounts, and what's most worth finding out.", group: "reasoning", systems: &["plan"], build: case_file },
+    Sample { name: "monty-hall", title: "Monty Hall", about: "Three doors and one car: should you switch after Monty opens a door?", group: "reasoning", systems: &["plan"], build: monty_hall },
+    Sample { name: "medical-test", title: "The positive test", about: "A positive result from a test that's 90% accurate: how likely is it that you have the condition?", group: "reasoning", systems: &["plan"], build: medical_test },
+    Sample { name: "bertrands-box", title: "Bertrand's box", about: "You draw a gold coin from one of three boxes: how likely is the other coin in it to be gold?", group: "reasoning", systems: &["plan"], build: bertrands_box },
+    Sample { name: "two-children", title: "Two children", about: "A family has two children and at least one is a boy: how likely is it that both are?", group: "reasoning", systems: &["plan"], build: two_children },
+    Sample { name: "socks", title: "Socks in the wash", about: "Three unmatched socks come out of the wash: how many pairs went in?", group: "reasoning", systems: &["plan"], build: socks },
+    Sample { name: "free-will", title: "Free will, step by step", about: "The argument that determinism rules out free will, a step at a time, and the premise each position gives up.", group: "philosophy", systems: &["plan"], build: free_will },
+    Sample { name: "trolley", title: "The trolley problem", about: "Your choices in three trolley cases, and the values you can require as principles.", group: "philosophy", systems: &["plan"], build: trolley },
+    Sample { name: "reason-or-experience", title: "Reason or experience?", about: "A dialectic: two opposite answers, the objection to each, and the gap that's left.", group: "philosophy", systems: &["plan"], build: reason_or_experience },
     Sample { name: "zebra", title: "The zebra puzzle", about: "Who owns the zebra, and who drinks water? A table for each kind of thing, whose rows choose a house, and the clues written as they read: Nationality[English].chosen = Colour[Red].chosen. About 3 × 10¹⁷ combinations, and the clues leave exactly one.", group: "puzzle", systems: &[], build: zebra },
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "23";
+pub const FORMAT: &str = "24";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -154,6 +154,19 @@ impl Build {
 }
 
 fn handbook(b: &mut Build) {
+    about(b, r#"A team wants to publish a handbook and hasn't decided how. This is a small plan to read first, with one of everything in it.
+
+- **A goal**, and beneath it **a decision held open**, with three options and **a gap** for one nobody has thought of.
+- **Work** that's needed whichever way it goes, work that two options share, and work that waits on other work.
+- **A risk**, linked to the work it threatens.
+
+Every node has a note saying what it's there to show: select one to read it.
+
+**Things to try**
+
+- Pin an option in the bar at the top to see the plan as it would be then. Nothing is saved.
+- Open the **Work** tab to see what's safe to start now.
+- Open **Decisions** to compare the options, and **Timeline** to see when each would finish."#);
     // A plan small enough to read at once, with one of everything: a goal, a decision held open with a gap
     // among its options, work needed whichever way it goes, work two options share, work that waits on
     // other work, and a risk. Each says what it's there to show.
@@ -434,6 +447,17 @@ fn zebra(b: &mut Build) {
 }
 
 fn case_file(b: &mut Build) {
+    about(b, r#"A watch went missing from Rosalind Vane's study one evening. It could have been one of three people, or someone nobody has thought of.
+
+- **Who took it?** is something uncertain, with each suspect weighted by how likely they seemed beforehand.
+- **Each account** of the evening is an option of a question, saying who gave it and how far it's believed.
+- **When each suspect could have reached the house** is worked out from those accounts.
+- **The evidence** is required, so it rules out the worlds it doesn't fit.
+
+**Things to try**
+
+- Open the **Worlds** tab for how likely each suspect is, and what's most worth finding out next.
+- Pin an account to see what follows if it's the true one."#);
     b.note(
         "The case",
         "Saturday evening at Rosalind Vane's house. Her late husband's gold watch was in a locked case in the study. Clara saw it there at 9:00. Rosalind found the case open and the watch gone at 10:15. Times here are minutes past nine, so 9:40 is 40.",
@@ -516,6 +540,11 @@ fn case_file(b: &mut Build) {
     evidence(b, "They came in from the garden", "who.chosen.from_garden", "Fresh mud on the study carpet, from the garden door to the case.");
 }
 
+/// What a sample is and what to try in it, as a note of its own. A map shows a note like this in full.
+fn about(b: &mut Build, text: &str) {
+    b.note("About this example", text);
+}
+
 /// Something in doubt: a decision nobody makes, whose options each say `cell`, believed this far.
 fn doubt(b: &mut Build, question: &str, cell: &str, options: &[(&str, Value, f64)]) {
     b.add(question, DECISION).add(question, UNCERTAIN);
@@ -530,7 +559,21 @@ fn seen(b: &mut Build, name: &str, formula: &str, about: &str) {
 }
 
 fn monty_hall(b: &mut Build) {
-    b.note("The game", "Three doors, with a car behind one and goats behind the other two. You pick a door. Monty knows where the car is: he opens another door, and always shows a goat. Then you can stick with your door, or switch to the one that's left. Nothing here is fixed: pin your pick and the door Monty opens to see where the car probably is, and compare sticking with switching.");
+    about(b, r#"A game show has three doors, with a car behind one and goats behind the other two. You pick a door. The host, Monty, knows where the car is: he opens one of the other two doors to show a goat, then offers you the chance to switch to the door that's left. Should you?
+
+Most people say it makes no difference. In fact **switching wins two times in three**, and sticking only one time in three.
+
+Here it's four questions, asked in order:
+
+1. Where the car is.
+2. Which door you pick.
+3. Which door Monty opens: never yours, and never the car's.
+4. Whether you stick or switch.
+
+**Things to try**
+
+- Pin your pick and the door Monty opens, and see the probability that the car is behind each door.
+- Open **Decisions** to compare sticking with switching."#);
     // Four questions, each landing on a door, and each after the ones it leaves out. The doors are the
     // same three nodes every time, so "you win" is two questions landing on one.
     let doors: Vec<String> = (1..=3).map(|d| format!("Door[{d}]")).collect();
@@ -561,6 +604,21 @@ fn monty_hall(b: &mut Build) {
 }
 
 fn medical_test(b: &mut Build) {
+    about(b, r#"A condition affects one person in a hundred. The test for it comes back positive for 90% of the people who have it, but also for 5% of the people who don't. Your test comes back positive. What is the probability that you have the condition?
+
+It feels as if it should be about 90%. It's only about **15%**.
+
+People without the condition outnumber those with it by so much that most positive results are false alarms. Of 10,000 people tested:
+
+- 100 have it, and 90 of them test positive.
+- 9,900 don't, and 495 of them test positive too.
+
+So 90 of the 585 positives have it.
+
+**Things to try**
+
+- Select **Do you have it?** to see the belief before and after the result.
+- Change the weights on its options to see what a commoner condition would do."#);
     let have = "Do you have it?";
     b.add(have, DECISION).add(have, UNCERTAIN).note(have, "Before the test, you're anyone: one in a hundred has it.");
     b.option("You have it", have, Some(1.0)).option("You don't", have, Some(99.0));
@@ -574,6 +632,19 @@ fn medical_test(b: &mut Build) {
 }
 
 fn bertrands_box(b: &mut Build) {
+    about(b, r#"There are three boxes. One holds two gold coins, one holds two silver coins, and one holds a gold coin and a silver coin. You pick a box at random and take a coin from it without looking, and the coin is gold. What is the probability that the other coin in the same box is also gold?
+
+It's tempting to say a half, since the box must be either the one with two gold coins or the mixed one. The answer is **two thirds**: there are three gold coins you could be holding, all equally likely, and two of them are in the box with two gold.
+
+Here it's three questions, each asked inside the one before:
+
+1. Which box.
+2. Which coin you take from it.
+3. Which coin is left in it.
+
+**Things to try**
+
+- Pin the coin you took to one particular gold coin, and see which box that makes it."#);
     // Three questions, one inside another: a box, a coin from that box, and the coin that's then left in it.
     let (which, took, left) = ("Which box?", "Which coin do you take?", "Which coin is left in the box?");
     b.add(which, DECISION).add(which, UNCERTAIN);
@@ -597,6 +668,19 @@ fn bertrands_box(b: &mut Build) {
 }
 
 fn two_children(b: &mut Build) {
+    about(b, r#"A family has two children, and you're told that at least one of them is a boy. What is the probability that both are boys?
+
+The intuitive answer is a half, but it's **a third**. There are three equally likely families with at least one boy, and only one of them has two:
+
+- an elder boy and a younger girl
+- an elder girl and a younger boy
+- two boys
+
+The answer changes if you're told something more specific.
+
+**Things to try**
+
+- Pin the elder child as a boy. The probability that both are boys becomes a half, because that also rules out the family where only the younger is a boy."#);
     // Each child is one or the other, as likely as not, and neither answer has anything more to say, so
     // each question lists them.
     for child in ["The elder", "The younger"] {
@@ -611,7 +695,19 @@ fn two_children(b: &mut Build) {
 }
 
 fn socks(b: &mut Build) {
-    b.note("The wash", "Every pair is different from the others. You pull three socks out without looking, and no two of them match.");
+    about(b, r#"Two, three or four pairs of socks went in the wash, and you don't know which. Every pair is different from the others. You pull out three socks without looking, and no two of them match. What does that tell you about how many pairs went in?
+
+Before you looked, each number of pairs was equally likely. Afterwards:
+
+- **Two pairs is ruled out**, because any three socks from two pairs must include a match.
+- **Four pairs is more likely than three**, at about 59% to 41%, because three socks are less likely to include a match when there are more pairs to draw from.
+
+Each sock is drawn from those in the wash, which depends on how many pairs went in, and isn't one that's already out.
+
+**Things to try**
+
+- Pin the first sock out, and see how little that changes.
+- Click a column on the Sock table's card to group the socks by it."#);
     let pairs = "How many pairs went in?";
     b.add(pairs, DECISION).add(pairs, UNCERTAIN);
     for n in 2..=4 {
@@ -650,6 +746,25 @@ fn claim(b: &mut Build, name: &str, about: &str) {
 }
 
 fn free_will(b: &mut Build) {
+    about(b, r#"Can we act freely if everything we do was settled before we were born? This lays out the argument that we can't, a step at a time.
+
+**Four premises**, each accepted or rejected:
+
+- Everything that happens is settled by what came before.
+- The past and the laws of nature aren't up to you.
+- What follows from things that aren't up to you isn't up to you either.
+- We act freely.
+
+**Two steps** are worked out from them, ending in the conclusion that what you do isn't up to you.
+
+Nothing here says the four premises conflict. That follows from the steps, and from one requirement: an act can't be both up to you and not.
+
+Each position philosophers hold is the premise it gives up.
+
+**Things to try**
+
+- Pin the premises you're surest of as accepted, and see which one has to go.
+- Reject a premise, and see that the conclusion no longer follows."#);
     // The argument that being settled beforehand rules out freedom, a step at a time. Only the premises
     // are accepted or rejected: what follows from them is worked out, so the conflict isn't put in.
     let (settled, past, transfer, free) = (
@@ -687,6 +802,25 @@ fn free_will(b: &mut Build) {
 }
 
 fn trolley(b: &mut Build) {
+    about(b, r#"A runaway trolley will kill five people.
+
+- **The switch.** You can send it down a side track, where it will kill one.
+- **The footbridge.** You can only stop it by pushing a man into its path.
+- **The loop.** The side track loops back, and the one person on it stops the trolley with their body.
+
+What you do in each case is yours to choose. Three things are worked out from your choices, each true or false:
+
+- The most lives are saved.
+- You kill no one.
+- No one is used as a means.
+
+Each is only a value until you **require** it, which turns it into a principle: then only the choices that keep it true are left.
+
+**Things to try**
+
+- Click **require** on a value's card, and see what it leaves you free to do.
+- Require two, and see whether anything is left.
+- Most people would pull the switch and wouldn't push the man. Pin those two, and see which values survive and what they say about the loop."#);
     // What you do in each case is yours to choose, and says only what physically happens if you do it:
     // whether the trolley is sent away from the five for good, and whether someone's body stops it.
     let cases = [
@@ -714,6 +848,22 @@ fn trolley(b: &mut Build) {
 }
 
 fn reason_or_experience(b: &mut Build) {
+    about(b, r#"Where does knowledge come from? One answer is **reason alone**, and the opposite answer is **experience alone**.
+
+Any answer has to explain two things:
+
+- why mathematics couldn't have been otherwise
+- why we have to look to find out how the world is
+
+Each answer explains one of them and claims the other too. That claim stands until you accept the objection to it.
+
+This is a dialectic: a thesis, its antithesis, and the need for a synthesis that keeps what each got right.
+
+**Things to try**
+
+- Accept an objection, and see the answer it's aimed at drop out.
+- Accept both. Neither answer survives, and what's left is the gap: an answer nobody has named yet.
+- Name one. Add an option that says it explains both, and close the gap."#);
     let answer = "Where does knowledge come from?";
     b.add(answer, DECISION).add(answer, UNCERTAIN);
     b.note(answer, "Not yours to choose: one answer is right. Each answer says what it can explain, and what any answer has to explain is put in as evidence.");

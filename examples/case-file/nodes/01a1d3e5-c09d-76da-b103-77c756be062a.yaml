@@ -1,0 +1,13 @@
+id: 01a1d3e5-c09d-76da-b103-77c756be062a
+components:
+- notes
+cells:
+  body: Clara says she was in the kitchen with the radio on all evening.
+  name: No, as she says
+  went_out: false
+links:
+- to: 01a1d3e5-c09d-76da-b103-77c626a9beb7
+  components:
+  - alternative
+  cells:
+    weight: 2.0

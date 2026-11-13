@@ -1,0 +1,11 @@
+id: 01a1d3e5-c051-742e-82e3-a1b20d1b97c5
+components:
+- decision
+- notes
+cells:
+  body: A decision held open. Nothing has been chosen, so the plan is every way it could go at once, and each piece of work says when it's needed. Pin an option in the bar at the top to see the plan as it would be then, with nothing saved. Choose one on the Decisions tab when you're sure.
+  name: How do we publish it?
+links:
+- to: 01a1d3e5-c051-742e-82e3-a1b151747554
+  components:
+  - part_of

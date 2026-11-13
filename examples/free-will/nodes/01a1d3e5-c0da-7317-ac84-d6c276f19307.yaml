@@ -1,0 +1,12 @@
+id: 01a1d3e5-c0da-7317-ac84-d6c276f19307
+components:
+- decision
+- notes
+- options
+- uncertain
+cells:
+  body: 'A premise: determinism. Every event, including everything you do, follows from the state of the world before it and the laws of nature.'
+  name: Everything that happens is settled by what came before
+  options:
+  - accept
+  - reject

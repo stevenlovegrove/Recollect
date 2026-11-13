@@ -1,0 +1,19 @@
+id: 01a1d3e5-c0b8-7761-a515-32ed1a0a42f1
+components:
+- notes
+cells:
+  body: |-
+    There are three boxes. One holds two gold coins, one holds two silver coins, and one holds a gold coin and a silver coin. You pick a box at random and take a coin from it without looking, and the coin is gold. What is the probability that the other coin in the same box is also gold?
+
+    It's tempting to say a half, since the box must be either the one with two gold coins or the mixed one. The answer is **two thirds**: there are three gold coins you could be holding, all equally likely, and two of them are in the box with two gold.
+
+    Here it's three questions, each asked inside the one before:
+
+    1. Which box.
+    2. Which coin you take from it.
+    3. Which coin is left in it.
+
+    **Things to try**
+
+    - Pin the coin you took to one particular gold coin, and see which box that makes it.
+  name: About this example

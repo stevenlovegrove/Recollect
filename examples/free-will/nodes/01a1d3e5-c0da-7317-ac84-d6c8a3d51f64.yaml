@@ -1,0 +1,21 @@
+id: 01a1d3e5-c0da-7317-ac84-d6c8a3d51f64
+components:
+- notes
+- requires
+- value
+cells:
+  body: The only thing put in rather than worked out, and it's just that a thing and its opposite can't both hold. With the steps above, it's what stops all four premises being accepted together.
+  name: An act can't be both up to you and not
+formulas:
+  value: '!(not_up && free.chosen.value = "accept")'
+links:
+- to: 01a1d3e5-c0da-7317-ac84-d6c5e496400b
+  components:
+  - label
+  cells:
+    called: free
+- to: 01a1d3e5-c0da-7317-ac84-d6c7a789937e
+  components:
+  - label
+  cells:
+    called: not_up

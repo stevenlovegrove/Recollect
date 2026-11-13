@@ -1,0 +1,13 @@
+id: 01a1d3e5-c0e3-765d-b401-1f930446b91b
+components:
+- decision
+- notes
+- options
+cells:
+  body: 'The trolley will kill five people. You can pull a switch to send it down a side track, where one person is standing. That sends it away from the five for good. The one person dies because they happen to be there: with the side track empty, the five would be saved just the same.'
+  body_stops_it: false
+  name: Pull the switch?
+  options:
+  - yes
+  - no
+  sent_away: true

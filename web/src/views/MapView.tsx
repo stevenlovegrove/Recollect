@@ -19,6 +19,7 @@ import ELK from "elkjs/lib/elk.bundled.js";
 import type { GraphNode } from "../api";
 import type { Workspace } from "../workspace";
 import { badgesOf, compColor, dominant, isDropped, isNote, label as labelOf, nodeColor } from "../theme";
+import { renderMarkdown } from "../markdown";
 import { Brackets, CompBadges, beliefText, cellText, edgeKey, edgeText, parseEdgeKey, reading } from "../bits";
 import { type SummaryLine, summaryOf } from "../summary";
 import { DdItem, Dropdown } from "../Dropdown";
@@ -52,6 +53,15 @@ function optionsHeight(options: { name: string; chance: number | null }[]) {
   return rows ? rows * 22 + 22 : 0;
 }
 
+/** How wide a note shown in full is. */
+const NOTE_W = 400;
+
+/** About how tall a note shown in full is, for placing what comes beneath it. */
+function noteHeight(text: string) {
+  const lines = text.split("\n").reduce((n, line) => n + (line.trim() ? Math.ceil(line.length / 58) : 0.6), 0);
+  return 60 + Math.ceil(lines * 21);
+}
+
 /** Which way a map reads: what comes first goes at the top, or on the left. */
 type Direction = "down" | "right";
 
@@ -78,6 +88,8 @@ type CardData = {
   options: { choice: string; id: string; name: string; chance: number | null; picked: boolean; possible: boolean }[];
   /** The names of its parts that aren't drawn as cards. */
   holds: string[];
+  /** For a note with no links, which is there to be read: what it says, shown in full. */
+  note: string | null;
 };
 
 function Card({ data }: NodeProps<RFNode<CardData>>) {
@@ -90,7 +102,7 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
   return (
     <div
       className={["card", node.unwritten && "unwritten", isDropped(node) && "dead", out && "out", selected && "selected", recent && "recent", dim && "dim", entering && "entering", leaving && "leaving", linking && "linking"].filter(Boolean).join(" ")}
-      style={{ borderLeftColor: nodeColor(node), width: W }}
+      style={{ borderLeftColor: nodeColor(node), width: data.note ? NOTE_W : W }}
     >
       {/* Links point child → parent, and parents come first: leave from that side. */}
       <Handle type="source" position={direction === "down" ? Position.Top : Position.Left} />
@@ -126,6 +138,7 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
           <span className="card-foot-k" title={`${l.about ? `${l.about}. ` : ""}${labelOf(l.name)}: ${l.text.length > 400 ? `${l.text.slice(0, 400)}…` : l.text}`}>{labelOf(l.name)}</span> <span className="card-foot-v"><Brackets text={l.text} /></span>
         </div>
       ))}
+      {data.note && <div className="markdown card-note" dangerouslySetInnerHTML={{ __html: renderMarkdown(data.note) }} />}
       {options.length > 0 && (
         <div className="card-opts nodrag nopan">
           {options.map((o) => (
@@ -559,6 +572,13 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
     return out;
   }, [g.nodes, g.worlds.vars, folded, ws.byId]);
   const cardHeight = (n: GraphNode) => nodeHeight(n) + optionsHeight(cardOptions.get(n.id) ?? []);
+  // A note with no links isn't part of the structure: it's there to be read, as what a workspace is about
+  // is. So it's shown in full, and set to the left of everything else, where a map starts.
+  const linked = useMemo(() => new Set(baseLinks.flatMap((e) => [e.from, e.to])), [baseLinks]);
+  const freeNote = (n: GraphNode): string | null => {
+    const body = n.cells.body?.value;
+    return isNote(n) && !n.unwritten && !linked.has(n.id) && typeof body === "string" && body.trim() ? body : null;
+  };
   // A table whose rows aren't cards has one of its own, if they've anything to say: what each says for
   // itself, and what it's part of, which nothing else on the map shows.
   const tables = useMemo(() => {
@@ -950,7 +970,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
       JSON.stringify([
         [...visible].sort(),
         layoutEdges.map((e) => [e.from, e.to, e.kind]),
-        g.nodes.filter((n) => visible.has(n.id)).map((n) => [n.name.length, badgesOf(n).length, cardOptions.get(n.id)?.length ?? 0]),
+        g.nodes.filter((n) => visible.has(n.id)).map((n) => [n.name.length, badgesOf(n).length, cardOptions.get(n.id)?.length ?? 0, freeNote(n)?.length ?? 0]),
         layoutPref.direction,
         tables.map((t) => [t.id, t.lines.length]),
       ]),
@@ -973,7 +993,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
           "elk.separateConnectedComponents": "true",
           "elk.spacing.componentComponent": "60",
         },
-        children: [...nodes.map((n) => ({ id: n.id, width: W, height: cardHeight(n) })), ...tables.filter((t) => visible.has(t.id)).map((t) => ({ id: t.id, width: TABLE_W, height: tableHeight(t.lines.length) }))],
+        children: [...nodes.filter((n) => !freeNote(n)).map((n) => ({ id: n.id, width: W, height: cardHeight(n) })), ...tables.filter((t) => visible.has(t.id)).map((t) => ({ id: t.id, width: TABLE_W, height: tableHeight(t.lines.length) }))],
         edges: layoutEdges.map((e, i) => {
           const { parent, child } = ws.info(e.kind)?.reversed ? { parent: e.from, child: e.to } : { parent: e.to, child: e.from };
           return { id: `s${i}`, sources: [child], targets: [parent] };
@@ -981,7 +1001,14 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
       })
       .then((res) => {
         if (cancelled) return;
-        const target = new Map((res.children ?? []).map((c) => [c.id, { x: c.x ?? 0, y: c.y ?? 0 }]));
+        const notes = nodes.filter((n) => freeNote(n));
+        const aside = notes.length ? NOTE_W + 60 : 0;
+        const target = new Map((res.children ?? []).map((c) => [c.id, { x: (c.x ?? 0) + aside, y: c.y ?? 0 }]));
+        let below = 0;
+        for (const n of notes) {
+          target.set(n.id, { x: 0, y: below });
+          below += nodeHeight(n) + noteHeight(freeNote(n)!) + 26;
+        }
         const ids = [...nodes.map((n) => n.id), ...tables.filter((t) => visible.has(t.id)).map((t) => t.id)];
         setLayout({ ids, target });
         updateNodeInternals(ids);
@@ -998,8 +1025,8 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
           const bounds = {
             x: 0,
             y: 0,
-            width: Math.max(1, ...kids.map((c) => (c.x ?? 0) + (c.width ?? 0))),
-            height: Math.max(1, ...kids.map((c) => (c.y ?? 0) + (c.height ?? 0))),
+            width: Math.max(1, NOTE_W * Math.sign(aside), ...kids.map((c) => (c.x ?? 0) + (c.width ?? 0) + aside)),
+            height: Math.max(1, below, ...kids.map((c) => (c.y ?? 0) + (c.height ?? 0))),
           };
           requestAnimationFrame(() => fitBounds(bounds, { padding: 0.08, duration: FIT_MS }));
           return;
@@ -1116,8 +1143,8 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
             position: gone ? leaving.current.get(id)! : pos.get(id)!,
             selectable: !gone,
             // Known sizes up front: lets the minimap draw before React Flow measures.
-            initialWidth: W,
-            initialHeight: cardHeight(node),
+            initialWidth: freeNote(node) ? NOTE_W : W,
+            initialHeight: cardHeight(node) + (freeNote(node) ? noteHeight(freeNote(node)!) : 0),
             selected: id === selected,
             data: {
               ws,
@@ -1134,6 +1161,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
               // A row is called by its key, under the tables it's in.
               title: node.row ? String(node.row.key) : node.name,
               options: cardOptions.get(id) ?? [],
+              note: freeNote(node),
               // What a table's card says its rows are part of doesn't need saying again here.
               holds: ws.view!.edges.filter((l) => l.to === id && l.components.includes("part_of") && folded.has(l.from) && !tables.some((t) => t.rows.has(l.from))).map((l) => ws.byId.get(l.from)?.name ?? ""),
               kinds: [

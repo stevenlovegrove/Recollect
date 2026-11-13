@@ -1,9 +1,0 @@
-id: 01a1d222-543d-7512-8707-16c8e4eda5b3
-cells:
-  name: Two silver
-links:
-- to: 01a1d222-543d-7512-8707-16bfdebef0bd
-  components:
-  - alternative
-  cells:
-    weight: 1.0

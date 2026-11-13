@@ -1,0 +1,16 @@
+id: 01a1d3e5-c0e9-775d-a345-fe9892068869
+components:
+- notes
+- requires
+- value
+cells:
+  body: Nobody can work out from an armchair what the weather is. An answer has to say why finding out about the world takes observation.
+  name: It has to explain why we have to look
+formulas:
+  value: or(answer.chosen.explains_observation, true)
+links:
+- to: 01a1d3e5-c0e9-775d-a345-fe91d4cd886e
+  components:
+  - label
+  cells:
+    called: answer

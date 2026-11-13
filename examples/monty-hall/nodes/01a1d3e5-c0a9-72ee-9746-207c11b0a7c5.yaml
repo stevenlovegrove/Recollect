@@ -1,0 +1,21 @@
+id: 01a1d3e5-c0a9-72ee-9746-207c11b0a7c5
+components:
+- notes
+cells:
+  body: |-
+    A game show has three doors, with a car behind one and goats behind the other two. You pick a door. The host, Monty, knows where the car is: he opens one of the other two doors to show a goat, then offers you the chance to switch to the door that's left. Should you?
+
+    Most people say it makes no difference. In fact **switching wins two times in three**, and sticking only one time in three.
+
+    Here it's four questions, asked in order:
+
+    1. Where the car is.
+    2. Which door you pick.
+    3. Which door Monty opens: never yours, and never the car's.
+    4. Whether you stick or switch.
+
+    **Things to try**
+
+    - Pin your pick and the door Monty opens, and see the probability that the car is behind each door.
+    - Open **Decisions** to compare sticking with switching.
+  name: About this example

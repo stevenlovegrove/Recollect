@@ -1,0 +1,29 @@
+id: 01a1d3e5-c0c6-74c1-b0b4-664a4f901a7c
+cells:
+  name: Sock[4]
+  pair: 2
+links:
+- to: 01a1d3e5-c0c6-74c1-b0b4-6641e6623bbf
+  components:
+  - part_of
+- to: 01a1d3e5-c0c6-74c1-b0b4-6642523de438
+  components:
+  - part_of
+- to: 01a1d3e5-c0c6-74c1-b0b4-6643a47627ae
+  components:
+  - part_of
+- to: 01a1d3e5-c0c6-74c1-b0b4-66442bc2048e
+  components:
+  - alternative
+  cells:
+    weight: 1.0
+- to: 01a1d3e5-c0c6-74c1-b0b4-66451ffeccda
+  components:
+  - alternative
+  cells:
+    weight: 1.0
+- to: 01a1d3e5-c0c6-74c1-b0b4-66468fc52f27
+  components:
+  - alternative
+  cells:
+    weight: 1.0

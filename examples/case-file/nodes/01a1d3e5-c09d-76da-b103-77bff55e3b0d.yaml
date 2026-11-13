@@ -1,0 +1,13 @@
+id: 01a1d3e5-c09d-76da-b103-77bff55e3b0d
+components:
+- notes
+cells:
+  body: Mrs Dale was at the next table, and thinks he went just after nine. She'd had a few.
+  left_at: 10
+  name: At about 9:10, as Mrs Dale says
+links:
+- to: 01a1d3e5-c09d-76da-b103-77bd68224e6d
+  components:
+  - alternative
+  cells:
+    weight: 1.0

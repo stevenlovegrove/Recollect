@@ -1,0 +1,13 @@
+id: 01a1d3e5-c0b8-7761-a515-32f0f97962c3
+components:
+- decision
+- uncertain
+cells:
+  name: Which coin is left in the box?
+links:
+- to: 01a1d3e5-c0b8-7761-a515-32ee26b807ab
+  components:
+  - within
+- to: 01a1d3e5-c0b8-7761-a515-32ef7f334b62
+  components:
+  - excludes

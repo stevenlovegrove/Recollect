@@ -1,0 +1,13 @@
+id: 01a1d3e5-c0e3-765d-b401-1f94a7438372
+components:
+- decision
+- notes
+- options
+cells:
+  body: 'You''re on a footbridge beside a large man. Pushing him onto the track would stop the trolley. It isn''t sent anywhere: his body is what stops it, so without him the five would die.'
+  body_stops_it: true
+  name: Push the man?
+  options:
+  - yes
+  - no
+  sent_away: false

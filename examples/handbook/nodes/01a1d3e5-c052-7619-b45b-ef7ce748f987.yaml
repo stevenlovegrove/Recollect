@@ -1,0 +1,11 @@
+id: 01a1d3e5-c052-7619-b45b-ef7ce748f987
+components:
+- notes
+- risk
+cells:
+  body: 'A risk: something that could go wrong, linked to the work it threatens. It only matters in the worlds where that work is needed.'
+  name: The tagging tool mangles tables
+links:
+- to: 01a1d3e5-c052-7619-b45b-ef7a76c7e355
+  components:
+  - contradicts

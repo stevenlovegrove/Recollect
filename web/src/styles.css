@@ -3632,3 +3632,25 @@ button.icon.act.revert:hover {
   border-color: var(--c-requires);
   color: var(--c-requires);
 }
+
+/* A note shown in full on its card. */
+.card-note {
+  font-size: 12.5px;
+  margin-top: 4px;
+  white-space: normal;
+}
+.card-note p:first-child {
+  margin-top: 0;
+}
+.card-note p:last-child,
+.card-note ul:last-child,
+.card-note ol:last-child {
+  margin-bottom: 0;
+}
+.card-note ul,
+.card-note ol {
+  margin: 0.4em 0;
+}
+.card-note li {
+  margin: 0.15em 0;
+}

@@ -1,0 +1,25 @@
+id: 01a1d3e5-c0e3-765d-b401-1f9284531d2f
+components:
+- notes
+cells:
+  body: |-
+    A runaway trolley will kill five people.
+
+    - **The switch.** You can send it down a side track, where it will kill one.
+    - **The footbridge.** You can only stop it by pushing a man into its path.
+    - **The loop.** The side track loops back, and the one person on it stops the trolley with their body.
+
+    What you do in each case is yours to choose. Three things are worked out from your choices, each true or false:
+
+    - The most lives are saved.
+    - You kill no one.
+    - No one is used as a means.
+
+    Each is only a value until you **require** it, which turns it into a principle: then only the choices that keep it true are left.
+
+    **Things to try**
+
+    - Click **require** on a value's card, and see what it leaves you free to do.
+    - Require two, and see whether anything is left.
+    - Most people would pull the switch and wouldn't push the man. Pin those two, and see which values survive and what they say about the loop.
+  name: About this example

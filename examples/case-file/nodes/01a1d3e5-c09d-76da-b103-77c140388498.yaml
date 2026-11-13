@@ -1,0 +1,13 @@
+id: 01a1d3e5-c09d-76da-b103-77c140388498
+components:
+- notes
+cells:
+  body: Tom says his car was at the garage, so he cycled.
+  minutes: 25
+  name: By bike, 25 minutes
+links:
+- to: 01a1d3e5-c09d-76da-b103-77c0fb8ce977
+  components:
+  - alternative
+  cells:
+    weight: 2.0

@@ -1,0 +1,30 @@
+id: 01a1d3e5-c0da-7317-ac84-d6ca2fbd2191
+components:
+- notes
+- value
+cells:
+  body: 'Keeps freedom and the argument''s steps, and so gives up determinism: not everything is settled beforehand.'
+  name: Libertarianism
+formulas:
+  value: settled.chosen.value = "reject" && past.chosen.value = "accept" && transfer.chosen.value = "accept" && free.chosen.value = "accept"
+links:
+- to: 01a1d3e5-c0da-7317-ac84-d6c276f19307
+  components:
+  - label
+  cells:
+    called: settled
+- to: 01a1d3e5-c0da-7317-ac84-d6c3ec4397ea
+  components:
+  - label
+  cells:
+    called: past
+- to: 01a1d3e5-c0da-7317-ac84-d6c44b67dbe4
+  components:
+  - label
+  cells:
+    called: transfer
+- to: 01a1d3e5-c0da-7317-ac84-d6c5e496400b
+  components:
+  - label
+  cells:
+    called: free

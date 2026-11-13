@@ -1,0 +1,12 @@
+id: 01a1d3e5-c0da-7317-ac84-d6c44b67dbe4
+components:
+- decision
+- notes
+- options
+- uncertain
+cells:
+  body: A premise, and the one the argument turns on. If you have no say over some things, you have no say over whatever they make inevitable.
+  name: What follows from things that aren't up to you isn't up to you either
+  options:
+  - accept
+  - reject

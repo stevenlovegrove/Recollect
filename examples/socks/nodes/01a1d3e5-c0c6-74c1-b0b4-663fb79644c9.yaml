@@ -1,0 +1,19 @@
+id: 01a1d3e5-c0c6-74c1-b0b4-663fb79644c9
+components:
+- notes
+cells:
+  body: |-
+    Two, three or four pairs of socks went in the wash, and you don't know which. Every pair is different from the others. You pull out three socks without looking, and no two of them match. What does that tell you about how many pairs went in?
+
+    Before you looked, each number of pairs was equally likely. Afterwards:
+
+    - **Two pairs is ruled out**, because any three socks from two pairs must include a match.
+    - **Four pairs is more likely than three**, at about 59% to 41%, because three socks are less likely to include a match when there are more pairs to draw from.
+
+    Each sock is drawn from those in the wash, which depends on how many pairs went in, and isn't one that's already out.
+
+    **Things to try**
+
+    - Pin the first sock out, and see how little that changes.
+    - Click a column on the Sock table's card to group the socks by it.
+  name: About this example

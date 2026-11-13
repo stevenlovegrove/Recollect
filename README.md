@@ -26,6 +26,8 @@ npx vite preview               # or serve web/dist with anything
 
 A workspace open in two tabs can only be changed in the first; the other looks, and takes over when the first closes.
 
+A note with no links is there to be read rather than to hold anything together, so the map shows it in full, as markdown, to the left of everything else. That's where each sample says what it is and what to try: its entry in the list of samples is one line.
+
 The GitHub Actions workflow in `.github/workflows/pages.yml` builds the site and publishes it to GitHub Pages.
 
 ## With `recollect serve`

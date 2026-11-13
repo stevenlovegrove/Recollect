@@ -1,3 +1,3 @@
 name = "Monty Hall"
-about = "A game show has three doors, with a car behind one and goats behind the other two. You pick a door. The host, Monty, knows where the car is: he opens one of the other two doors to show a goat, then offers you the chance to switch to the door that's left. Should you? Most people say it makes no difference, but switching wins the car two times in three, and sticking only one time in three. Here it's four questions asked in order: where the car is, which door you pick, which door Monty opens, and whether you stick or switch. Pin your pick and the door Monty opens to see the probability that the car is behind each door, and compare sticking with switching on the Decisions tab."
+about = "Three doors and one car: should you switch after Monty opens a door?"
 systems = ["plan"]

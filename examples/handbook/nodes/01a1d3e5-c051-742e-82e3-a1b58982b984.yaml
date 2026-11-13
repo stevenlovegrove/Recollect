@@ -1,0 +1,10 @@
+id: 01a1d3e5-c051-742e-82e3-a1b58982b984
+components:
+- notes
+cells:
+  body: An option. It shares nothing with the other two, and is finished after four days.
+  name: As a website
+links:
+- to: 01a1d3e5-c051-742e-82e3-a1b20d1b97c5
+  components:
+  - alternative

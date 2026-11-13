@@ -1,0 +1,9 @@
+id: 01a1d3e5-c0b8-7761-a515-32f132a6b88c
+cells:
+  name: Two gold
+links:
+- to: 01a1d3e5-c0b8-7761-a515-32ee26b807ab
+  components:
+  - alternative
+  cells:
+    weight: 1.0

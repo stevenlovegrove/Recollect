@@ -1,0 +1,10 @@
+id: 01a1d3e5-c0c3-7791-92bb-0831df682261
+components:
+- decision
+- options
+- uncertain
+cells:
+  name: The younger
+  options:
+  - boy
+  - girl

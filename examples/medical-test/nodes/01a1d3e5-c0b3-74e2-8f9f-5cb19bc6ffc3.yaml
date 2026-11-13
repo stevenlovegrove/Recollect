@@ -1,0 +1,16 @@
+id: 01a1d3e5-c0b3-74e2-8f9f-5cb19bc6ffc3
+cells:
+  name: You don't
+formulas:
+  positive: test.chosen.positive
+links:
+- to: 01a1d3e5-c0b3-74e2-8f9f-5cafec7da73c
+  components:
+  - alternative
+  cells:
+    weight: 99.0
+- to: 01a1d3e5-c0b3-74e2-8f9f-5cb56156ea43
+  components:
+  - label
+  cells:
+    called: test

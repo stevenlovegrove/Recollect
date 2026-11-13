@@ -1,0 +1,25 @@
+id: 01a1d3e5-c0e3-765d-b401-1f971e238ebf
+components:
+- notes
+- value
+cells:
+  body: True when you act in none of them, since in each the one person dies by what you do. As a principle, it's that some things may not be done whatever they prevent. It's a value until it's required. Require it, from its card, to see what it leaves you free to do.
+  name: You kill no one
+formulas:
+  value: 'all(c in case: c.chosen.value = "no")'
+links:
+- to: 01a1d3e5-c0e3-765d-b401-1f930446b91b
+  components:
+  - label
+  cells:
+    called: case
+- to: 01a1d3e5-c0e3-765d-b401-1f94a7438372
+  components:
+  - label
+  cells:
+    called: case
+- to: 01a1d3e5-c0e3-765d-b401-1f95a534fb55
+  components:
+  - label
+  cells:
+    called: case

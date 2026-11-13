@@ -1,9 +1,0 @@
-id: 01a1d222-543d-7512-8707-16c59069977d
-cells:
-  name: One of each
-links:
-- to: 01a1d222-543d-7512-8707-16bfdebef0bd
-  components:
-  - alternative
-  cells:
-    weight: 1.0
