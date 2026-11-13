@@ -1,0 +1,170 @@
+# Distributions
+
+**Status:** being built, in the order under [Order of building](#order-of-building), which says what's in. The engine's part is `crates/recollect-graph/src/chance.rs`, and the formula language's is in `expr.rs` and `formulas.rs`. For the worlds this extends, see [components.md](components.md#worlds-on-top), and for formulas, [expressions.md](expressions.md).
+
+## Why
+
+A choice with weights says "one of these, this likely each". That covers who took the watch, and it doesn't cover "about three weeks", "5% give or take 1%", or the roll of a die added to another. Today an estimate is one number, a rate is one number, and anything uncertain that isn't a short list has to be made into one.
+
+## The idea: what's uncertain is part of the world
+
+**A world is one way every open choice lands, and one draw of every uncertain quantity.** A distribution isn't a kind of value that formulas combine. It's a quantity that has one ordinary value in each world, as a choice has one option in each.
+
+- **A formula still means what it did.** Decision 1 of [expressions.md](expressions.md) is unchanged: in any world, a formula's value is what ordinary evaluation gives on its inputs' values in that world.
+- **What depends on the same thing stays related.** `x - x` is 0, and two totals that both read the fuel price move together. A design where `+` combined two distributions as if they were unrelated would get both wrong, which is the mistake [DESIGN.md](../DESIGN.md) records for robustness as a number.
+- **A number is a number.** `number` is still the type. Whether a number is uncertain is like whether it differs between worlds: not part of its type, and nothing a formula's author has to think about.
+
+## Writing one
+
+A distribution is written as a formula, so nothing new is saved in a file:
+
+```
+Rate:      normal(0.05, 0.01)
+Estimate:  triangular(2, 3, 6)
+Die:       integers(1, 6)
+Late:      bernoulli(0.2)
+```
+
+| Function | Means |
+|---|---|
+| `normal(mean, sd)` | A bell curve |
+| `lognormal(mean, sd)` | A number whose log is `normal(mean, sd)`, so it's never below 0 |
+| `uniform(low, high)` | Anywhere between two numbers, equally |
+| `triangular(low, likely, high)` | A three-point estimate |
+| `exponential(mean)` | A wait with that average |
+| `between(low, high)` | A normal with 90% of its weight between the two: "about 2 to 4" |
+| `integers(low, high)` | Each whole number from one to the other, equally |
+| `bernoulli(p)` | True with chance `p` |
+
+The arguments are ordinary formulas, so they can read other cells, differ between worlds, and be uncertain themselves: `normal(base.value, 0.1 * base.value)`.
+
+**Each place one is written is its own quantity.** A cell that says `normal(0.05, 0.01)` is one uncertain rate, and everything that reads the cell reads the same rate. Written twice, as `normal(0, 1) + normal(0, 1)`, it's two. A formula that runs for each row of a table, or each node of a kind, or each node a fold goes over, is written once for each, so `growth = normal(0.05, 0.01)` as a column is a draw per year, while every year reading one `Rate` cell is one draw shared.
+
+**A choice over distributions needs nothing of its own.** `car.chosen.cost` is whichever car's cost, world by world, and each can be held differently: one a plain number, one a normal, one a tree.
+
+## How a number is held
+
+A number is a plain number, or a handle to an expression over **draws**. Expressions live in one table shared by every value, and the same expression always gets the same handle, so comparing two is comparing handles, and a memoised cell stops what reads it from rerunning when its expression hasn't changed, as a `Bool` does.
+
+- **A draw is a standard one, with no parameters,** named for where it's written: the node, the cell, and which draw of that formula it is. `normal(mu, sigma)` is an expression over it, so its parameters can be anything a number can. Changing sigma keeps the draw, so what's shown moves smoothly between edits, and two what-ifs are compared on the same draws.
+- **A distribution over a short list is a variable in the diagram,** the same as an `uncertain` decision: its outcomes and their weights. `integers(1, 6)` is one, so two dice added are eleven cases with exact chances, by the code that already does that.
+- **Everything else is a tree,** exact as a function, however it's then read.
+
+Each expression is held in the simplest exact form there is:
+
+| Form | Example | Read |
+|---|---|---|
+| A plain number, or cases | `3`, two dice | Exactly, as today |
+| A named law | `normal(3, 0.5) * 2 + 1`, a sum of unrelated normals | Exactly: its mean, spread and any point of it |
+| A tree | `max(a, b) * rate` | By drawing, saying so |
+
+**Laws are only combined when what they depend on is separate.** A sum of two normals is a normal only if they share no draw. That check is what makes simplifying safe, and a rule can be added one at a time, because the tree is right without it.
+
+**A histogram is for reading, never for working out.** One number's histogram can't answer `x - x`. If a tree is ever too big to keep, what stands in for it is a column of draws lined up with every other column, which still can. A histogram of a person's own data can be a distribution to draw from.
+
+## Truth under uncertainty
+
+`x > 5` is true in some draws and false in others: a distribution over the two. It's held as numbers are.
+
+- **With nothing uncertain behind it but choices and short lists, it's the diagram,** exactly as before.
+- **Otherwise it's a tree,** combined by `&&`, `||` and `!` with the same three values, so `false && undefined` is still false, draw by draw.
+- **"Never" and "always" are said only when they're shown.** `x > 5 && x < 3` simplifies to never. Where simplifying can't settle it, what's said is a chance, with how it was got.
+
+## What's shown, and how it says it was got
+
+Every value shown came about one of three ways, and says which:
+
+| How | Shown as |
+|---|---|
+| Exactly: counted, a named law, or simplified to an answer | The value |
+| By drawing | The value, marked as an estimate, with how many draws and how far out it could be. Everywhere: a card, the table, and what Claude reads |
+| It can't be worked out correctly | An error in the cell saying why. Never a guess |
+
+- **Drawing is repeatable.** A draw's values come from its name, so the same graph gives the same picture, a what-if and the real thing use the same draws, and a memo is still a memo.
+- **A truth that was false in every draw reads "0 in 4,096",** not "never", and nothing is dimmed or ruled out because of it.
+- **How likely counts as possible is the view's to say.** A normal estimate is over 5 days in some draw, always, so a notice like `oversized_task` asks the view for a level and says which it used. What refuses a commit can't depend on a view, so it stays with what's shown always or never.
+
+A cell with a distribution shows its histogram, its middle and how wide it is. One whose value also differs over a choice shows one for each answer, and over something uncertain, the mixture.
+
+## What's known, and what's demanded
+
+`requires` drops the worlds where its value is false, and that has been read two ways that happened to agree:
+
+| Reading | Example | With something uncertain |
+|---|---|---|
+| **This is known** | "The thief arrived by ten" | Drop the draws where it's false, so beliefs shift. Nothing of yours is ruled out |
+| **This is demanded of my choices** | "It has to cost under £4,000" | Rule out the options that don't meet it. How the cost is distributed is untouched |
+
+With only choices, a world is an option, so both drop the same thing. With a distribution they part: read as known, a budget keeps every option and cuts the cost off at £4,000, as if going over couldn't happen. So they're two components:
+
+- **`evidence`:** this is known to be true. It conditions what's uncertain, and never restricts a choice of yours.
+- **`requires`:** your choices have to make this true, with a cell for how surely, which is always unless it says. For each way your choices could go, its chance, given the evidence, has to reach that.
+
+With nothing uncertain, each does exactly what `requires` does now.
+
+**A choice is judged by what's known when it's made.** A `knowing` edge goes from a decision to each uncertain thing that's known by then. A requirement is then judged for each thing that could be known: an option is allowed where its chance of meeting it, given that, reaches the level. That's a value that differs over the known things, so pinning what Monty opens shows which options are left. Choices in a row are worked backward, each later one made as well as it can be. With no `knowing` edge, a choice is made before anything's known, which is what the graph says, and its card says so by name: "judged as chosen before X is known".
+
+A choice that knows an uncertain number, as "decide once the quote's in", has no exact answer here yet, so it's an error in the cell that says so.
+
+## Pinning
+
+- **To a value:** "what if the rate's 6%" puts 0.06 where the draw was. It's the same as typing it in, so a what-if and the real thing can't disagree.
+- **To a range:** "it's under 10" is something found out, the same as evidence.
+
+A sweep is pinning to each of a list of values, with no copy of the graph.
+
+## Collapsing, in a cell
+
+`expected(x)` has been kept out of cells, because one number can't be narrowed. Held as a part of a tree, worked out only once a view has narrowed it, it can be: `chance(cost < 4000)` and `mean(cost)` average over what's uncertain and never over a choice of yours, so each is still a value per way your choices could go. That's what a requirement's level is underneath.
+
+## What changes where
+
+| Where | What |
+|---|---|
+| `recollect-graph/src/chance.rs` | The table of expressions, draws, the families, simplifying, laws, and drawing |
+| `worlds.rs` | A pin can be a value or a range. A chance can come with how it was got |
+| `expr.rs`, `formulas.rs` | A number can be an expression. The families, and `exp`, `ln` and `sqrt`. Each draw written gets its own name, which is why identical parts of a formula can no longer always be worked out once |
+| `plan.rs`, `schedule.rs` | An estimate and a date can be uncertain. The dates are formulas already, so they carry it |
+| `recollect-core/src/views.rs` | A cell's distribution: its law if it has one, its middle and width, a histogram, and how it was got |
+| `web/` | A histogram wherever a number is shown, a fan down a table's rows, and a slider to pin with |
+
+Files don't change: a distribution is a formula, and only its text is saved.
+
+## Limits
+
+- **What's read is numeric unless there's a law.** The tree is exact, and a chance read from it by drawing is an estimate that says so.
+- **A list too long to count is drawn.** `integers(1, 1000000)` isn't a million cases.
+- **Counting worlds counts choices and short lists.** There's no number of draws.
+- **`x = 5` on a number that could be anything has no chance of being true,** and is worth a notice.
+- **The table of expressions is never cleared,** as the diagram isn't.
+- **A loop is still reported if any world has it,** and a draw doesn't change which cells read which.
+
+## What it opens up
+
+- **The cap on distinct values mostly stops mattering for what's uncertain.** Forty uncertain estimates added are one expression, where forty priced choices are 2⁴⁰ cases.
+- **A schedule's dates are right about merging.** The later of two uncertain finishes is later, on average, than either, and working that out draw by draw gets it, where adding averages doesn't. How often each task is the one holding the end up comes with it.
+- **Options are compared fairly.** How often A beats B is counted on the same draws, so a fuel price both depend on cancels.
+- **What an answer is most sensitive to** is which draw its spread follows, read from columns that are already there. It's the same question as what's most worth finding out.
+- **"About three weeks" can be written down** by Claude as `between(2, 4)`, and reviewed like any formula.
+
+## Order of building
+
+| Step | What | State |
+|---|---|---|
+| 1 | Trees and drawing: the families, arithmetic, comparisons and `if` over them, short lists as diagram variables, and a histogram wherever a number is shown, saying how it was got. A requirement on something uncertain is refused, with why | Being built |
+| 2 | Laws: named ones, and the rules that keep them | Being built, a rule at a time |
+| 3 | `evidence` apart from `requires`, with a level, and conditioning on what's uncertain | Not built |
+| 4 | Pinning a quantity to a value or a range | Not built |
+| 5 | `knowing`, and choices worked backward | Not built |
+| 6 | `chance` and `mean` in a cell | Not built |
+
+## How it's checked
+
+| Check | How |
+|---|---|
+| **The core property** | Pick a world and a value for every draw. The tree worked out there is exactly what a plain evaluator gives on ordinary numbers |
+| **Simplifying changes nothing** | Each rule, on random expressions: the same value at every draw tried |
+| **A law is the tree's** | A law's mean, spread and points against the tree's own draws, within what drawing allows |
+| **Without anything uncertain, nothing changed** | Every test and sample from before |
+| **Drawing is repeatable** | The same graph, built twice, gives the same histogram |
+| **The lens is honest** | Pinning a quantity then reading equals typing it in through a real commit, then reading |
