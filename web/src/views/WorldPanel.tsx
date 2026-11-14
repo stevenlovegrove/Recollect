@@ -96,19 +96,21 @@ export function WorldPanel({ ws, onSelect, summary }: { ws: Workspace; onSelect:
           )}
         </span>
         <span className="worlds-tools right">
-          {pinned > 0 && (
-            <button
-              className="icon worlds-clear"
-              aria-label={`Clear ${pinned} pinned`}
-              title={`Clear ${pinned} pinned`}
-              onClick={() => {
-                setStepping(null);
-                ws.setWorld({});
-              }}
-            >
-              ⟲
-            </button>
-          )}
+          {/* Always there, only hidden with nothing pinned, so pinning the first doesn't move anything. */}
+          <button
+            className="icon worlds-clear"
+            style={pinned ? undefined : { visibility: "hidden" }}
+            aria-hidden={!pinned}
+            tabIndex={pinned ? undefined : -1}
+            aria-label={`Clear ${pinned} pinned`}
+            title={`Clear ${pinned} pinned`}
+            onClick={() => {
+              setStepping(null);
+              ws.setWorld({});
+            }}
+          >
+            ⟲
+          </button>
         </span>
         {summary}
       </div>

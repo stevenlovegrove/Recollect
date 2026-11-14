@@ -3713,6 +3713,7 @@ button.icon.act.revert:hover {
 .world-chip-count {
   color: var(--text);
   flex: none;
+  font-variant-numeric: tabular-nums;
 }
 .world-chip-count.none b {
   color: var(--danger);
@@ -3722,6 +3723,18 @@ button.icon.act.revert:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+  /* Unfolds rather than appearing, as the chip folds back up after pinning. */
+  animation: pins-in 0.22s ease-out;
+}
+@keyframes pins-in {
+  from {
+    max-width: 0;
+    opacity: 0;
+  }
+  to {
+    max-width: 320px;
+    opacity: 1;
+  }
 }
 .world-chip-pins::before {
   content: "· ";
@@ -3770,15 +3783,48 @@ button.icon.act.revert:hover {
     opacity: 0.6;
   }
 }
+/* Picking changes colour, never size, and eases into it, so nothing jumps under the pointer. */
+.world-panel .world-opt,
+.world-panel .world-cell,
+.world-panel .world-cell button,
+.world-panel .board-cell,
+.world-panel .board-small button,
+.world-chip,
+.worlds-clear {
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+/* A belief keeps its width as it changes, from 33% to 100% and back, so its neighbours stay put. */
+.world-panel .world-opt .muted {
+  display: inline-block;
+  min-width: 5ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.world-card {
+  transition: min-width 0.15s ease;
+}
 @media (prefers-reduced-motion: reduce) {
-  .world-card {
+  .world-card,
+  .world-chip-pins {
     animation: none;
+  }
+  .world-card,
+  .world-panel .world-opt,
+  .world-panel .world-cell,
+  .world-panel .world-cell button,
+  .world-chip {
+    transition: none;
   }
 }
 .world-card .world-chip {
   border-color: transparent;
   background: none;
   overflow: hidden;
+}
+/* Room for the count to change, from 18 worlds to 1 world, without the head changing width. */
+.world-card .world-chip-count {
+  min-width: 9ch;
+  text-align: right;
 }
 .world-card:has(.drawing-frame) {
   width: min(760px, calc(100vw - 24px));

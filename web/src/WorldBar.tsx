@@ -19,15 +19,17 @@ function pinnedList(ws: Workspace): string[] {
   return said;
 }
 
-/** How many worlds, and what's pinned: the chip, and the head of what it grows into. */
+/** How many worlds, and what's pinned: the chip, and the head of what it grows into. Open, what's
+ *  pinned is plain from the choices themselves, so it isn't said again, and pinning one doesn't make
+ *  the head grow and move things out from under the pointer. */
 function Summary({ ws, open, onToggle }: { ws: Workspace; open: boolean; onToggle: () => void }) {
   const count = ws.view!.worlds.count;
   const said = pinnedList(ws);
   // Short enough for the chip; all of it on hover.
-  const pins = !said.length ? null : said.length <= 2 ? said.join(", ") : `${said.length} pinned`;
+  const pins = open || !said.length ? null : said.length <= 2 ? said.join(", ") : `${said.length} pinned`;
   return (
     <button
-      className={`world-chip ${pins ? "narrowed" : ""}`}
+      className={`world-chip ${said.length ? "narrowed" : ""}`}
       onClick={onToggle}
       aria-expanded={open}
       title={[open ? "Fold the worlds away (w)" : "Every choice, and what's left (w)", ...said].join("\n")}
@@ -57,15 +59,19 @@ export function Worlds({ ws, open, onOpen, onSelect }: { ws: Workspace; open: bo
     document.addEventListener("pointerdown", away);
     return () => document.removeEventListener("pointerdown", away);
   }, [open, onOpen]);
-  // Grown from the chip, centred on it, and slid back onto the screen if that would run off it.
+  // While it's open it only ever grows, so what's under the pointer stays put as choices are pinned and
+  // their percentages come and go. It starts again from what it holds each time it opens.
+  const widest = useRef(0);
   useLayoutEffect(() => {
     const el = card.current;
-    if (!open || !el) return;
-    el.style.marginLeft = "0px";
-    const box = el.getBoundingClientRect();
-    const margin = 12;
-    const shift = box.left < margin ? margin - box.left : box.right > window.innerWidth - margin ? window.innerWidth - margin - box.right : 0;
-    el.style.marginLeft = `${shift}px`;
+    if (!open || !el) {
+      widest.current = 0;
+      return;
+    }
+    el.style.minWidth = "";
+    const width = el.getBoundingClientRect().width;
+    widest.current = Math.min(Math.max(widest.current, width), window.innerWidth - 24);
+    el.style.minWidth = `${widest.current}px`;
   });
   if (!hasWorlds(ws)) return null;
   const toggle = () => onOpen(!open);
