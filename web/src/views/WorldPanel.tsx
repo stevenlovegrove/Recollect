@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
-import type { Cell, GraphNode, OptionView, VarView, World } from "../api";
+import type { OptionView, VarView, World } from "../api";
 import type { ViewProps } from "./MapView";
-import { CellValue, BELIEF_MEANS, beliefText as percent } from "../bits";
-import { label } from "../theme";
+import type { Workspace } from "../workspace";
+import { BELIEF_MEANS, beliefText as percent } from "../bits";
 import { DrawingFrame } from "./DrawingFrame";
 
-const DEFAULT = "default";
+export const DEFAULT = "default";
 
 /** Which drawing to show is per viewer and per workspace, and it's fine if it can't be remembered. */
-function useRemembered(key: string): [string, (v: string) => void] {
+export function useRemembered(key: string): [string, (v: string) => void] {
   const [value, setValue] = useState(DEFAULT);
   useEffect(() => {
     try {
@@ -31,13 +31,15 @@ function useRemembered(key: string): [string, (v: string) => void] {
 }
 
 /**
- * What's still possible. Every open choice and its options: pin one and everything narrows, on this
- * tab and everywhere else, with nothing saved. For a puzzle, the worlds left are its solutions.
+ * What's still possible: every open choice and its options, or a workspace's own drawing of them. Pin
+ * one and everything narrows, on every page, with nothing saved. For a puzzle, the worlds left are its
+ * solutions. It's what the worlds chip opens into, wherever it is.
  */
-export function WorldsView({ ws, onSelect }: ViewProps) {
+export function WorldPanel({ ws, onSelect, onClose }: { ws: Workspace; onSelect: (id: string | null) => void; onClose: () => void }) {
   const g = ws.view!;
   const w = g.worlds;
-  const pinned = Object.keys(w.picks).length;
+  const quantities = w.quantities ?? [];
+  const pinned = Object.keys(w.picks).length + quantities.length;
   // Stepping through solutions pins every choice, which leaves one, so remember the list it was in.
   const [stepping, setStepping] = useState<{ list: World[]; at: number } | null>(null);
   useEffect(() => {
@@ -56,37 +58,15 @@ export function WorldsView({ ws, onSelect }: ViewProps) {
   const drawing = drawings.find((n) => n.id === wanted);
   const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => setFailed(null), [drawing?.id]);
-  const [remembered, setShowing] = useRemembered(`recollect.worlds-showing:${g.workspace.id}`);
-  const showing = remembered === DEFAULT ? "left" : remembered;
-
-  if (!w.vars.length && !drawing && !drawings.length) {
-    return (
-      <div className="pad empty">
-        <h3>Nothing is open</h3>
-        <p className="muted">Every decision here has been made, so there's only one world.</p>
-      </div>
-    );
-  }
+  const nameOf = (id: string) => ws.byId.get(id)?.name ?? "something";
 
   const options = w.vars.flatMap((v) => v.options.map((o) => o.name));
   const shared = w.vars.length > 0 && new Set(options).size === w.vars[0].options.length && w.vars.every((v) => v.options.length === w.vars[0].options.length);
   const atInfo = (v: VarView) => ws.byId.get(v.id)?.cells.at?.value as { row: number; col: number } | undefined;
   const isBoard = w.vars.length > 0 && w.vars.every((v) => atInfo(v));
-  const summaries = g.cells.filter((c) => c.summary);
-  // Differs between the worlds left, or in any world at all, whatever's pinned or ruled out, as a
-  // puzzle's constraints are.
-  const differsLeft = (c: Cell) => !!c.vars?.length;
-  const differsAny = (c: Cell) => !!c.varies;
-  const differs = (c: Cell) => (showing === "all" ? true : showing === "any" ? differsAny(c) : differsLeft(c));
-  // What a node says that's worth a column: what its systems summarise it by, and any of the workspace's
-  // own cells that are worked out, like a car's cost a year.
-  const shownOf = (n: GraphNode) => [...summaries.map((c) => c.name).filter((k) => n.cells[k]), ...Object.keys(n.cells).filter((k) => !ws.cellInfo(k) && n.cells[k].formula !== undefined)];
-  // A choice and its options say what they are above.
-  const above = new Set(w.vars.flatMap((v) => [v.id, ...v.options.map((o) => o.id)]));
-  const values = g.nodes.filter((n) => !above.has(n.id) && shownOf(n).some((k) => differs(n.cells[k])));
 
   return (
-    <div className="scroll pad worlds">
+    <div className="world-panel">
       <div className="worlds-head">
         <div className={`world-count ${w.count === "0" ? "none" : ""}`}>
           <b>{w.count === "0" ? "No worlds" : Number(w.count).toLocaleString()}</b>{" "}
@@ -117,7 +97,7 @@ export function WorldsView({ ws, onSelect }: ViewProps) {
           <label className="drawing-pick small">
             <span className="muted">Show</span>{" "}
             <select value={drawing?.id ?? DEFAULT} onChange={(e) => setWanted(e.target.value)}>
-              <option value={DEFAULT}>Default</option>
+              <option value={DEFAULT}>Choices</option>
               {drawings.map((n) => (
                 <option key={n.id} value={n.id}>
                   {n.name}
@@ -126,12 +106,29 @@ export function WorldsView({ ws, onSelect }: ViewProps) {
             </select>
           </label>
         )}
+        <button className="icon world-panel-close" onClick={onClose} aria-label="Close" title="Close (esc)">
+          ×
+        </button>
       </div>
+      {quantities.length > 0 && (
+        <div className="world-pins">
+          {quantities.map((q) => (
+            <span key={q.key} className={`world-pin ${q.refused ? "refused" : ""}`} title={q.refused ? `Couldn't be pinned: ${q.refused}` : q.text.includes("..") ? "Known to be in this range: only the draws where it is count" : "Pinned to this value: the same as typing it in"}>
+              {nameOf(q.node)}
+              {q.cell !== "value" ? ` ${q.cell}` : ""}: <b>{q.text.includes("..") ? `in ${q.text}` : q.text}</b>
+              {q.refused && " ⚠"}
+              <button className="icon" aria-label="Unpin" onClick={() => ws.pin(q.key, null)}>
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       {drawing && (
         <>
           {failed && (
             <div className="error">
-              “{drawing.name}” couldn't be drawn, so this is the default view: {failed}{" "}
+              “{drawing.name}” couldn't be drawn, so these are the choices instead: {failed}{" "}
               <button className="link" onClick={() => onSelect(drawing.id)}>
                 Look at its source
               </button>
@@ -142,44 +139,20 @@ export function WorldsView({ ws, onSelect }: ViewProps) {
           </div>
         </>
       )}
-      {(!drawing || failed) && (
-        <>
-          <p className="muted small">
-            Click to pin a choice. Solid means pinned, a dot means it's the only one left, and blank means no world lands there.
-            {w.vars.some((v) => v.uncertain) && " For what's uncertain, the percentage is the belief in each: how strongly it's believed given the evidence and whatever's pinned, so it changes as you pin things."}
-          </p>
-          {!w.vars.length ? <p className="muted">Every decision here has been made, so there's only one world.</p> : isBoard ? <Board ws={ws} /> : shared ? <Grid ws={ws} /> : <Lists ws={ws} />}
-        </>
-      )}
+      {(!drawing || failed) &&
+        (!w.vars.length ? (
+          <p className="muted small">Every decision here has been made, so there's only one world.</p>
+        ) : (
+          <>
+            {isBoard ? <Board ws={ws} /> : shared ? <Grid ws={ws} /> : <Lists ws={ws} />}
+            <p className="muted small world-hint">
+              Click to pin a choice, and again to let it go. Solid means pinned, a dot means it's the only one left, and blank means no world lands there.
+              {w.vars.some((v) => v.uncertain) && " For what's uncertain, the percentage is the belief in each: how strongly it's believed given the evidence and whatever's pinned, so it changes as you pin things."}
+            </p>
+          </>
+        ))}
+      {pinned > 0 && <p className="muted small">Every page shows what's true if so. Nothing is saved.</p>}
       <WorthFindingOut ws={ws} onSelect={onSelect} />
-
-      {g.nodes.some((n) => !above.has(n.id) && shownOf(n).length) && (
-        <section className="world-values">
-          <h4>
-            What that makes things{" "}
-            <select className="small" value={showing} onChange={(e) => setShowing(e.target.value)}>
-              <option value="left">that differ between the worlds left</option>
-              <option value="any">that differ between any worlds</option>
-              <option value="all">all of them</option>
-            </select>
-          </h4>
-          {!values.length && <p className="muted small">Nothing does.</p>}
-          <table className="sheet">
-            <tbody>
-              {values.map((n) => (
-                <tr key={n.id} onClick={() => onSelect(n.id)}>
-                  <td className="sheet-name">{n.name}</td>
-                  {shownOf(n).map((k) => (
-                    <td key={k}>
-                      <span className="muted small">{label(k)}</span> <CellValue ws={ws} cell={n.cells[k]} onSelect={onSelect} component={k} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      )}
     </div>
   );
 }

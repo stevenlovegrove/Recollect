@@ -100,7 +100,7 @@ A node with `requires` and a true-or-false value is a demand on choices: only th
 A node with `evidence` is something known to be true: it rules out the worlds, and the draws, where it's false, and never a choice. Use `evidence` for what was observed and `requires` for what's wanted. \
 To reuse logic, a node with a `macro` cell {params: [t], body: \"t.estimate * 100\"} is a function its callers link to with a label. A formula with a type error or an unknown input is refused, with the reason.\n\
 \n\
-To show a problem the way it's really thought about, add a node with a `drawing` cell holding TypeScript: `export function draw(world: World): string` returns SVG or HTML, and the Worlds tab can show it. \
+To show a problem the way it's really thought about, add a node with a `drawing` cell holding TypeScript: `export function draw(world: World): string` returns SVG or HTML, and the app's worlds panel can show it. \
 world.choices is [{id, name, options: [{id, name, possible, picked, gap, weight}]}], already narrowed to what's pinned, and world.nodes is [{id, name, cells}], with world.edges, world.count and world.picks. \
 An element with data-pin-choice and data-pin-option pins that option when clicked, and unpins it if it's already pinned. Colours are CSS variables: --text, --muted, --accent, --bg, --panel, --border. \
 It runs sandboxed with no network, no DOM and no memory between worlds, so everything it shows has to come from `world`, and anything that would load or run something is removed from what it returns. There can be several drawings.";

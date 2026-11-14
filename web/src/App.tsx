@@ -6,7 +6,6 @@ import type { Status } from "./backend";
 import { MapView } from "./views/MapView";
 import { OutlineView } from "./views/OutlineView";
 import { TableView } from "./views/TableView";
-import { WorldsView } from "./views/WorldsView";
 import { DecisionsView } from "./views/DecisionsView";
 import { WorkView } from "./views/WorkView";
 import { TimelineView } from "./views/TimelineView";
@@ -16,16 +15,17 @@ import { FilesView } from "./views/FilesView";
 import { EdgeInspector, Inspector, NewNodePanel, type NodeTemplate } from "./Inspector";
 import { parseEdgeKey, tickOp } from "./bits";
 import { ContextMenu, type CtxTarget } from "./ContextMenu";
-import { WorldBar } from "./WorldBar";
+import { Worlds, hasWorlds } from "./WorldBar";
 import { ViewIcon } from "./ViewNav";
+import { DdItemButton, Dropdown } from "./Dropdown";
 import { SamplePicker, Welcome } from "./Welcome";
 import { isDropped, label } from "./theme";
 import { AskHost, askSure, askWhy } from "./Ask";
 import { BottomNav } from "./ViewNav";
 
-type Tab = "map" | "outline" | "table" | "worlds" | "decisions" | "work" | "timeline" | "checks" | "history" | "files";
+type Tab = "map" | "outline" | "table" | "decisions" | "work" | "timeline" | "checks" | "history" | "files";
 
-/** Views for looking after a workspace rather than working in it: reached from its menu, not the tabs. */
+/** Views for looking after a workspace rather than working in it: behind ⋯ at the end of the tabs. */
 const MENU_TABS: Tab[] = ["files", "history", "checks"];
 
 function hashTab(): Tab {
@@ -48,6 +48,8 @@ export function App() {
     setSelected(id);
   };
   const [sheet, setSheet] = useState(false);
+  // The worlds panel, open over whichever page is showing.
+  const [worldsOpen, setWorldsOpen] = useState(false);
   const [ctx, setCtx] = useState<CtxTarget | null>(null);
   const [command, setCommand] = useState<{ kind: "edit" | "link"; n: number } | null>(null);
   const holdingMeta = useHoldMeta();
@@ -61,7 +63,6 @@ export function App() {
     "map",
     "outline",
     "table",
-    ...(view?.worlds.vars.length ? (["worlds"] as Tab[]) : []),
     ...(systems.includes("plan") ? (["decisions", "work"] as Tab[]) : []),
     ...(systems.includes("schedule") ? (["timeline"] as Tab[]) : []),
   ];
@@ -133,6 +134,7 @@ export function App() {
         if (isTyping(e.target)) (e.target as HTMLElement).blur();
         else if (sheet) setSheet(false);
         else if (picking) setPicking(false);
+        else if (worldsOpen) setWorldsOpen(false);
         else if (creating) setCreating(null);
         else setSelected(null);
         return;
@@ -142,6 +144,7 @@ export function App() {
       const tabIndex = Number(key) - 1;
       if (key === "?") setSheet(!sheet);
       else if (key === "n") startNew({ heading: "New node" });
+      else if (key === "w" && hasWorlds(ws)) setWorldsOpen(!worldsOpen);
       else if (tabIndex >= 0 && tabIndex < tabs.length && key !== "0") setTab(tabs[tabIndex]);
       else if (selNode && key === "c" && ws.partKind) startNew({ heading: `New part of “${selNode.name}”`, parent: selNode.id });
       else if (selNode && key === "s") {
@@ -184,11 +187,7 @@ export function App() {
     work: ws.plan.work.filter((w) => w.standing === "now").length,
   };
   const hot = (t: Tab) => (t === "decisions" && blocking > 0) || (t === "checks" && broken > 0);
-  const openMenuTab = (t: Tab) => {
-    setPicking(false);
-    setTab(t);
-    select(null);
-  };
+  const menuCount = MENU_TABS.filter(hot).reduce((n, t) => n + (counts[t] ?? 0), 0);
 
   const body = (() => {
     const common = { ws, selected, onSelect: select };
@@ -199,8 +198,6 @@ export function App() {
         return <OutlineView {...common} onShowDecisions={showDecisions} onContext={setCtx} />;
       case "table":
         return <TableView {...common} focus={focusTable} />;
-      case "worlds":
-        return <WorldsView {...common} />;
       case "decisions":
         return <DecisionsView {...common} focus={focusDecision} />;
       case "work":
@@ -223,10 +220,7 @@ export function App() {
           <span className="logo">◇</span> <span className="brand-name">Recollect</span>{" "}
           <button className="ws-name" onClick={() => setPicking(!picking)} title={view.workspace.location}>
             <span className="brand-slash">/ </span>
-            <span className="ws-name-text">{view.workspace.name}</span>
-            {MENU_TABS.includes(tab) && <span className="ws-name-view"> · {label(tab)}</span>} ▾
-            {/* Something broken can only come from a hand edit, and shouldn't go unseen behind a menu. */}
-            {broken > 0 && <span className="badge hot" title={`${broken} broken: see Checks`}>{broken}</span>}
+            <span className="ws-name-text">{view.workspace.name}</span> ▾
           </button>
         </div>
         <nav className="tabs">
@@ -238,6 +232,18 @@ export function App() {
             </button>
           ))}
         </nav>
+        <span className={`tabs-more ${MENU_TABS.includes(tab) ? "active" : ""}`} title="Files, history and checks">
+            {/* Something broken can only come from a hand edit, and shouldn't go unseen behind a menu. */}
+            <Dropdown label={<>{MENU_TABS.includes(tab) ? label(tab) : "⋯"}{menuCount > 0 && <span className="badge hot">{menuCount}</span>}</>} active={MENU_TABS.includes(tab)}>
+              {MENU_TABS.map((t) => (
+                <DdItemButton key={t} onClick={() => setTab(t)}>
+                  <ViewIcon name={t} />
+                  <span className="dd-label">{label(t)}</span>
+                  {counts[t] ? <span className={hot(t) ? "badge hot" : "badge"}>{counts[t]}</span> : null}
+                </DdItemButton>
+              ))}
+            </Dropdown>
+          </span>
         <div className="topbar-right">
           <button className="primary key-host new-node" onClick={() => startNew({ heading: "New node" })} title="New node (n)" aria-label="New node">
             <Key k="n" />+<span className="new-node-word"> Node</span>
@@ -247,14 +253,14 @@ export function App() {
       </header>
       {ws.status.readOnly && <div className="at-bar">This workspace is open in another tab, so it can only be looked at here. Close it there, and this tab takes over.</div>}
       {ws.status.state === "failed" && <div className="at-bar error">{ws.status.error} It'll be tried again with the next change.</div>}
-      {/* On the map the worlds are a chip over it instead. */}
-      {tab !== "map" && <WorldBar ws={ws} onShowWorlds={() => setTab("worlds")} />}
+      {/* On the map the worlds chip floats over it instead. */}
+      {tab !== "map" && <Worlds ws={ws} open={worldsOpen} onOpen={setWorldsOpen} onSelect={select} />}
       {ws.error && <div className="error about-error">{ws.error}</div>}
       <main className="main">
         <section className="view">
           {mapOpened.current && (
             <div className={tab === "map" ? "map-layer" : "map-layer hidden"}>
-              <MapView key={mapKey} ws={ws} selected={selected} onSelect={select} active={tab === "map"} onContext={setCtx} onShowTable={showTable} onShowWorlds={() => setTab("worlds")} />
+              <MapView key={mapKey} ws={ws} selected={selected} onSelect={select} active={tab === "map"} onContext={setCtx} onShowTable={showTable} worldsOpen={worldsOpen} onWorldsOpen={setWorldsOpen} />
             </div>
           )}
           {body}
@@ -268,7 +274,7 @@ export function App() {
       </main>
       {/* On a phone the inspector covers the view, so going to a view puts it away. */}
       <BottomNav
-        tabs={tabs}
+        tabs={[...tabs, ...MENU_TABS]}
         tab={tab}
         onTab={(t) => {
           setTab(t);
@@ -311,15 +317,6 @@ export function App() {
                 </button>
               </p>
             )}
-            <div className="ws-views">
-              {MENU_TABS.map((t) => (
-                <button key={t} className={t === tab ? "ws-view active" : "ws-view"} onClick={() => openMenuTab(t)}>
-                  <ViewIcon name={t} />
-                  {label(t)}
-                  {counts[t] ? <span className={hot(t) ? "badge hot" : "badge"}>{counts[t]}</span> : null}
-                </button>
-              ))}
-            </div>
             <hr className="menu-divider" />
             <SamplePicker ws={ws} onOpened={() => setPicking(false)} ownFirst />
           </div>

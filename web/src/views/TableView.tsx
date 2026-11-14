@@ -7,28 +7,50 @@ import { entryOp, holdsFormula } from "../Inspector";
 import { DdItem, Dropdown } from "../Dropdown";
 import { label, nodeColor } from "../theme";
 import { TableGrid, tablesIn } from "./TableGrid";
+import { useRemembered } from "./WorldPanel";
+
+/** Which nodes are rows: all of them, or only those whose cells differ from world to world. */
+type Differ = "left" | "any";
+const DIFFERS: Record<Differ, (c: Cell | undefined) => boolean> = {
+  // Differs between the worlds left, given what's pinned.
+  left: (c) => !!c?.vars?.length,
+  // Differs in any world at all, whatever's pinned or ruled out, as a puzzle's constraints are.
+  any: (c) => !!c?.varies,
+};
 
 /**
- * Rows are nodes and columns are cells, as they really are. Typed-in numbers edit in place. A table a
+ * Rows are nodes and columns are cells, as they really are. Typed-in numbers edit in place. The rows
+ * can be only what differs between worlds, which is what pinning a choice changes. A table a
  * workspace's names make can be shown on its own, as a grid of its rows.
  */
 export function TableView(props: ViewProps & { /** A table asked for from elsewhere; `n` changes each time one is. */ focus?: { name: string; n: number } | null }) {
   const g = props.ws.view!;
   const tables = useMemo(() => tablesIn(g.nodes), [g.nodes]);
-  const [showing, setShowing] = useState<string>(props.focus?.name ?? "");
+  const [showing, setShowing] = useRemembered(`recollect.table-rows:${g.workspace.id}`);
   useEffect(() => {
-    if (props.focus) setShowing(props.focus.name);
+    if (props.focus) setShowing(`table:${props.focus.name}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.focus?.n]);
-  const table = tables.includes(showing) ? showing : "";
-  const pick = tables.length > 0 && (
-    <select className="small" value={table} onChange={(e) => setShowing(e.target.value)} aria-label="Which table">
-      <option value="">Every node</option>
-      {tables.map((t) => (
-        <option key={t} value={t}>
-          {t}
-        </option>
-      ))}
+  const worlds = g.worlds.vars.length > 0;
+  const table = showing.startsWith("table:") && tables.includes(showing.slice(6)) ? showing.slice(6) : "";
+  const differ: Differ | undefined = worlds && (showing === "nodes:left" || showing === "nodes:any") ? (showing.slice(6) as Differ) : undefined;
+  const value = table ? `table:${table}` : differ ? `nodes:${differ}` : "nodes:every";
+  const pick = (tables.length > 0 || worlds) && (
+    <select className="small" value={value} onChange={(e) => setShowing(e.target.value)} aria-label="Which rows">
+      <optgroup label="Nodes">
+        <option value="nodes:every">Every node</option>
+        {worlds && <option value="nodes:left">What differs between the worlds left</option>}
+        {worlds && <option value="nodes:any">What differs in any world</option>}
+      </optgroup>
+      {tables.length > 0 && (
+        <optgroup label="Tables">
+          {tables.map((t) => (
+            <option key={t} value={`table:${t}`}>
+              {t}
+            </option>
+          ))}
+        </optgroup>
+      )}
     </select>
   );
   if (table) {
@@ -42,11 +64,12 @@ export function TableView(props: ViewProps & { /** A table asked for from elsewh
       </div>
     );
   }
-  return <EveryNode {...props} pick={pick} />;
+  return <EveryNode {...props} pick={pick} differ={differ} />;
 }
 
-function EveryNode({ ws, selected, onSelect, pick }: ViewProps & { pick: React.ReactNode }) {
+function EveryNode({ ws, selected, onSelect, pick, differ }: ViewProps & { pick: React.ReactNode; differ?: Differ }) {
   const g = ws.view!;
+  const differs = differ && DIFFERS[differ];
   const all = useMemo(() => {
     const present = new Set(g.nodes.flatMap((n) => Object.keys(n.cells)));
     present.delete("name");
@@ -61,10 +84,18 @@ function EveryNode({ ws, selected, onSelect, pick }: ViewProps & { pick: React.R
     const summaries = all.filter((c) => !ws.cellInfo(c) || ws.cellInfo(c)!.summary);
     return summaries.length ? summaries : all.slice(0, 4);
   }, [all, ws]);
+  // Narrowed to what differs, a choice and its options aren't rows: the worlds panel is where they are.
+  const rows = useMemo(() => {
+    if (!differs) return g.nodes;
+    const choosing = new Set(g.worlds.vars.flatMap((v) => [v.id, ...v.options.map((o) => o.id)]));
+    return g.nodes.filter((n) => !choosing.has(n.id) && all.some((c) => differs(n.cells[c])));
+  }, [g.nodes, g.worlds.vars, all, differs]);
+  // And the columns are what differs, whether or not a card would show it.
+  const differing = useMemo(() => (differs ? all.filter((c) => rows.some((n) => differs(n.cells[c]))) : []), [differs, all, rows]);
   const [hidden, setHidden] = useState<Set<string> | null>(null);
-  const columns = all.filter((c) => (hidden ? !hidden.has(c) : preferred.includes(c)));
+  const columns = all.filter((c) => (hidden ? !hidden.has(c) : differs ? differing.includes(c) : preferred.includes(c)));
   const toggle = (c: string) => {
-    const base = hidden ?? new Set(all.filter((x) => !preferred.includes(x)));
+    const base = hidden ?? new Set(all.filter((x) => !columns.includes(x)));
     const next = new Set(base);
     if (next.has(c)) next.delete(c);
     else next.add(c);
@@ -82,8 +113,9 @@ function EveryNode({ ws, selected, onSelect, pick }: ViewProps & { pick: React.R
             </DdItem>
           ))}
         </Dropdown>
-        <span className="muted">Amber cells just ran. Everything else came from memory.</span>
+        <span className="muted">{differs ? "Only what pinning a choice would change. Cells that don't are faded." : "Amber cells just ran. Everything else came from memory."}</span>
       </div>
+      {differs && !rows.length && <p className="muted">Nothing does.</p>}
       <table className="sheet">
         <thead>
           <tr>
@@ -96,13 +128,13 @@ function EveryNode({ ws, selected, onSelect, pick }: ViewProps & { pick: React.R
           </tr>
         </thead>
         <tbody>
-          {g.nodes.map((n) => (
+          {rows.map((n) => (
             <tr key={n.id} className={`${n.id === selected ? "selected" : ""} ${reading(n.cells.need)?.never ? "pruned" : ""}`} onClick={() => onSelect(n.id)}>
               <td className="sheet-name">
                 <span className="chip-dot" style={{ background: nodeColor(n) }} /> {n.name}
               </td>
               {columns.map((c) => (
-                <td key={c} className={`sheet-cell ${n.cells[c]?.error ? "err" : ""} ${ws.recentCells.has(`${n.id}|${c}`) ? "ran" : ""} ${n.cells[c]?.formula !== undefined ? "formula-cell" : ""}`}>
+                <td key={c} className={`sheet-cell ${n.cells[c]?.error ? "err" : ""} ${ws.recentCells.has(`${n.id}|${c}`) ? "ran" : ""} ${n.cells[c]?.formula !== undefined ? "formula-cell" : ""} ${differs && n.cells[c] && !differs(n.cells[c]) ? "same" : ""}`}>
                   <TableCell ws={ws} node={n} c={c} cell={n.cells[c]} />
                 </td>
               ))}

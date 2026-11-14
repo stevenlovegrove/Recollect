@@ -40,7 +40,7 @@ pub fn install(reg: &mut Registry) {
     reg.cell::<Body>(NOTES, "Notes, in markdown.").initial(json!(""));
     reg.component(SOURCES, "Where this came from, so a claim can be followed back.").icon("↩");
     reg.cell::<Sources>(SOURCES, "Where this came from, so a claim can be followed back.").initial(json!([]));
-    reg.component(DRAWING, "A way of drawing what's still possible, which the Worlds tab can show.").icon("✎");
+    reg.component(DRAWING, "A way of drawing what's still possible, which the worlds panel can show.").icon("✎");
     reg.cell::<Drawing>(DRAWING, "TypeScript exporting draw(world), which returns SVG or HTML.").initial(json!(NEW_DRAWING));
     for (name, about) in RELATIONS {
         reg.edge(name, about);

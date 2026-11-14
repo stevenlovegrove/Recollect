@@ -83,7 +83,7 @@ type Props<T extends string> = {
  *  systems make most worth reaching. */
 function pinned<T extends string>(tabs: T[]): T[] {
   const first = (["map", "outline", "table"] as string[]).filter((t) => tabs.includes(t as T)) as T[];
-  const fourth = (["decisions", "worlds", "timeline"] as string[]).find((t) => tabs.includes(t as T)) as T | undefined;
+  const fourth = (["decisions", "timeline"] as string[]).find((t) => tabs.includes(t as T)) as T | undefined;
   return fourth ? [...first, fourth] : first;
 }
 

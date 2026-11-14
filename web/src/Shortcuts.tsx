@@ -63,6 +63,7 @@ type Row = [keys: string, label: string, needsSelection?: boolean];
 
 const ANYWHERE: Row[] = [
   ["n", "New node"],
+  ["w", "Every choice, and what's left"],
   ["1–9", "Switch tab"],
   ["?", "Keep this sheet open"],
   ["esc", "Close, or clear the selection"],

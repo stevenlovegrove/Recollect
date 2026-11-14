@@ -12,6 +12,6 @@ cells:
 
     **Things to try**
 
-    - Open the **Worlds** tab for how likely each suspect is, and what's most worth finding out next.
+    - Open the worlds chip, top left (or press `w`), for how likely each suspect is, and what's most worth finding out next.
     - Pin an account to see what follows if it's the true one.
   name: About this example

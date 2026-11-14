@@ -447,7 +447,7 @@ function RowTag({ r, ws, onSelect }: { r: MatrixRow; ws: Workspace; onSelect: (i
   return <span className={`tagpill ${r.need.prob >= 0.5 ? "hedge" : ""}`}>{r.need.prob >= 0.5 ? "hedge" : "commits"}</span>;
 }
 
-/** For something uncertain: which other open question would most help to know, as the Worlds tab says. */
+/** For something uncertain: which other open question would most help to know, as the worlds panel says. */
 function WorthKnowing({ m, ws, onSelect }: { m: Matrix; ws: Workspace; onSelect: (id: string | null) => void }) {
   const v = ws.view?.worlds.vars.find((x) => x.id === m.id);
   if (!v || v.sure === undefined) return null;

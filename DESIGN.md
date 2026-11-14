@@ -55,21 +55,20 @@ A cell holds a typed value or a formula, and that's the same whether a person wr
 |---|---|---|
 | **Map** | The graph, laid out by the edges that give it shape or say what comes first, reading down or across. The Links menu chooses which edges shape it, each remembered per workspace in that browser. What a world rules out dims, and nothing moves | Always |
 | **Outline** | The same structure, coarse to fine | Always |
-| **Table** | Nodes against cells. Values and formulas edit in place, as in a spreadsheet, and what just ran is highlighted | Always |
-| **Worlds** | Every open choice and what's still possible. Choices with the same options become a grid, and choices with an `at` are placed on a board. A workspace's own [drawings](docs/drawings.md) can be picked instead, and the choice is remembered | If anything's open, or there's a drawing |
+| **Table** | Nodes against cells. Values and formulas edit in place, as in a spreadsheet, and what just ran is highlighted. The rows can be narrowed to what differs between the worlds left, or in any world, which is what pinning a choice changes; or a table can be shown as a grid of its rows | Always |
 | **Decisions** | Each decision, what each option needs, and whether it's holding work up. Deciding shows what it would change first | `plan` |
 | **Work** | Tasks by where they stand: can start, depends on a decision, waiting, finished, not needed | `plan` |
 | **Timeline** | Dates as a chart, with hatching for how far a date could move | `schedule` |
 
-Three more look after the workspace rather than work in it, so they're reached from its menu (its name, top left) rather than the tabs:
+Three more look after the workspace rather than work in it, so they're behind ⋯ at the end of the tabs (in More, on a phone):
 
 | View | Shows |
 |---|---|
 | **Files** | The workspace's files as they are, read-only, for debugging |
 | **History** | Every change since the workspace was opened, with undo and redo (⌘Z, ⇧⌘Z), and any one change can be taken back on its own |
-| **Checks** | Invariants that are broken, and notices worth a look. Anything broken also shows as a count on the workspace's name, so it isn't hidden by the menu |
+| **Checks** | Invariants that are broken, and notices worth a look. Anything broken also shows as a count on ⋯, so it isn't hidden by the menu |
 
-The world bar above the views says what everything's narrowed to. On the map it folds into a chip at the top left, across from the chip for the map's own view options (search, which nodes and links, focus) at the top right; each has a dot when it's narrowing what's shown.
+**The worlds chip** heads every page, and says how many worlds are left and what's pinned. On the map it floats at the top left, across from the map's own view options (search, which nodes and links, focus) at the top right; each has a dot when it's narrowing what's shown. It opens (or `w`) into one panel, the same on every page: every open choice and what's still possible, where clicking an option pins it. Choices with the same options become a grid, and choices with an `at` are placed on a board. A workspace's own [drawings](docs/drawings.md) can be picked instead, and the choice is remembered. A puzzle's solutions can be stepped through, and for what's uncertain it says what's most worth finding out next. Pinning saves nothing.
 
 ## Claude, over MCP
 

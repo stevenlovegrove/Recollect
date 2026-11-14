@@ -25,7 +25,7 @@ import { type SummaryLine, summaryOf } from "../summary";
 import { DdItem, Dropdown } from "../Dropdown";
 import { Key, isTyping } from "../Shortcuts";
 import type { CtxTarget } from "../ContextMenu";
-import { WorldChip } from "../WorldBar";
+import { Worlds } from "../WorldBar";
 
 export interface ViewProps {
   ws: Workspace;
@@ -536,9 +536,9 @@ function LinkMenu({ ws, drop, onSwap, onDone }: { ws: Workspace; drop: LinkDrop;
   );
 }
 
-type MapProps = ViewProps & { active: boolean; onContext: (t: CtxTarget) => void; /** Show a table's grid, by its name. */ onShowTable?: (name: string) => void; onShowWorlds: () => void };
+type MapProps = ViewProps & { active: boolean; onContext: (t: CtxTarget) => void; /** Show a table's grid, by its name. */ onShowTable?: (name: string) => void; worldsOpen: boolean; onWorldsOpen: (open: boolean) => void };
 
-function MapInner({ ws, selected, onSelect, active, onContext, onShowTable, onShowWorlds }: MapProps) {
+function MapInner({ ws, selected, onSelect, active, onContext, onShowTable, worldsOpen, onWorldsOpen }: MapProps) {
   const view = ws.view!;
   // A row nobody wrote is on the map when something written reads it, and only then.
   const g = useMemo(() => ({ ...view, nodes: [...view.nodes, ...view.unwritten] }), [view]);
@@ -650,9 +650,13 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable, onSh
   const [focus, setFocus] = useState(0);
   const [query, setQuery] = useState("");
   // The view options and the worlds are each a chip over the map, opened when wanted, one at a time.
-  const [panel, setPanel] = useState<"opts" | "worlds" | null>(null);
-  const opts = panel === "opts";
-  const togglePanel = (p: "opts" | "worlds") => setPanel((cur) => (cur === p ? null : p));
+  // Whether the worlds are open is the app's, since every page shares it.
+  const [optsWanted, setOpts] = useState(false);
+  const opts = optsWanted && !worldsOpen;
+  const openOpts = (on: boolean) => {
+    setOpts(on);
+    if (on) onWorldsOpen(false);
+  };
   // Laid-out node list (ids + sizes) and the positions currently on screen (animated).
   const [layout, setLayout] = useState<{ ids: string[]; target: Map<string, XY> }>({ ids: [], target: new Map() });
   const [pos, setPos] = useState<Map<string, XY>>(new Map());
@@ -883,7 +887,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable, onSh
       else if (e.key === "ArrowDown") moveSelection(0, 1);
       else if (e.key === "/") {
         e.preventDefault();
-        setPanel("opts");
+        openOpts(true);
         // Once the options are on screen.
         requestAnimationFrame(() => searchRef.current?.focus());
       }
@@ -1265,7 +1269,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable, onSh
     <div className="map">
       <button
         className={`opts-toggle ${opts ? "open" : ""} ${query || hiddenFacts.size || hiddenRels.size || focus ? "narrowed" : ""}`}
-        onClick={() => togglePanel("opts")}
+        onClick={() => openOpts(!opts)}
         aria-expanded={opts}
         aria-label={opts ? "Hide view options" : "View options"}
         title="View options"
@@ -1276,7 +1280,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable, onSh
           <circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
         </svg>
       </button>
-      <WorldChip ws={ws} open={panel === "worlds"} onToggle={() => togglePanel("worlds")} onShowWorlds={onShowWorlds} />
+      <Worlds ws={ws} open={worldsOpen} onOpen={onWorldsOpen} onSelect={onSelect} floating />
       <div className={`map-toolbar nowrap ${opts ? "opts-open" : ""}`}>
         <span className="key-host search-host">
           <Key k="/" />

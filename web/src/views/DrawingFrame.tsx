@@ -105,6 +105,11 @@ document.addEventListener("click", (e) => {
   if (el) tell({ type: "pin", choice: el.getAttribute("data-pin-choice"), option: el.getAttribute("data-pin-option") });
 });
 
+// Keys pressed in here never reach the app, so Esc is passed on: it closes what the drawing is in.
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape") tell({ type: "escape" });
+});
+
 addEventListener("message", (e) => {
   if (e.source !== parent) return;
   const m = e.data;
@@ -183,6 +188,10 @@ export function DrawingFrame({ ws, source, onFailed }: { ws: ViewProps["ws"]; so
       else if (m.type === "drawn") onFailed(null);
       else if (m.type === "size" && typeof m.height === "number") setHeight(Math.min(Math.max(m.height, 40), 4000));
       else if (m.type === "error") onFailed(String(m.message));
+      else if (m.type === "escape") {
+        frame.current?.blur();
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      }
       else if (m.type === "pin") {
         const choice = ws.view!.worlds.vars.find((v) => v.id === m.choice);
         const option = choice?.options.find((o) => o.id === m.option);

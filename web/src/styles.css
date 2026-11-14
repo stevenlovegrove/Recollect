@@ -226,6 +226,9 @@ pre {
   height: 100%;
 }
 .topbar {
+  /* Above the page, so its menus open over the worlds panel. */
+  position: relative;
+  z-index: 40;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -1910,26 +1913,6 @@ kbd {
 
 /* ---------- the world lens ---------- */
 
-.world-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 6px 14px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-}
-.world-bar.narrowed {
-  background: var(--hl);
-}
-.world-bar-count {
-  border: none;
-  background: none;
-  padding: 2px 4px;
-}
-.world-bar-note {
-  margin-left: auto;
-}
 .at-bar {
   padding: 6px 14px;
   background: var(--recent);
@@ -2657,9 +2640,6 @@ tr.pruned {
 .world-opt.gap {
   border-style: dashed;
 }
-.world-values {
-  margin-top: 18px;
-}
 .worth-finding-out {
   margin-top: 18px;
 }
@@ -2946,7 +2926,7 @@ tr.pruned {
   flex-shrink: 0;
 }
 .topbar .tabs {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
@@ -3275,8 +3255,11 @@ button.icon.act.revert:hover {
   .topbar {
     gap: 10px;
     padding: 6px 10px;
+    /* No menus open from it here, and the views sheet's backdrop covers it. */
+    position: static;
   }
   .topbar .tabs,
+  .tabs-more,
   .brand-name,
   .brand-slash {
     display: none;
@@ -3314,12 +3297,8 @@ button.icon.act.revert:hover {
   .new-node-word {
     display: none;
   }
-  .world-bar,
   .at-bar {
     padding: 6px 10px;
-  }
-  .world-bar-note {
-    margin-left: 0;
   }
 
   .bottom-nav {
@@ -3537,33 +3516,34 @@ button.icon.act.revert:hover {
   margin: 4px 0 8px;
   line-height: 1.45;
 }
-/* Its own views: files, history and checks. */
-.ws-views {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
+/* Files, history and checks, behind ⋯ at the end of the tabs, which take the room up to the right. */
+.tabs-more {
+  margin-right: auto;
 }
-.ws-view {
+.tabs-more .dd-chip {
+  border: none;
+  background: none;
+  color: var(--muted);
+  padding: 6px 10px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   gap: 6px;
 }
-.ws-view .view-icon {
+.tabs-more .dd-chip:hover,
+.tabs-more.active .dd-chip {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.tabs-more .dd-pop .dd-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tabs-more .dd-pop .view-icon {
   width: 18px;
   height: 18px;
   color: var(--muted);
-}
-.ws-view.active {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-.ws-name-view {
-  color: var(--muted);
-  font-weight: normal;
-}
-.ws-name .badge {
-  margin-left: 4px;
 }
 .menu-divider {
   border: none;
@@ -3581,56 +3561,71 @@ button.icon.act.revert:hover {
   margin-bottom: -10px;
 }
 
-/* ---------- the map's chips: view options on the right, worlds on the left ---------- */
+/* ---------- the worlds chip, and the map's view options across from it ---------- */
 .map {
   position: relative;
 }
-/* Round buttons over the map, each with a dot when it narrows what's shown, so a narrowed map
-   never looks like the whole of it. */
-.opts-toggle,
+/* Each has a dot when it narrows what's shown, so a narrowed page never looks like the whole of it. */
 .world-chip {
-  position: absolute;
-  top: 10px;
-  z-index: 12;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   height: 40px;
+  max-width: 100%;
+  padding: 0 14px 0 9px;
+  border-radius: 20px;
+  white-space: nowrap;
+  position: relative;
   color: var(--muted);
   background: var(--panel);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 .opts-toggle {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 12;
   display: grid;
   place-items: center;
-  right: 10px;
   width: 40px;
+  height: 40px;
   padding: 0;
   border-radius: 50%;
+  color: var(--muted);
+  background: var(--panel);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
-.world-chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.map > .world-chip {
+  position: absolute;
+  top: 10px;
   left: 10px;
-  max-width: calc(50% - 20px);
-  padding: 0 14px 0 9px;
-  border-radius: 20px;
-  white-space: nowrap;
+  z-index: 12;
+  max-width: calc(100% - 80px);
 }
 .world-chip .view-icon {
   flex: none;
 }
 .world-chip-count {
   color: var(--text);
+  flex: none;
+}
+.world-chip-pins {
+  color: var(--accent);
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+}
+.world-chip-pins::before {
+  content: "· ";
+  color: var(--muted);
 }
 .opts-toggle.open,
 .world-chip.open {
   color: var(--accent);
   border-color: var(--accent);
 }
-/* The tint is see-through, so it's laid over the panel rather than the map. */
-.world-chip.narrowed,
-.world-pop.narrowed {
+/* The tint is see-through, so it's laid over the panel rather than what's under it. */
+.world-chip.narrowed {
   background: linear-gradient(var(--hl), var(--hl)), var(--panel);
 }
 .opts-toggle.narrowed::after,
@@ -3645,13 +3640,16 @@ button.icon.act.revert:hover {
   background: var(--accent);
   border: 2px solid var(--panel);
 }
+/* Off the map, the chip heads the page, and the panel opens over it. */
+.world-strip {
+  position: relative;
+  z-index: 20;
+  padding: 10px 14px 0;
+}
 .map > .map-toolbar,
 .world-pop {
   position: absolute;
-  top: 58px;
   z-index: 12;
-  width: min(560px, calc(100% - 20px));
-  flex-wrap: wrap;
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 10px;
@@ -3661,7 +3659,10 @@ button.icon.act.revert:hover {
 }
 .map > .map-toolbar {
   display: none;
+  top: 58px;
   right: 10px;
+  width: min(560px, calc(100% - 20px));
+  flex-wrap: wrap;
 }
 .map > .map-toolbar.opts-open {
   display: flex;
@@ -3670,19 +3671,48 @@ button.icon.act.revert:hover {
   flex-basis: 100%;
   margin-left: 0;
 }
+/* Big enough for a board or a drawing, and scrolls rather than run off the page. */
 .world-pop {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   left: 10px;
+  width: min(760px, calc(100% - 20px));
+  max-height: calc(100% - 70px);
+  overflow: auto;
+  padding: 12px 16px;
 }
-.world-pop .world-bar-note {
-  flex-basis: 100%;
-  margin-left: 0;
+.map > .world-pop {
+  top: 58px;
 }
-.world-pop-all {
-  flex-basis: 100%;
-  text-align: left;
+.world-strip > .world-pop {
+  top: calc(100% + 8px);
+  left: 14px;
+  max-height: calc(100vh - 170px);
+}
+.world-panel .worlds-head {
+  position: sticky;
+  top: -12px;
+  z-index: 1;
+  margin: -12px -16px 8px;
+  padding: 12px 52px 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.world-panel .drawing-pick {
+  margin-left: auto;
+}
+/* Always in the corner, however the rest of the head wraps. */
+.world-panel-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+.world-pins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.world-hint {
+  margin: 10px 0 0;
 }
 @media (max-width: 760px) {
   .map > .map-toolbar,
@@ -3690,6 +3720,9 @@ button.icon.act.revert:hover {
     left: 10px;
     right: 10px;
     width: auto;
+  }
+  .world-strip {
+    padding: 8px 10px 0;
   }
 }
 @keyframes opts-in {
@@ -3841,4 +3874,9 @@ button.icon.act.revert:hover {
 }
 .card-note li {
   margin: 0.15em 0;
+}
+
+/* In a table narrowed to what differs between worlds, what doesn't is faded. */
+.sheet-cell.same {
+  opacity: 0.45;
 }

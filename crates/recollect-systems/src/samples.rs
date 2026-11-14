@@ -580,7 +580,7 @@ fn two_dice(b: &mut Build) {
 
 **Things to try**
 
-- Open the **Worlds** tab: each die is something to find out, and pinning one is finding it out.
+- Open the worlds chip, top left (or press `w`): each die is something to find out, and pinning one is finding it out.
 - Pin the first die to 6 in the bar at the top, and see what's left of the total.
 - Select **A seven** and read when it's true: it lists the six ways."#);
     b.formula("First die", "integers(1, 6)").note("First die", "Each whole number from 1 to 6, equally. Written once, so everything that reads it reads the same roll.");
@@ -845,7 +845,7 @@ fn case_file(b: &mut Build) {
 
 **Things to try**
 
-- Open the **Worlds** tab for how likely each suspect is, and what's most worth finding out next.
+- Open the worlds chip, top left (or press `w`), for how likely each suspect is, and what's most worth finding out next.
 - Pin an account to see what follows if it's the true one."#);
     b.note(
         "The case",

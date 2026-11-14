@@ -1,6 +1,6 @@
 # Drawings
 
-A drawing shows a problem the way it's really thought about: a sudoku with its boxes, a colouring as a map. It's a node with a `drawing` component, whose `drawing` cell holds TypeScript, so it's in the log, with who wrote it and why, and can be undone like anything else, and a workspace can have several. The Worlds tab has a **Show** menu to pick one or the default view, and remembers the choice per workspace in that browser.
+A drawing shows a problem the way it's really thought about: a sudoku with its boxes, a colouring as a map. It's a node with a `drawing` component, whose `drawing` cell holds TypeScript, so it's in the log, with who wrote it and why, and can be undone like anything else, and a workspace can have several. The worlds panel, which the worlds chip on every page opens into, has a **Show** menu to pick one or the choices themselves, and remembers the choice per workspace in that browser.
 
 The app's own views stay general. Anything specific to one problem, such as where sudoku's boxes are, belongs in a drawing.
 
@@ -40,7 +40,7 @@ An element with `data-pin-choice` and `data-pin-option` pins that option when it
 
 Colours follow the theme as CSS variables: `--text`, `--muted`, `--accent`, `--bg`, `--panel`, `--border`, `--ok`, `--warn` and `--danger`.
 
-If it throws, doesn't parse or takes more than 2 seconds, the Worlds tab says why and shows the default view.
+If it throws, doesn't parse or takes more than 2 seconds, the worlds panel says why and shows the choices instead.
 
 ## What it can't do
 
