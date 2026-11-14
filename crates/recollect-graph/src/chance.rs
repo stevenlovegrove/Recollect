@@ -18,6 +18,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 type X = u32;
 
+/// The most numbers something that's only ever one of a few is listed as, one by one.
+const MOST_POINTS: usize = 256;
+
 /// How many draws something is read from, when there's no law for it.
 pub const DRAWS: usize = 4096;
 /// How many bars a histogram has.
@@ -1090,6 +1093,30 @@ impl Law {
         }
     }
 
+    /// Where all its weight is on a few numbers: each, and how likely it is, in order.
+    pub fn atoms(&self) -> Option<Vec<(f64, f64)>> {
+        let mut out: Vec<(f64, f64)> = match self {
+            Law::Point(x) => vec![(*x, 1.0)],
+            Law::Mixed(of) => {
+                let mut all = Vec::new();
+                for (share, law) in of {
+                    all.extend(law.atoms()?.into_iter().map(|(x, p)| (x, share * p)));
+                }
+                all
+            }
+            _ => return None,
+        };
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut merged: Vec<(f64, f64)> = Vec::with_capacity(out.len());
+        for (x, p) in out {
+            match merged.last_mut() {
+                Some((y, q)) if *y == x => *q += p,
+                _ => merged.push((x, p)),
+            }
+        }
+        Some(merged)
+    }
+
     /// Its histogram: how much is in each stretch, from what's below each end.
     fn hist(&self) -> Hist {
         let (from, to) = (self.quantile(0.002), self.quantile(0.998));
@@ -1217,6 +1244,10 @@ pub struct Summary {
     /// How much of the time it's below 0, where its histogram crosses 0.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub below0: Option<f64>,
+    /// Where it's only ever one of a few numbers, as a die's total is: each, and how likely it is, in order.
+    /// The histogram then runs from the least of them to the most.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub points: Option<Vec<(f64, f64)>>,
     /// The distribution it is, if it has a name, as it would be written.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub law: Option<String>,
@@ -1231,7 +1262,7 @@ impl Summary {
     /// What a number comes to where there's nothing it could be: undefined, all of the time. Its numbers are
     /// 0 rather than nothing, so whatever reads them never has to ask, and `undefined` says not to.
     pub fn nothing() -> Summary {
-        Summary { mean: 0.0, sd: 0.0, low: 0.0, mid: 0.0, high: 0.0, least: None, most: None, undefined: 1.0, hist: Hist { from: 0.0, to: 0.0, bars: vec![] }, below0: None, law: None, exact: true, draws: 0, error: 0.0 }
+        Summary { mean: 0.0, sd: 0.0, low: 0.0, mid: 0.0, high: 0.0, least: None, most: None, undefined: 1.0, hist: Hist { from: 0.0, to: 0.0, bars: vec![] }, below0: None, points: None, law: None, exact: true, draws: 0, error: 0.0 }
     }
 }
 
@@ -1737,9 +1768,13 @@ impl Reader {
             laws.iter_mut().for_each(|(w, _)| *w /= defined);
             let law = if laws.len() == 1 { laws.remove(0).1 } else { Law::Mixed(laws) };
             let named = if matches!(law, Law::Point(_)) { None } else { law.text() };
-            let hist = law.hist();
+            let points = law.atoms().filter(|a| a.len() > 1 && a.len() <= MOST_POINTS);
+            let mut hist = law.hist();
+            if let Some(points) = &points {
+                (hist.from, hist.to) = (points[0].0, points[points.len() - 1].0);
+            }
             let below0 = (hist.from < 0.0 && hist.to > 0.0).then(|| law.mass(0.0, false));
-            return Summary { mean: law.mean(), sd: law.sd(), low: law.quantile(0.05), mid: law.quantile(0.5), high: law.quantile(0.95), least, most, undefined, hist, below0, law: named, exact: true, draws: 0, error: 0.0 };
+            return Summary { mean: law.mean(), sd: law.sd(), low: law.quantile(0.05), mid: law.quantile(0.5), high: law.quantile(0.95), least, most, undefined, hist, below0, points, law: named, exact: true, draws: 0, error: 0.0 };
         }
 
         let mut values = Vec::new();
@@ -1759,7 +1794,7 @@ impl Reader {
         let draws = if live.iter().any(|s| matches!(&s.value, Term::Rand(r) if self.tied(r))) { self.draws_kept() } else { DRAWS };
         let hist = values.hist();
         let below0 = (hist.from < 0.0 && hist.to > 0.0).then(|| values.0.iter().filter(|(v, _)| *v < 0.0).map(|(_, w)| w).sum::<f64>() / values.total());
-        Summary { mean: values.mean(), sd, low: values.quantile(0.05), mid: values.quantile(0.5), high: values.quantile(0.95), least, most, undefined, hist, below0, law: None, exact: false, draws, error: sd / (draws.max(1) as f64).sqrt() }
+        Summary { mean: values.mean(), sd, low: values.quantile(0.05), mid: values.quantile(0.5), high: values.quantile(0.95), least, most, undefined, hist, below0, points: None, law: None, exact: false, draws, error: sd / (draws.max(1) as f64).sqrt() }
     }
 
     /// How likely a truth is, if it's each of these this much of the time.
@@ -2204,6 +2239,15 @@ mod tests {
         assert!(c.undefined == 1.0 && c.chance.is_finite() && c.error.is_finite(), "{c:?}");
         let s = reader.summary(&[Share { weight: 1.0, value: Term::Undefined }]);
         assert!(s.undefined == 1.0 && s.mean.is_finite(), "{s:?}");
+    }
+
+    #[test]
+    fn a_few_numbers_are_listed_with_how_likely_each_is() {
+        let mut reader = Reader::new();
+        let s = reader.summary(&[Share { weight: 1.0, value: n(2.0) }, Share { weight: 2.0, value: n(7.0) }, Share { weight: 1.0, value: n(2.0) }]);
+        assert_eq!(s.points, Some(vec![(2.0, 0.5), (7.0, 0.5)]));
+        assert_eq!((s.hist.from, s.hist.to), (2.0, 7.0));
+        assert_eq!(reader.summary(&one(&normal("t/points/x", 0.0, 1.0))).points, None, "a bell curve isn't a few numbers");
     }
 
     #[test]

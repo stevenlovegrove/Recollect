@@ -103,22 +103,42 @@ export function chanceHow(c: Chance): string {
 /** A histogram, small enough to sit beside a number. */
 export function Hist({ d, wide }: { d: Dist; wide?: boolean }) {
   const [w, h] = wide ? [180, 36] : [72, 16];
-  const top = Math.max(...d.hist.bars, 1e-9);
-  const each = w / d.hist.bars.length;
+  const [at, setAt] = useState<number | null>(null);
+  const { from, to, bars } = d.hist;
+  const span = to - from;
   // Where zero is, if the histogram crosses it, so what's below it can be told from what's above.
-  const { from, to } = d.hist;
-  const zero = from < 0 && to > 0 ? (-from / (to - from)) * w : null;
+  const zero = from < 0 && to > 0 ? (-from / span) * w : null;
+  // Only ever one of a few numbers: a bar for each, where it is, as tall as it's likely.
+  const points = d.points && d.points.length > 1 && span > 0 ? d.points : null;
+  const x = (v: number) => ((v - from) / span) * w;
+  const each = w / bars.length;
+  const thin = points ? Math.max(1.5, Math.min(6, (w / points.length) * 0.6)) : 0;
+  const top = points ? Math.max(...points.map((p) => p[1]), 1e-9) : Math.max(...bars, 1e-9);
+  // What's under the pointer: the nearest of the few numbers, or the stretch it's in.
+  const near = at === null ? null : points ? points.reduce((best, p, i) => (Math.abs(x(p[0]) - at) < Math.abs(x(points[best][0]) - at) ? i : best), 0) : Math.min(bars.length - 1, Math.max(0, Math.floor(at / each)));
+  const about = d.exact ? "" : "about ";
+  const tip =
+    near === null
+      ? null
+      : points
+        ? `${figures(points[near][0])}: ${about}${beliefText(points[near][1])} of the time`
+        : `${figures(from + (span * near) / bars.length)} to ${figures(from + (span * (near + 1)) / bars.length)}: ${about}${beliefText(bars[near])} of the time`;
   return (
-    <svg className={`hist ${d.exact ? "" : "drawn"}`} width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={`From ${figures(from)} to ${figures(to)}${zero !== null ? ", either side of nothing" : ""}`}>
-      {d.hist.bars.map((b, i) => (
-        <rect key={i} x={i * each} y={h - (b / top) * h} width={Math.max(each - 0.5, 0.5)} height={(b / top) * h} />
-      ))}
-      {zero !== null && (
-        <line x1={zero} x2={zero} y1={0} y2={h} className="hist-zero">
-          <title>0</title>
-        </line>
+    <span className="hist-wrap" onMouseMove={(e) => setAt(e.clientX - e.currentTarget.getBoundingClientRect().left)} onMouseLeave={() => setAt(null)}>
+      <svg className={`hist ${d.exact ? "" : "drawn"}`} width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={`From ${figures(from)} to ${figures(to)}${zero !== null ? ", either side of nothing" : ""}`}>
+        {points
+          ? points.map(([v, p], i) => <rect key={i} className={near === i ? "on" : undefined} x={Math.min(Math.max(x(v) - thin / 2, 0), w - thin)} y={h - (p / top) * h} width={thin} height={(p / top) * h} />)
+          : bars.map((b, i) => <rect key={i} className={near === i ? "on" : undefined} x={i * each} y={h - (b / top) * h} width={Math.max(each - 0.5, 0.5)} height={(b / top) * h} />)}
+        {zero !== null && <line x1={zero} x2={zero} y1={0} y2={h} className="hist-zero" />}
+        {/* The whole height takes the pointer, so a short bar is as easy to point at as a tall one. */}
+        <rect x={0} y={0} width={w} height={h} fill="transparent" />
+      </svg>
+      {tip && (
+        <span className="hist-tip" style={{ left: Math.min(Math.max(at ?? 0, 0), w) }}>
+          {tip}
+        </span>
       )}
-    </svg>
+    </span>
   );
 }
 
@@ -126,9 +146,11 @@ export function Hist({ d, wide }: { d: Dist; wide?: boolean }) {
 export function DistValue({ d, wide }: { d: Dist; wide?: boolean }) {
   if (d.undefined >= 1 || !Number.isFinite(d.mean) || !d.hist.bars.length) return <span className="mono-value">undefined</span>;
   return (
-    <span className={`dist ${wide ? "wide" : ""}`} title={distHow(d)}>
+    <span className={`dist ${wide ? "wide" : ""}`}>
       <Hist d={d} wide={wide} />
-      <span className="mono-value">{distText(d)}</span>
+      <span className="mono-value" title={distHow(d)}>
+        {distText(d)}
+      </span>
       {wide && (
         <span className="dist-how muted">
           {figures(d.hist.from)} to {figures(d.hist.to)} · {d.exact ? (d.law ?? "exact") : `from ${d.draws.toLocaleString()} draws`}
