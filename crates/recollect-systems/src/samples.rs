@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use recollect_graph::{CellType, Entity, Name, On, Op, Stored};
 use serde_json::{Value, json};
 
-use crate::formulas::{AT, At, Called, IS_A, LABEL, OPTIONS, Options, REQUIRES, VALUE, ValueCell};
+use crate::formulas::{AT, At, Called, EVIDENCE, IS_A, LABEL, OPTIONS, Options, REQUIRES, VALUE, ValueCell};
 use crate::notes::{Body, DRAWING, Drawing, NOTES};
 use crate::plan::{ALTERNATIVE, DECISION, DEPENDS_ON, EXCLUDES, Done, Estimate, GOAL, PART_OF, RISK, TASK, UNCERTAIN, UNKNOWN, WITHIN, Weight};
 
@@ -50,7 +50,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "27";
+pub const FORMAT: &str = "29";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -294,6 +294,7 @@ Which to take is yours to choose, so nothing averages over it: **Cost** shows wh
 
 - Select **Cost** to see the three side by side. The fixed price with shipping is exact. The other two are a sum of unlike things, which has no law, so they're read from draws and say so.
 - Select **Within budget**: certain for one, and a chance for the others.
+- Click **require** on Within budget's card. It's demanded of your choice, and always unless it says, so only the fixed price is left. Then set its **at least** to 0.8 in the panel on the right: all three are sure enough.
 - Pin a supplier in the bar at the top to see only that one."#);
     let which = "Which supplier?";
     b.add(which, DECISION).note(which, "Yours to choose, so what depends on it shows one answer for each, and never an average over them.");
@@ -320,6 +321,7 @@ fn shelf(b: &mut Build) {
 
 - Select **Clearance**: its histogram is solid, and it says which bell curve it is.
 - Measure the shelf better: change it to `between(1200, 1202)` and see how much surer the fit is.
+- Click **known?** on It fits, to say it went in. That's evidence: Clearance is then read only from the draws where there was room, and says how many those were.
 - Select **Clearance less itself**: one cell less itself is exactly nothing, because it's the same draw."#);
     b.formula("Alcove", "normal(1205, 2)").note("Alcove", "The width of the gap, in millimetres, as well as the tape could say.");
     b.formula("Shelf", "between(1198, 1204)").note("Shelf", "Nine times in ten between the two, which is a bell curve about 1,201.");
@@ -683,7 +685,7 @@ fn case_file(b: &mut Build) {
 
     // The evidence, which rules out the worlds it doesn't fit.
     let evidence = |b: &mut Build, name: &str, formula: &str, about: &str| {
-        b.formula(name, formula).add(name, REQUIRES).note(name, about).label(name, who, "who");
+        b.formula(name, formula).add(name, EVIDENCE).note(name, about).label(name, who, "who");
     };
     evidence(b, "Whoever took it was in the house by 10:00", "who.chosen.arrives <= 60", "The case was locked at 9:00 and empty at 10:15, and it would take a while to find the key, open it, and get away.");
     evidence(b, "They came in from the garden", "who.chosen.from_garden", "Fresh mud on the study carpet, from the garden door to the case.");
@@ -702,9 +704,9 @@ fn doubt(b: &mut Build, question: &str, cell: &str, options: &[(&str, Value, f64
     }
 }
 
-/// What was seen, which rules out the worlds it doesn't fit.
+/// What was seen: evidence, which is known to be true and rules out the worlds it doesn't fit.
 fn seen(b: &mut Build, name: &str, formula: &str, about: &str) {
-    b.formula(name, formula).add(name, REQUIRES).note(name, about);
+    b.formula(name, formula).add(name, EVIDENCE).note(name, about);
 }
 
 fn monty_hall(b: &mut Build) {

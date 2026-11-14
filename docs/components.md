@@ -102,7 +102,7 @@ A check belongs to a component and only runs on entities that have it. It's work
 
 A commit also checks what it touched against the definitions: a component nothing provides, a component on the wrong kind of entity, a written cell without its component, a value of the wrong shape, a formula that can't be read, and an edge from a node to itself. These look only at the ops' targets.
 
-`reg.advice` is for what's worth saying about the graph as a whole, which no single entity's cells can see, such as an open decision holding work up. A component's **constraint** says which worlds count on each entity that has it: that's how `requires` works.
+`reg.advice` is for what's worth saying about the graph as a whole, which no single entity's cells can see, such as an open decision holding work up. A component's **constraint** says which worlds count on each entity that has it: that's how `evidence` works. `requires` is judged for each way the choices could go, given everything the constraints leave, so it isn't one: see `worlds_left` in `formulas.rs`.
 
 ## The components
 
@@ -124,7 +124,8 @@ A commit also checks what it touched against the definitions: a component nothin
 | `choice` | node | `chosen` (per entity): the node it lands on in each world, read through as `x.chosen.cell`. Writing one in settles it. Filled in by what requires it | |
 | `options` | node | `options`: a plain list, each a constant with that name and value. Fills in `chosen`, landing on each equally | `choice` |
 | `at` | node | `at`: where a choice goes on a board | `options` |
-| `requires` | node | none. A constraint: only the worlds where `value` is true count | `value` |
+| `requires` | node | `at_least`: how surely it has to be met, which is always unless it says. Demanded of your choices: only the ways they could go that make `value` true that surely count | `value` |
+| `evidence` | node | none. Known to be true: only the worlds, and the draws, where `value` is true count. It never restricts a choice of yours | `value` |
 | `macro` | node | `macro` (`params`, `body`); internal `macro_body` | |
 | `label` | edge | `called`: the name a formula on the source uses for the target. Arranges a map upside down | |
 | `is_a` | edge | none. What kind of thing the source is | |
@@ -374,7 +375,7 @@ These were written to find out whether the engine is general enough, and they be
 
 1. **Spreadsheet.** Invoice, Fibonacci and compound interest as formulas, and a trip budget with its choices held open as decisions: min, max, expected, and over £200 exactly when `Stay=Hotel`.
 2. **Schedule.** `tests/toy_gantt.rs` has classic critical-path scheduling with no worlds, written in the test and sharing nothing with the system: forward over `depends_on` for dates, backward for slack, summary tasks rolling up from leaves. Fix a decision, and this plain schedule must agree, including where an estimate is a formula over a decision. Slack is checked from its definition, by slipping a task by exactly that much and seeing the end doesn't move, and by one more and seeing it does.
-3. **Puzzles.** A choice is a node with `options`, a constraint is a formula, and the solutions are the worlds where every `requires` node is true. Map colouring, eight queens, 4×4 sudoku, knights and knaves, and the zebra puzzle, which find 18 colourings, 92 solutions, 288 grids, and the Japanese owning the zebra.
+3. **Puzzles.** A choice is a node with `options`, a constraint is a formula, and the solutions are the worlds where every `requires` node is true: with nothing a matter of chance, that's all requiring is. Map colouring, eight queens, 4×4 sudoku, knights and knaves, and the zebra puzzle, which find 18 colourings, 92 solutions, 288 grids, and the Japanese owning the zebra.
 
 ## How it's checked
 

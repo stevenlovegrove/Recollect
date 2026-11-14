@@ -1,7 +1,7 @@
 id: 01a1d3e5-c0e9-775d-a345-fe9892068869
 components:
 - notes
-- requires
+- evidence
 - value
 cells:
   body: Nobody can work out from an armchair what the weather is. An answer has to say why finding out about the world takes observation.

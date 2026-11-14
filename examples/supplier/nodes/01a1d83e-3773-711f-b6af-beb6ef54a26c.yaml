@@ -1,4 +1,4 @@
-id: 01a1d7b3-450f-76df-82c8-a4e1090073d8
+id: 01a1d83e-3773-711f-b6af-beb6ef54a26c
 components:
 - notes
 cells:
@@ -15,5 +15,6 @@ cells:
 
     - Select **Cost** to see the three side by side. The fixed price with shipping is exact. The other two are a sum of unlike things, which has no law, so they're read from draws and say so.
     - Select **Within budget**: certain for one, and a chance for the others.
+    - Click **require** on Within budget's card. It's demanded of your choice, and always unless it says, so only the fixed price is left. Then set its **at least** to 0.8 in the panel on the right: all three are sure enough.
     - Pin a supplier in the bar at the top to see only that one.
   name: About this example

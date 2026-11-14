@@ -1,4 +1,4 @@
-id: 01a1d7b3-4515-7793-b01a-86f0e1f55943
+id: 01a1d83e-3778-70ff-bc18-a8975ca1d18d
 components:
 - notes
 cells:
@@ -14,5 +14,6 @@ cells:
 
     - Select **Clearance**: its histogram is solid, and it says which bell curve it is.
     - Measure the shelf better: change it to `between(1200, 1202)` and see how much surer the fit is.
+    - Click **known?** on It fits, to say it went in. That's evidence: Clearance is then read only from the draws where there was room, and says how many those were.
     - Select **Clearance less itself**: one cell less itself is exactly nothing, because it's the same draw.
   name: About this example

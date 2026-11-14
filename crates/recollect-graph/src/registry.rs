@@ -448,7 +448,10 @@ impl Registry {
     }
 
     pub fn advice(&mut self, f: AdviceFn) -> &mut Self {
-        self.advice.push(f);
+        // A system installed twice, as one is when another brings it, still only says a thing once.
+        if !self.advice.iter().any(|known| *known as usize == f as usize) {
+            self.advice.push(f);
+        }
         self
     }
 

@@ -1,7 +1,7 @@
 id: 01a1d3e5-c09d-76da-b103-77c93290ed14
 components:
 - notes
-- requires
+- evidence
 - value
 cells:
   body: The case was locked at 9:00 and empty at 10:15, and it would take a while to find the key, open it, and get away.

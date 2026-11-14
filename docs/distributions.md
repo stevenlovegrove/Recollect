@@ -1,6 +1,6 @@
 # Distributions
 
-**Status:** the first two steps are built, and the rest isn't: [Order of building](#order-of-building) says which is which, and [What's built](#whats-built) what those leave out. The engine's part is `crates/recollect-graph/src/chance.rs`, the formula language's is in `expr.rs` and `formulas.rs`, and the tests are `tests/chance.rs` in `recollect-systems`. Five samples are written this way: see [The samples](#the-samples). For the worlds this extends, see [components.md](components.md#worlds-on-top), and for formulas, [expressions.md](expressions.md).
+**Status:** the first three steps are built, and the rest isn't: [Order of building](#order-of-building) says which is which, and [What's built](#whats-built) what those leave out. The engine's part is `crates/recollect-graph/src/chance.rs`, the formula language's is in `expr.rs` and `formulas.rs`, and the tests are `tests/chance.rs` in `recollect-systems`. Five samples are written this way: see [The samples](#the-samples). For the worlds this extends, see [components.md](components.md#worlds-on-top), and for formulas, [expressions.md](expressions.md).
 
 ## Why
 
@@ -153,7 +153,7 @@ Files don't change: a distribution is a formula, and only its text is saved.
 |---|---|---|
 | 1 | Trees and drawing: the families, arithmetic, comparisons and `if` over them, short lists as diagram variables, and a histogram wherever a number is shown, saying how it was got. A requirement on something uncertain is refused, with why | Built |
 | 2 | Laws: named ones, the rules that keep them, and a chance read exactly from one | Built: the rules are below, and more can be added one at a time |
-| 3 | `evidence` apart from `requires`, with a level, and conditioning on what's uncertain | Not built |
+| 3 | `evidence` apart from `requires`, with a level, and conditioning on what's uncertain | Built, but for evidence that's a matter of draws in some worlds and not others, which is refused |
 | 4 | Pinning a quantity to a value or a range | Not built. A short list, such as a die, can be pinned as any choice can |
 | 5 | `knowing`, and choices worked backward | Not built |
 | 6 | `chance` and `mean` in a cell | Not built |
@@ -196,12 +196,21 @@ Anything else is read from 4,096 draws. Each draw's values are spread evenly, on
 
 **What a view sends.** Wherever an uncertain number would be, there's `{"dist": …}`: its mean, spread, the points it's below one time in twenty, half the time and nineteen in twenty, a histogram, its law if it has one, and `exact`, with `draws` and `error` when it isn't. An uncertain truth is `{"chance": …}`, with how many draws it held in. A cell that differs only over what's a matter of chance has a `mix` as well: what it comes to taken together. Over a choice of yours there's no `mix`, because averaging over that means nothing.
 
+**What's known and what's demanded.** `evidence` and `requires` are two components, as above. `requires` has a cell, `at_least`, for how surely.
+
+- **A requirement is judged for each way the choices could go.** A choice is whatever isn't a matter of chance: a decision that isn't `uncertain`, or a puzzle's unknown. For each, how likely the value is to be true is summed over every matter of chance, given the evidence, and held against `at_least`. With no matter of chance that's just where it's true, which is what `requires` always was.
+- **Evidence about an uncertain number leaves only the draws where it holds.** What shares a draw with it is read from those, and says how many they were. What shares none is untouched, and keeps its law.
+- **Pinning something that's a matter of chance is finding it out,** so a requirement is judged again knowing it.
+- **How it was judged is a notice.** A requirement that depends on chance says what it's judged as chosen before. One that no choice can make sure enough says so, and that it may be evidence. One whose chance was read from draws and came too close to its level to call says that.
+
 **What it leaves out**, beyond the steps above:
 
 - **The level a notice uses is fixed,** where a view should say it. `oversized_task` fires when an estimate is more likely than not to be over five days, and says how likely, and whether that's exact or from draws.
 - **A truth is only ever shown always or never by simplifying.** `x > 1 || x <= 1` simplifies to always. `abs(x) >= 0` doesn't, so it's true in every draw and reads "all 4,096 draws", not "always".
 - **An uncertain condition can only choose between numbers, or between truths.** Choosing between text or nodes is an error in the cell.
 - **`done`, `dropped` and a weight can't be uncertain.** Each is an error that says so.
+- **Evidence that's an uncertain truth in some worlds and not in others** is refused. So is nothing else about evidence: an uncertain truth that's the same in every world conditions the draws.
+- **The big-task notice doesn't know what's known.** It reads an estimate as it is, not given the evidence.
 - **A sum of unlike things has no law.** Two `triangular` estimates added, or a `triangular` and a `uniform`, are read from draws. So are a later-of plus anything uncertain, and anything through an `if` on an uncertain condition.
 - **A law is only looked for so far down.** Past 48 things each made of the last it's read from draws, which is always right.
 - **A person's own data as a distribution, a fan down a table's rows, a slider to pin with, and a sweep by putting a value in** aren't built.

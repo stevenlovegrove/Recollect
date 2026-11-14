@@ -1253,6 +1253,9 @@ pub struct Reader {
     forms: HashMap<X, Forms>,
     laws: HashMap<X, Option<Law>>,
     draws: HashMap<X, Arc<std::collections::BTreeSet<u32>>>,
+    /// Something known to be true, which every reading is given: only the draws where it holds count.
+    known: Option<Rand>,
+    kept: Option<Arc<Vec<bool>>>,
 }
 
 /// How far a law is looked for through one thing made of another. Past this it's read from draws, which
@@ -1313,6 +1316,39 @@ impl Weighted {
 impl Reader {
     pub fn new() -> Reader {
         Reader::default()
+    }
+
+    /// A reader for whom something is known: an uncertain truth that's taken to hold. What shares a
+    /// draw with it is read only from the draws where it does, and says how many those were. What shares
+    /// none is as it was, so a law it has still stands.
+    pub fn given(known: Option<Rand>) -> Reader {
+        Reader { known, ..Reader::default() }
+    }
+
+    /// Whether what's known says anything about this: they share a draw.
+    fn tied(&mut self, r: &Rand) -> bool {
+        match self.known {
+            Some(known) => !self.apart(known.0, r.0),
+            None => false,
+        }
+    }
+
+    /// The draws where what's known holds.
+    fn kept(&mut self) -> Arc<Vec<bool>> {
+        if let Some(kept) = &self.kept {
+            return kept.clone();
+        }
+        let kept = Arc::new(match self.known {
+            Some(known) => self.column(&known).iter().map(|v| *v == 1.0).collect(),
+            None => vec![true; DRAWS],
+        });
+        self.kept = Some(kept.clone());
+        kept
+    }
+
+    /// In how many of the draws what's known holds: all of them, if nothing is.
+    pub fn draws_kept(&mut self) -> usize {
+        self.kept().iter().filter(|k| **k).count()
     }
 
     /// What it comes to in each of `DRAWS` draws. Undefined is NaN, and a truth is 1 or 0. Every column
@@ -1629,6 +1665,12 @@ impl Reader {
             Term::Undefined => vec![f64::NAN],
             Term::Num(n) => vec![*n],
             Term::Flag(b) => vec![f64::from(u8::from(*b))],
+            // What's known says something about this one, so it's only the draws where that holds.
+            Term::Rand(r) if self.tied(r) => {
+                let (column, kept) = (self.column(r), self.kept());
+                let left: Vec<f64> = column.iter().zip(kept.iter()).filter(|(_, k)| **k).map(|(v, _)| *v).collect();
+                if left.is_empty() { vec![f64::NAN] } else { left }
+            }
             Term::Rand(r) => match self.law(r) {
                 // From the law itself, evenly, so beside something drawn it's the law's and not a sample's.
                 Some(law) => (0..DRAWS).map(|i| law.quantile((i as f64 + 0.5) / DRAWS as f64)).collect(),
@@ -1666,6 +1708,8 @@ impl Reader {
                 }
                 Term::Num(n) => Some(Law::Point(*n)),
                 Term::Flag(b) => Some(Law::Point(f64::from(u8::from(*b)))),
+                // Given something that shares a draw with it, it isn't the law it was.
+                Term::Rand(r) if self.tied(r) => None,
                 Term::Rand(r) => self.law(r),
             };
             laws = laws.zip(law).map(|(mut all, law)| {
@@ -1691,30 +1735,42 @@ impl Reader {
         }
         let values = Weighted::new(values);
         let sd = values.sd();
-        Summary { mean: values.mean(), sd, low: values.quantile(0.05), mid: values.quantile(0.5), high: values.quantile(0.95), least, most, undefined, hist: values.hist(), law: None, exact: false, draws: DRAWS, error: sd / (DRAWS as f64).sqrt() }
+        // Given something, only the draws where it holds were read.
+        let draws = if live.iter().any(|s| matches!(&s.value, Term::Rand(r) if self.tied(r))) { self.draws_kept() } else { DRAWS };
+        Summary { mean: values.mean(), sd, low: values.quantile(0.05), mid: values.quantile(0.5), high: values.quantile(0.95), least, most, undefined, hist: values.hist(), law: None, exact: false, draws, error: sd / (draws.max(1) as f64).sqrt() }
     }
 
     /// How likely a truth is, if it's each of these this much of the time.
     pub fn chance(&mut self, shares: &[Share]) -> Chance {
         let whole: f64 = shares.iter().map(|s| s.weight).sum();
-        let (mut yes, mut undefined, mut drawn, mut hits) = (0.0, 0.0, 0, 0);
+        let (mut yes, mut undefined, mut drawn, mut hits, mut read) = (0.0, 0.0, 0, 0, 0);
         for share in shares.iter().filter(|s| s.weight > 0.0) {
             let w = share.weight / whole;
             match &share.value {
                 Term::Flag(true) => yes += w,
                 Term::Rand(r) => {
-                    // A law says how likely exactly, and what has one is never undefined.
-                    if let Some(sure) = self.sure(r.0, 0) {
+                    let tied = self.tied(r);
+                    // A law says how likely exactly, and what has one is never undefined. Given something
+                    // that shares a draw with it, that's no longer how likely it is.
+                    if !tied && let Some(sure) = self.sure(r.0, 0) {
                         yes += w * sure;
                         continue;
                     }
-                    let column = self.column(r);
-                    let nan = column.iter().filter(|v| v.is_nan()).count();
-                    let here = column.iter().filter(|v| **v == 1.0).count();
-                    yes += w * here as f64 / DRAWS as f64;
-                    undefined += w * nan as f64 / DRAWS as f64;
+                    let (column, kept) = (self.column(r), self.kept());
+                    let among = if tied { kept.iter().filter(|k| **k).count() } else { DRAWS };
+                    let counts = |i: usize| !tied || kept[i];
+                    let nan = column.iter().enumerate().filter(|(i, v)| counts(*i) && v.is_nan()).count();
+                    let here = column.iter().enumerate().filter(|(i, v)| counts(*i) && **v == 1.0).count();
+                    if among == 0 {
+                        // What's known never came up, so there's nothing to say how likely this is given it.
+                        undefined += w;
+                    } else {
+                        yes += w * here as f64 / among as f64;
+                        undefined += w * nan as f64 / among as f64;
+                    }
                     hits += here;
                     drawn += 1;
+                    read += among;
                 }
                 Term::Undefined => undefined += w,
                 _ => {}
@@ -1724,7 +1780,8 @@ impl Reader {
         // Each thing it could be that had to be drawn has its own draws, so "in every one" and "in none"
         // are about all of them.
         let exact = drawn == 0;
-        Chance { chance, undefined, exact, draws: drawn * DRAWS, hits, error: if exact { 0.0 } else { (chance * (1.0 - chance) / DRAWS as f64).sqrt() } }
+        let each = if drawn == 0 { DRAWS } else { (read / drawn).max(1) };
+        Chance { chance, undefined, exact, draws: read, hits, error: if exact { 0.0 } else { (chance * (1.0 - chance) / each as f64).sqrt() } }
     }
 }
 

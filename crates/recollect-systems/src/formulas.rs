@@ -16,9 +16,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use recollect_graph::table::Key;
-use recollect_graph::chance::{self, Num, Std, Term};
-use recollect_graph::worlds::{Bool, Cond, Space, Worldly};
-use recollect_graph::{Backed, Cell, CellType, Compile, Computed, Cx, Entity, Error, Graph, Registry, Severity, Shown, cell};
+use recollect_graph::chance::{self, Num, Rand, Reader, Share, Std, Term};
+use recollect_graph::worlds::{Bool, Cond, Picks, Space, Var, Worldly};
+use recollect_graph::{Advice, Backed, Cell, CellType, Compile, Computed, Cx, Entity, Error, Graph, Registry, Severity, Shown, cell};
 use serde_json::{Value, json};
 
 use crate::expr::{self, BinOp, CORE, Expr, Type, Val};
@@ -37,6 +37,7 @@ pub const CHOICE: &str = "choice";
 pub const OPTIONS: &str = "options";
 pub const AT: &str = "at";
 pub const REQUIRES: &str = "requires";
+pub const EVIDENCE: &str = "evidence";
 pub const MACRO: &str = "macro";
 pub const LABEL: &str = "label";
 pub const IS_A: &str = "is_a";
@@ -58,6 +59,171 @@ impl ValueCell {
 /// The worlds where a value is true. Undefined isn't true.
 pub fn truth(v: &ValueCell) -> Bool {
     v.0.0.holds(|v| *v == Val::Bool(true))
+}
+
+/// How surely a requirement has to be met, from 0 to 1. Always, unless it says.
+#[cell("at_least")]
+pub struct AtLeast(pub f64);
+
+// ---------- what's known, and what's demanded ----------
+//
+// Evidence is known to be true: it leaves only the worlds, and the draws, where it holds, and never
+// restricts a choice. A requirement is demanded of choices: it leaves only the ways they could go that
+// make it true, as surely as it says, given the evidence. With nothing a matter of chance, each leaves
+// exactly the worlds where its value is true. See `docs/distributions.md`.
+
+/// Whether an open choice is a matter of chance rather than someone's to make: a draw from a short list,
+/// or a decision that says it's uncertain.
+pub fn is_chance(g: &Graph, var: &str) -> bool {
+    crate::is_draw(var) || var.parse::<Entity>().is_ok_and(|e| g.has(e, crate::plan::UNCERTAIN))
+}
+
+/// The worlds a piece of evidence leaves: those where it's true. Where it's a matter of draws it says
+/// nothing about which world this is, and what it says about the draws is `known_draws`.
+fn evidence_worlds(v: &ValueCell) -> Bool {
+    v.0.0.holds(|v| matches!(v, Val::Bool(true) | Val::Rand(_)))
+}
+
+/// Everything known that's a matter of draws, together: each piece of evidence whose value is an
+/// uncertain truth. `Term::Flag(false)` if they can't all hold.
+fn known_term(g: &Graph) -> Option<Term> {
+    let mut all: Option<Term> = None;
+    for e in g.having(EVIDENCE) {
+        let Ok(Some(v)) = g.get::<ValueCell>(e) else { continue };
+        if let [(_, Val::Rand(r))] = v.0.0.cases().as_slice()
+            && r.is_truth()
+        {
+            all = Some(match all {
+                None => Term::Rand(*r),
+                Some(so_far) => chance::bin(chance::Op::And, &so_far, &Term::Rand(*r)),
+            });
+        }
+    }
+    all
+}
+
+/// What's known as a matter of draws, for a `Reader` to be given.
+pub fn known_draws(g: &Graph) -> Option<Rand> {
+    match known_term(g) {
+        Some(Term::Rand(r)) => Some(r),
+        _ => None,
+    }
+}
+
+/// What a requirement leaves, and how that was judged.
+pub struct Judged {
+    /// The ways the choices could go that meet it as surely as it says.
+    pub allowed: Bool,
+    /// The matters of chance it depends on. It's judged as if every choice is made before any is known.
+    pub before: Vec<String>,
+    /// It depends on how uncertain numbers fall, which is also not known when the choices are made.
+    pub uncertain: bool,
+    /// How likely it's met was read from draws for some way the choices could go.
+    pub drawn: bool,
+    /// And for some way they could go, that's too close to how sure it has to be to call.
+    pub close: bool,
+}
+
+/// Which ways the choices could go meet a requirement: for each, how likely its value is to be true over
+/// everything that's a matter of chance, given what's known, against how sure it has to be. `known` is
+/// the worlds the evidence leaves, and `reader` is given whatever's known about draws.
+pub fn judge(g: &Graph, e: Entity, picks: &Picks, known: &Bool, reader: &mut Reader) -> Result<Option<Judged>, Error> {
+    let Some(value) = g.get::<ValueCell>(e)? else { return Ok(None) };
+    let at_least = g.get::<AtLeast>(e)?.map_or(1.0, |a| a.0);
+    let value = value.0.0.given(picks);
+    let chancy = |name: &str| is_chance(g, name);
+    let too_many = || Error::Failed("this is met with too many different chances, over the ways the choices could go, to judge".to_string());
+    let mut drawn = false;
+    let uncertain = any_rand(&value);
+    // How far out that could be, where it was read from draws, for each way the choices could go.
+    let mut slack = Space::global().pure(0.0);
+    // How likely it's true and what's known holds, for each way the choices could go.
+    let mut met = Space::global().pure(0.0);
+    for (when, v) in value.cases() {
+        let (how_likely, margin) = match v {
+            Val::Bool(true) => (1.0, 0.0),
+            // Undefined isn't true.
+            Val::Bool(false) | Val::Undefined => (0.0, 0.0),
+            Val::Rand(r) if r.is_truth() => {
+                let c = reader.chance(&[Share { weight: 1.0, value: Term::Rand(*r) }]);
+                drawn |= !c.exact;
+                (c.chance * (1.0 - c.undefined), 3.0 * c.error)
+            }
+            other => return failed(format!("what's required is true or false, not {}", Type::of(other).word())),
+        };
+        if how_likely > 0.0 || margin > 0.0 {
+            let here = (&when & known).weigh(&chancy).ok_or_else(too_many)?;
+            met = met.zip(&here, |so_far, p| so_far + how_likely * p);
+            slack = slack.zip(&here, |so_far, p| so_far + margin * p);
+        }
+    }
+    let possible = known.weigh(&chancy).ok_or_else(too_many)?;
+    // Where what's known can't be, there's nothing to judge, and the evidence has ruled it out already.
+    let ratio = met.zip(&possible, |m, p| if *p > 0.0 { Some(m / p) } else { None });
+    let allowed = ratio.holds(|r| r.is_none_or(|r| r >= at_least - 1e-9));
+    let close = met.zip(&slack, |m, s| (*m, *s)).zip(&possible, |(m, s), p| *p > 0.0 && *s > 0.0 && (m / p - at_least).abs() < s / p).holds(|close| *close);
+    let close = !close.is_never();
+    let mut before: Vec<String> = value.vars().iter().map(Var::name).filter(|n| chancy(n)).collect();
+    before.sort();
+    before.dedup();
+    Ok(Some(Judged { allowed, before, uncertain, drawn, close }))
+}
+
+/// The worlds left once everything known has ruled out what it does, and every requirement has ruled out
+/// the choices that don't meet it, among those consistent with `picks`. `found` is anything else found
+/// out by pinning.
+pub fn worlds_left(g: &Graph, picks: &Picks, found: &Bool, reader: &mut Reader) -> Bool {
+    let known = g.registry().constrained(g).map_or_else(|| Space::global().always(), |c| c.given(picks));
+    let known = &known & found;
+    let mut left = known.clone();
+    for e in g.having(REQUIRES) {
+        // One that can't be judged says so in its own cell, or in a notice, and rules nothing out.
+        if let Ok(Some(judged)) = judge(g, e, picks, &known, reader) {
+            left = &left & &judged.allowed;
+        }
+    }
+    left
+}
+
+/// Whether anything here rules worlds out.
+pub fn narrows(g: &Graph) -> bool {
+    g.registry().constrained(g).is_some() || !g.having(REQUIRES).is_empty()
+}
+
+/// What's worth saying about how the requirements and the evidence were judged.
+fn judging(g: &Graph) -> Vec<Advice> {
+    let mut out = Vec::new();
+    let known_as_draws = known_term(g);
+    if known_as_draws == Some(Term::Flag(false)) {
+        if let Some(e) = g.having(EVIDENCE).first() {
+            out.push(Advice { rule: "evidence_cant_all_hold".to_string(), on: *e, detail: "what's known about uncertain numbers can't all be true at once".to_string() });
+        }
+    }
+    let mut reader = Reader::given(known_draws(g));
+    if known_draws(g).is_some() && reader.draws_kept() == 0 {
+        if let Some(e) = g.having(EVIDENCE).first() {
+            out.push(Advice { rule: "evidence_never_drawn".to_string(), on: *e, detail: format!("what's known held in none of {} draws, so nothing that depends on it can be read", chance::DRAWS) });
+        }
+    }
+    let known = g.registry().constrained(g).unwrap_or_else(|| Space::global().always());
+    let picks = Space::global().picks(&BTreeMap::new());
+    for e in g.having(REQUIRES) {
+        let Ok(Some(judged)) = judge(g, e, &picks, &known, &mut reader) else { continue };
+        if !judged.before.is_empty() || judged.uncertain {
+            // A draw is called by where it's written, so it reads as that node.
+            let mut names: Vec<String> = judged.before.iter().map(|n| crate::draw_site(n).map_or(n.clone(), |(node, _, _)| node.to_string())).collect();
+            names.dedup();
+            if judged.uncertain {
+                names.push("how its uncertain numbers fall".to_string());
+            }
+            let nothing = if judged.allowed.is_never() { ". No choice makes it sure enough: if it's something that's known, rather than demanded, it's evidence" } else { "" };
+            out.push(Advice { rule: "requirement_judged_before".to_string(), on: e, detail: format!("it's judged as if every choice is made before these are known: {}{nothing}", names.join(", ")) });
+        }
+        if judged.close {
+            out.push(Advice { rule: "requirement_too_close_to_call".to_string(), on: e, detail: format!("how likely it's met was read from {} draws, and for some choice that's too close to how sure it has to be to call", chance::DRAWS) });
+        }
+    }
+    out
 }
 
 /// What a choice lands on, in each world: a node, or undefined where there's nothing to land on.
@@ -1649,6 +1815,14 @@ fn options_chosen(cx: &Cx) -> Cell<Chosen> {
     Ok(Some(Chosen(Worldly(var.value().map(|o| Val::Ref(nodes[o.as_str()]))))))
 }
 
+/// How sure is a number above 0 and at most 1.
+fn a_chance(v: &Value) -> Result<(), String> {
+    match v.as_f64() {
+        Some(p) if p > 0.0 && p <= 1.0 => Ok(()),
+        _ => Err(format!("how surely it has to be met is a number above 0 and at most 1, not {v}")),
+    }
+}
+
 /// Settling a choice is naming one node.
 fn one_node(v: &Value) -> Result<(), String> {
     match serde_json::from_value::<Val>(v.clone()) {
@@ -1739,14 +1913,18 @@ pub fn install(reg: &mut Registry) {
     reg.component(AT, "Where a choice goes on a board.").requires(OPTIONS);
     reg.cell::<At>(AT, "Where a choice goes on a board.").initial(json!({ "row": 0, "col": 0 }));
 
-    reg.component(REQUIRES, "Only the worlds where this node's value is true count.").icon("✦").requires(VALUE).constraint(|g, e| Ok(g.get::<ValueCell>(e)?.map(|v| truth(&v))));
-    // Ruling out the draws where it's false and ruling out the options that don't meet it are two
-    // things, and this doesn't do either yet, so it says so rather than quietly doing neither.
-    reg.check(REQUIRES, "requires_something_uncertain", Severity::Invariant, |cx| {
+    reg.component(REQUIRES, "Demanded of your choices: only the ways they could go that make this node's value true, as surely as it says, count.").icon("✦").requires(VALUE);
+    reg.cell::<AtLeast>(REQUIRES, "How surely it has to be met, from 0 to 1, where what it depends on is a matter of chance. 1 is always.").validate(a_chance).initial(json!(1.0));
+    reg.component(EVIDENCE, "Known to be true: only the worlds, and the draws, where this node's value is true count. It never restricts a choice of yours.").icon("◉").requires(VALUE).constraint(|g, e| Ok(g.get::<ValueCell>(e)?.map(|v| evidence_worlds(&v))));
+    // Known in some worlds as a matter of draws and in others not is neither one thing nor the other,
+    // and isn't worked out, so it says so rather than quietly meaning less than it reads.
+    reg.check(EVIDENCE, "evidence_partly_a_matter_of_draws", Severity::Invariant, |cx| {
         // A value that can't be worked out says so itself, and isn't this check's to refuse.
-        let chancy = cx.own::<ValueCell>().ok().flatten().is_some_and(|v| any_rand(&v.0.0));
-        Ok(if chancy { vec!["what's required is a matter of chance, and requiring that isn't worked out yet: see docs/distributions.md".to_string()] } else { vec![] })
+        let Some(v) = cx.own::<ValueCell>().ok().flatten() else { return Ok(vec![]) };
+        let mixed = any_rand(&v.0.0) && v.0.0.len() > 1;
+        Ok(if mixed { vec!["what's known is an uncertain truth in some worlds and not in others, which isn't worked out yet: see docs/distributions.md".to_string()] } else { vec![] })
     });
+    reg.advice(judging);
 
     reg.component(MACRO, "A function of your own, which formulas call by labelling this node.").icon("ƒ");
     reg.cell::<Macro>(MACRO, "Its parameters, and the formula it stands for.").initial(json!({ "params": [], "body": "0" }));

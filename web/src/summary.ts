@@ -67,7 +67,7 @@ export function cellLine(ws: Workspace, n: GraphNode, c: string): SummaryLine | 
 function truthBelief(ws: Workspace, n: GraphNode): SummaryLine[] {
   const cell = n.cells.value;
   const r = reading(cell);
-  if (!cell || !r || r.always || r.never || n.components.some((c) => c.name === "requires")) return [];
+  if (!cell || !r || r.always || r.never || n.components.some((c) => c.name === "requires" || c.name === "evidence")) return [];
   const vars = ws.view!.worlds.vars;
   const yours = (cell.vars ?? []).some((id) => vars.some((v) => v.id === id && !v.uncertain));
   const over = cell.over;

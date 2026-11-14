@@ -2,7 +2,7 @@ import type { GraphNode } from "./api";
 
 // Colours are CSS variables (see styles.css) so they follow light/dark mode. A component a system
 // doesn't colour here still works: it just gets the neutral colour. Its icon comes from the system.
-const COLOURED = ["goal", "decision", "task", "question", "risk", "unknown", "value", "options", "requires", "macro"];
+const COLOURED = ["goal", "decision", "task", "question", "risk", "unknown", "value", "options", "requires", "evidence", "macro"];
 
 export const compColor = (c: string) => (COLOURED.includes(c) ? `var(--c-${c})` : "var(--c-none)");
 
@@ -33,7 +33,7 @@ export function badgesOf(n: GraphNode): string[] {
 /** Says nothing but words: no components of its own, and no cells of the workspace's own. */
 export const isNote = (n: GraphNode) => !badgesOf(n).length && !n.components.some((c) => c.why === "edge");
 
-const ORDER = ["goal", "decision", "risk", "question", "unknown", "requires", "options", "task", "macro", "value"];
+const ORDER = ["goal", "decision", "risk", "question", "unknown", "requires", "evidence", "options", "task", "macro", "value"];
 
 /** The component that best characterises a node, for colouring. */
 export function dominant(n: GraphNode): string {

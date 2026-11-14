@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use recollect_graph::chance::{self, Law, Num, Rand, Reader, Share, Term};
 use recollect_graph::worlds::{Cond, Space};
-use recollect_graph::{CellType, CommitError, Entity, Error, Log, Op, Registry};
+use recollect_graph::{CellType, Entity, Error, Log, Op, Registry};
 use recollect_systems::expr::{BinOp, Expr, Val, parse};
 use recollect_systems::formulas::{OPTIONS, Options, REQUIRES, VALUE, ValueCell, install};
 use recollect_systems::plan::{self, ALTERNATIVE, DECISION, Estimate, PART_OF, TASK, Weight};
@@ -449,9 +449,10 @@ fn a_comparison_is_a_matter_of_chance_unless_it_cant_be() {
     // The later of two that share nothing is over a point unless both are under it.
     let later = chance("later");
     assert!(later.exact && (later.chance - (1.0 - 0.841_344_746_068_543f64.powi(2))).abs() < 1e-12, "{later:?}");
-    // One no law answers is read from draws, and says so.
+    // One no law answers is read from draws, and says so: about one time in ten, give or take what
+    // these draws happen to be, since they're named for nodes made afresh each run.
     let product = chance("product");
-    assert!(!product.exact && product.draws == chance::DRAWS && product.chance > 0.1 && product.chance < 0.2, "{product:?}");
+    assert!(!product.exact && product.draws == chance::DRAWS && product.chance > 0.08 && product.chance < 0.13, "{product:?}");
     // What simplifying doesn't settle is still right in every draw: it just isn't shown to be.
     let abs = chance("abs");
     assert!(abs.chance == 1.0 && abs.hits == chance::DRAWS && !abs.exact, "{abs:?}");
@@ -606,7 +607,7 @@ fn a_big_task_is_one_thats_likely_to_be_and_says_how_likely() {
 }
 
 #[test]
-fn what_makes_the_worlds_cant_be_uncertain_and_requiring_something_uncertain_is_refused() {
+fn what_makes_the_worlds_cant_be_uncertain() {
     let mut reg = Registry::new();
     plan::install(&mut reg);
     let mut log = Log::new(Arc::new(reg));
@@ -623,6 +624,6 @@ fn what_makes_the_worlds_cant_be_uncertain_and_requiring_something_uncertain_is_
     let Err(Error::Failed(why)) = log.graph().get::<Weight>(Entity::edge(option, decision)) else { panic!("an uncertain weight should be an error") };
     assert!(why.contains("a weight can't be uncertain"), "{why}");
 
-    let Err(CommitError::Refused(broken)) = log.commit("t", "require it", vec![Op::add(cap, REQUIRES)]) else { panic!("requiring something uncertain should be refused") };
-    assert!(broken.iter().any(|v| v.rule == "requires_something_uncertain"), "{broken:?}");
+    // Requiring something uncertain is a demand that it be sure enough: see tests/known.rs.
+    log.commit("t", "require it", vec![Op::add(cap, REQUIRES)]).unwrap();
 }

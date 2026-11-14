@@ -162,6 +162,64 @@ impl Mdd {
         }
     }
 
+    /// How likely `f` is, over the variables that are matters of chance, for each way the rest could go:
+    /// mutually exclusive guards over the rest, each with a chance. `None` if that's more than `most`
+    /// different chances.
+    fn weigh(&mut self, f: F, chance: &[bool], memo: &mut HashMap<F, Vec<(F, f64)>>, most: usize) -> Option<Vec<(F, f64)>> {
+        if f <= TRUE {
+            return Some(vec![(TRUE, f64::from(f))]);
+        }
+        if let Some(known) = memo.get(&f) {
+            return Some(known.clone());
+        }
+        // Chances that came about by different sums are the same chance.
+        fn put(m: &mut Mdd, out: &mut Vec<(F, f64)>, g: F, v: f64) {
+            if g == FALSE {
+                return;
+            }
+            match out.iter_mut().find(|(_, x)| (*x - v).abs() < 1e-12) {
+                Some((existing, _)) => *existing = m.apply(*existing, g, false),
+                None => out.push((g, v)),
+            }
+        }
+        let (var, kids) = self.nodes[f as usize].clone();
+        let mut out: Vec<(F, f64)> = Vec::new();
+        if chance[var as usize] {
+            // Each option as likely as it is, whatever it leads to.
+            let weights = self.vars[var as usize].weights.clone();
+            out.push((TRUE, 0.0));
+            for (kid, w) in kids.into_iter().zip(weights) {
+                let each = self.weigh(kid, chance, memo, most)?;
+                let mut next = Vec::new();
+                for (g, so_far) in &out {
+                    for (h, v) in &each {
+                        let both = self.apply(*g, *h, true);
+                        put(self, &mut next, both, so_far + w * v);
+                    }
+                }
+                if next.len() > most {
+                    return None;
+                }
+                out = next;
+            }
+        } else {
+            let n = kids.len();
+            for (i, kid) in kids.into_iter().enumerate() {
+                let each = self.weigh(kid, chance, memo, most)?;
+                let here = self.mk(var, (0..n).map(|k| if k == i { TRUE } else { FALSE }).collect());
+                for (g, v) in each {
+                    let both = self.apply(here, g, true);
+                    put(self, &mut out, both, v);
+                }
+            }
+            if out.len() > most {
+                return None;
+            }
+        }
+        memo.insert(f, out.clone());
+        Some(out)
+    }
+
     /// The ways a function holds, as "and"s of choices, up to `most` of them. There can be very many,
     /// so they're listed only as far as asked.
     fn terms(&self, f: F, label: &dyn Fn(&str) -> String, most: usize) -> Vec<String> {
@@ -486,6 +544,25 @@ impl Bool {
 
     pub fn prob_given(&self, given: &Bool) -> f64 {
         (self & given).prob() / given.prob()
+    }
+
+    /// How likely this is over the choices `chance` says are matters of chance, as a value that differs
+    /// over the rest: for each way the rest could go, the chance it holds. `None` if that's too many
+    /// different chances to list. With no matter of chance in it, it's certain where it holds and
+    /// impossible elsewhere.
+    pub fn weigh(&self, chance: &dyn Fn(&str) -> bool) -> Option<Cond<f64>> {
+        /// The most different chances this lists.
+        const MOST: usize = 4096;
+        let mut m = self.space.lock();
+        let support = m.support([self.f]);
+        let flags: Vec<bool> = m.vars.iter().enumerate().map(|(i, v)| support.contains(&(i as u32)) && chance(&v.name)).collect();
+        let cases = if flags.iter().any(|c| *c) {
+            m.weigh(self.f, &flags, &mut HashMap::new(), MOST)?
+        } else {
+            let not = m.not(self.f);
+            vec![(self.f, 1.0), (not, 0.0)]
+        };
+        Some(Cond { space: self.space.clone(), cases: cases.into_iter().filter(|(g, _)| *g != FALSE).collect() })
     }
 
     /// The worlds where this holds, among those consistent with `picks`. The picked choices no longer

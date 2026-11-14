@@ -22,6 +22,7 @@
   --c-value: #2563eb;
   --c-options: #4f46e5;
   --c-requires: #2f9e6a;
+  --c-evidence: #b7791f;
   --c-macro: #8a8a82;
   --c-none: #8a8a82;
   --minimap-mask: rgba(247, 247, 245, 0.6);
@@ -62,6 +63,7 @@
     --c-value: #60a5fa;
     --c-options: #818cf8;
     --c-requires: #4ade80;
+    --c-evidence: #fbbf24;
     --c-macro: #a8a29e;
     --c-none: #a8a29e;
     --minimap-mask: rgba(20, 20, 19, 0.55);

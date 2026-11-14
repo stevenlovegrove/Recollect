@@ -29,7 +29,7 @@ Nodes and the edges between them are both entities, and each has components, suc
 | System | What it adds |
 |---|---|
 | `notes` | Always there. `named` on every node, with its `name`, `notes` with a `body`, `sources`, `drawing`, and edges that only say how ideas relate: `serves`, `supports`, `contradicts`, `constrains`, `supersedes`, `relates` |
-| `formulas` | Always there. `value`, typed in or worked out by a formula, which can be a distribution ([docs/distributions.md](docs/distributions.md)), `label` edges to name what a formula reads, `options` for a choice, `requires` to say which worlds count, `macro` for a function of your own, and `is_a` for a kind. See [docs/expressions.md](docs/expressions.md) |
+| `formulas` | Always there. `value`, typed in or worked out by a formula, which can be a distribution ([docs/distributions.md](docs/distributions.md)), `label` edges to name what a formula reads, `options` for a choice, `requires` for what your choices have to meet and `evidence` for what's known, which between them say which worlds count, `macro` for a function of your own, and `is_a` for a kind. See [docs/expressions.md](docs/expressions.md) |
 | `plan` | `part`, `work`, `task`, `goal`, `question`, `risk`, `unknown`, `decision`, `uncertain` and `option`, with `part_of`, `alternative` and `depends_on` edges. Works out what's needed, completion, blocking, what can start, scope and pressure |
 | `schedule` | Dates and slack in every world, from `plan`'s facts. A task's estimate is its duration |
 

@@ -20,7 +20,7 @@ import type { GraphNode } from "../api";
 import type { Workspace } from "../workspace";
 import { badgesOf, compColor, dominant, isDropped, isNote, label as labelOf, nodeColor } from "../theme";
 import { renderMarkdown } from "../markdown";
-import { Brackets, CompBadges, TableIcon, beliefText, cellText, edgeKey, edgeText, parseEdgeKey, reading } from "../bits";
+import { Brackets, CompBadges, TableIcon, beliefText, cellText, chanceOf, edgeKey, edgeText, parseEdgeKey, reading } from "../bits";
 import { type SummaryLine, summaryOf } from "../summary";
 import { DdItem, Dropdown } from "../Dropdown";
 import { Key, isTyping } from "../Shortcuts";
@@ -117,8 +117,19 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
   // The options say how each is believed and what it could land on, so those lines would say it twice.
   const lines = options.length ? data.lines.filter((l) => l.name !== "belief" && l.name !== "chosen") : data.lines;
   const required = node.components.some((c) => c.name === "requires");
-  // A value that's true or false, worked out or typed in, on a node somebody wrote.
-  const truth = !node.unwritten && (required || node.cells.value?.shown?.kind === "bool");
+  const known = node.components.some((c) => c.name === "evidence");
+  const value = node.cells.value;
+  // A value that's true or false, worked out or typed in, on a node somebody wrote: plainly, or as a chance.
+  const chancy = !!chanceOf(value?.value) || (value?.shown?.kind === "cond" && value.shown.cases.some((c) => chanceOf(c.value)));
+  const truth = !node.unwritten && (required || known || value?.shown?.kind === "bool" || chancy);
+  // Demanded of a choice, where it depends on one that's someone's to make. Otherwise it can only be known.
+  const yours = (value?.vars ?? []).some((id) => data.ws.view!.worlds.vars.some((v) => v.id === id && !v.uncertain));
+  const mark = known ? "evidence" : required || yours ? "requires" : "evidence";
+  const marked = required || known;
+  const says =
+    mark === "requires"
+      ? { on: "required ✓", off: "require", done: "Required", undone: "No longer required", title: marked ? "Required: only the choices that make this true, as surely as it says, count. Click to make it only a value again" : "Only a value. Click to require it of your choices, so only the ones that make it true count" }
+      : { on: "known ✓", off: "known?", done: "Known", undone: "No longer known", title: marked ? "Known to be true: only the worlds, and the draws, where it is count. Click to make it only a value again" : "Only a value. Click to say it's known to be true, so only the worlds where it is count" };
   return (
     <div
       className={["card", node.unwritten && "unwritten", isDropped(node) && "dead", out && "out", selected && "selected", recent && "recent", dim && "dim", entering && "entering", leaving && "leaving", linking && "linking"].filter(Boolean).join(" ")}
@@ -138,15 +149,15 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
         {/* Something true or false is only a value until it's required: then it's a principle, and only the worlds where it holds count. */}
         {truth && (
           <button
-            className={`card-require nodrag nopan ${required ? "on" : ""}`}
-            title={required ? "Required: only the worlds where this is true count. Click to make it only a value again" : "Only a value. Click to require it, so only the worlds where it's true count"}
-            aria-pressed={required}
+            className={`card-require nodrag nopan ${marked ? "on" : ""}`}
+            title={says.title}
+            aria-pressed={marked}
             onClick={(e) => {
               e.stopPropagation();
-              data.ws.apply([{ op: required ? "remove" : "add", id: node.id, component: "requires" }], required ? "No longer required" : "Required").catch((err) => alert(String(err)));
+              data.ws.apply([{ op: marked ? "remove" : "add", id: node.id, component: mark }], marked ? says.undone : says.done).catch((err) => alert(String(err)));
             }}
           >
-            {required ? "required ✓" : "require"}
+            {marked ? says.on : says.off}
           </button>
         )}
       </div>

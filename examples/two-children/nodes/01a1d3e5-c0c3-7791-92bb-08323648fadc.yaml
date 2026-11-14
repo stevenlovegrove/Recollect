@@ -1,7 +1,7 @@
 id: 01a1d3e5-c0c3-7791-92bb-08323648fadc
 components:
 - notes
-- requires
+- evidence
 - value
 cells:
   body: This rules out only two girls. Of the three families left, boy and boy, boy and girl, girl and boy, one has two boys.

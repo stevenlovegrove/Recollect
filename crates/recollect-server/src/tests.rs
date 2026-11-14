@@ -1286,8 +1286,31 @@ async fn held_out_estimates_that_are_distributions() {
     assert_eq!(trip["value"]["dist"]["law"], "normal(50, 5)", "{trip}");
     assert!(trip.get("mix").is_none());
 
-    // Requiring something that's a matter of chance is refused, and says why.
-    let (status, refused) = c.call("POST", "/api/call/apply", Some(json!({ "ops": [{ "op": "add", "id": id(&v, "Under a fortnight"), "component": "requires" }] }))).await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
-    assert!(refused["error"].as_str().unwrap().contains("requires_something_uncertain"), "{refused}");
+    // Requiring something that's a matter of chance demands it be sure enough. Always, unless it says:
+    // nothing of yours bears on the effort, so no choice makes it sure, and a notice says so.
+    let tight = id(&v, "Under a fortnight");
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "add", "id": tight, "component": "requires" }] })).await;
+    let v = c.view(json!({})).await;
+    let said = |v: &Value, rule: &str| v["checks"].as_array().unwrap().iter().find(|k| k["rule"] == rule).map(|k| k["detail"].as_str().unwrap().to_string());
+    let judged = said(&v, "requirement_judged_before").unwrap_or_else(|| panic!("{}", v["checks"]));
+    assert!(judged.contains("how its uncertain numbers fall") && judged.contains("No choice makes it sure enough"), "{judged}");
+    assert_eq!(v["worlds"]["count"], "0", "so nothing is left");
+    // It's under a fortnight 91% of the time, which is sure enough for nine times in ten.
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": tight, "cell": "at_least", "value": 0.9 }] })).await;
+    let v = c.view(json!({})).await;
+    assert!(!said(&v, "requirement_judged_before").unwrap().contains("No choice"));
+    assert_ne!(v["worlds"]["count"], "0");
+
+    // Known, rather than demanded, it rules out the draws where it's false: the effort given that is
+    // less, was read from the draws that are left, and says so. What shares nothing with it is as it was.
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "remove", "id": tight, "component": "requires" }, { "op": "add", "id": tight, "component": "evidence" }] })).await;
+    let v = c.view(json!({})).await;
+    let effort = &cell(&v, "Effort", "value")["value"]["dist"];
+    assert_eq!((effort["exact"].as_bool(), effort["law"].as_str()), (Some(false), None), "{effort}");
+    let kept = effort["draws"].as_u64().unwrap();
+    assert!(kept > 3600 && kept < 3850 && effort["mean"].as_f64().unwrap() < 9.8 && effort["high"].as_f64().unwrap() < 14.0, "{effort}");
+    assert_eq!(cell(&v, "One times another", "value")["value"]["dist"]["draws"], kept, "which shares its draws with the effort");
+    let die = &cell(&v, "Die", "value");
+    assert!(die.get("error").is_none());
+    assert_eq!(cell(&v, "Trip", "value")["mix"]["dist"]["exact"], true, "{}", cell(&v, "Trip", "value"));
 }

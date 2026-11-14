@@ -1,4 +1,4 @@
-id: 01a1d7b3-450f-76df-82c8-a4e74e1deaa5
+id: 01a1d83e-3773-711f-b6af-bebc7e910f26
 components:
 - notes
 - value
@@ -8,12 +8,12 @@ cells:
 formulas:
   value: supplier.chosen.quote + shipping
 links:
-- to: 01a1d7b3-450f-76df-82c8-a4e26b720941
+- to: 01a1d83e-3773-711f-b6af-beb71ff1749e
   components:
   - label
   cells:
     called: supplier
-- to: 01a1d7b3-450f-76df-82c8-a4e6a3e85c55
+- to: 01a1d83e-3773-711f-b6af-bebb0aa0198f
   components:
   - label
   cells:

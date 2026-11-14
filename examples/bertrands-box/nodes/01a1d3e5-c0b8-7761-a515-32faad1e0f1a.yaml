@@ -1,7 +1,7 @@
 id: 01a1d3e5-c0b8-7761-a515-32faad1e0f1a
 components:
 - notes
-- requires
+- evidence
 - value
 cells:
   body: There are three gold coins you could be holding, each as likely as the others, and two of them are in the box with two gold.

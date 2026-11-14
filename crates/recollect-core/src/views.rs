@@ -7,9 +7,9 @@ use std::cell::{Cell as StdCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use recollect_graph::chance::{Rand, Reader, Share, Term};
-use recollect_graph::worlds::{Bool, Picks, Space, Var};
+use recollect_graph::worlds::{Bool, Picks, Var};
 use recollect_graph::{Backed, CellDef, ComponentDef, ComponentType, Entity, Error, Event, Graph, Log, Named, On, Op, Origin, Shown, Source, Stored, Violation};
-use recollect_systems::formulas::{CHOICE, LABEL, shown_free};
+use recollect_systems::formulas::{CHOICE, LABEL, known_draws, narrows, shown_free, worlds_left};
 use recollect_systems::notes::Body;
 use recollect_systems::plan::{self, Matrix, UNCERTAIN, WorkItem};
 use serde::{Deserialize, Serialize};
@@ -433,8 +433,10 @@ impl Lens {
     fn new(g: &Graph, world: &World) -> Lens {
         let picks = plan::picks(g, world);
         let found = plan::pinned(g, world).given(&picks);
-        let ruled = g.registry().constrained(g).map_or_else(|| Space::global().always(), |c| c.given(&picks));
-        Lens { in_play: &ruled & &found, picks, found, reader: RefCell::new(Reader::new()) }
+        // Whatever's known about draws is given to everything this reads.
+        let reader = RefCell::new(Reader::given(known_draws(g)));
+        let in_play = worlds_left(g, &picks, &found, &mut reader.borrow_mut());
+        Lens { in_play, picks, found, reader }
     }
 
     /// A value as it reads through this.
@@ -600,7 +602,7 @@ struct Asked {
 }
 
 fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap<String, Var>) -> WorldsView {
-    let constraint = g.registry().constrained(g);
+    let constrained = narrows(g);
     let in_play = &lens.in_play;
     // A decision whose options depend on other choices is several variables with its name, one for each
     // set of options that can be left, so it's asked where it lands rather than read off one of them.
@@ -678,7 +680,7 @@ fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap
     clues(&mut views, &asked, in_play, held);
     let at_rest = plan::at_rest(g);
     let (count, solutions) = if at_rest.is_none() {
-        if constraint.is_some() {
+        if constrained {
             let n = in_play.count(&unpicked);
             let found = in_play.solutions(&unpicked, 300).into_iter().map(|mut s| {
                 s.extend(applied.clone());
@@ -691,10 +693,10 @@ fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap
     } else {
         // Each way things could go, once: a variable that isn't in use doesn't make another.
         let n = (in_play & &at_rest.expect("just checked").given(&lens.picks)).count_with(&unpicked);
-        let found = if constraint.is_some() { ways(&asked, in_play, &applied, 300) } else { vec![] };
+        let found = if constrained { ways(&asked, in_play, &applied, 300) } else { vec![] };
         (n.to_string(), found)
     };
-    WorldsView { picks: applied, vars: views, count, constrained: constraint.is_some(), solutions }
+    WorldsView { picks: applied, vars: views, count, constrained, solutions }
 }
 
 /// The ways everything open could land, among the worlds in play, up to `limit`.

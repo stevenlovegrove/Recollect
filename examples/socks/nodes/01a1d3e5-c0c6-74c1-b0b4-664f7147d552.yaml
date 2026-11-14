@@ -1,7 +1,7 @@
 id: 01a1d3e5-c0c6-74c1-b0b4-664f7147d552
 components:
 - notes
-- requires
+- evidence
 - value
 cells:
   body: 'With two pairs it can''t happen: the third sock has to match one of the first two. It''s likelier with four pairs than with three, so it counts for the bigger load.'
