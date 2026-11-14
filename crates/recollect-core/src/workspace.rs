@@ -76,42 +76,6 @@ pub const CONFIG: &str = "recollect.toml";
 pub const SAMPLE_MARKER: &str = "sample-format";
 pub const SAMPLE_FORMAT: &str = FORMAT;
 
-/// A change-set waiting for someone to look at it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Proposal {
-    pub id: String,
-    pub title: String,
-    pub rationale: String,
-    pub ops: Vec<Op>,
-    pub author: String,
-    /// Milliseconds since 1970.
-    pub created: u64,
-}
-
-/// A proposal, and why it can't be accepted any more, if it can't.
-#[derive(Debug, Clone, Serialize)]
-pub struct ProposalView {
-    #[serde(flatten)]
-    pub proposal: Proposal,
-    pub error: Option<String>,
-}
-
-fn proposal_path(id: &str) -> String {
-    format!("proposals/{id}.json")
-}
-
-fn is_proposal_path(path: &str) -> bool {
-    path.strip_prefix("proposals/").and_then(|n| n.strip_suffix(".json")).is_some_and(|stem| !stem.is_empty() && !stem.starts_with('.') && !stem.contains('/'))
-}
-
-fn slug(s: &str) -> String {
-    let mut out: String = s.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
-    while out.contains("--") {
-        out = out.replace("--", "-");
-    }
-    out.trim_matches('-').chars().take(40).collect()
-}
-
 fn refusal(e: CommitError) -> Error {
     match e {
         CommitError::Refused(v) => Error::Refused(v.iter().map(|v| format!("{}: {}", v.rule, v.detail)).collect::<Vec<_>>().join("; ")),
@@ -124,7 +88,6 @@ fn refusal(e: CommitError) -> Error {
 pub struct Changed {
     /// The graph changed, and it's an event.
     pub graph: bool,
-    pub proposals: bool,
     /// Its name or settings changed.
     pub workspace: bool,
     /// Which systems it uses changed, so it has to be opened again.
@@ -143,7 +106,6 @@ pub struct Workspace {
     pub config: Config,
     pub built: Built,
     pub log: Log,
-    pub proposals: Vec<Proposal>,
     /// Every file as last seen or written, so a host telling it about its own writes changes nothing.
     known: Files,
     /// The node files as last understood, by path.
@@ -177,15 +139,6 @@ fn read_config(text: &str) -> Result<Config, Error> {
     toml::from_str(text).map_err(|e| Error::Other(format!("reading {CONFIG}: {e}")))
 }
 
-fn read_proposals(files: &Files) -> Result<Vec<Proposal>, Error> {
-    let mut out = BTreeMap::new();
-    for (path, text) in files.iter().filter(|(p, _)| is_proposal_path(p)) {
-        let p: Proposal = serde_json::from_str(text).map_err(|e| Error::Other(format!("reading {path}: {e}")))?;
-        out.insert(p.id.clone(), p);
-    }
-    Ok(out.into_values().collect())
-}
-
 /// Which file each node lives in. A node can be in a file called anything, as when someone or some
 /// other program made it by hand, and it stays there. If two files say they're the same node, the one
 /// named for it wins, or else the first.
@@ -214,10 +167,9 @@ impl Workspace {
         for (path, text) in files.iter().filter(|(p, _)| is_node_path(p)) {
             parsed.insert(path.clone(), parse_node(text).map_err(|e| Error::Other(format!("{path} isn't a valid node: {e}")))?);
         }
-        let proposals = read_proposals(&files)?;
         let homes = homes_of(&parsed);
         let (log, problems) = Log::from_saved(graph_of(&parsed, &homes), built.registry.clone());
-        let mut ws = Workspace { id: id.to_string(), location: location.to_string(), sample, config, built, log, proposals, known: files, parsed, homes, pending: Writes::default() };
+        let mut ws = Workspace { id: id.to_string(), location: location.to_string(), sample, config, built, log, known: files, parsed, homes, pending: Writes::default() };
         // A node only an edge mentions gets a file.
         let homeless: BTreeSet<Entity> = ws.log.graph().entities().filter(|e| !ws.homes.contains_key(e)).collect();
         for node in ws.log.graph().save().nodes.into_iter().filter(|n| homeless.contains(&n.id)) {
@@ -237,12 +189,6 @@ impl Workspace {
             self.pending.write.insert(path.clone(), text);
         }
         self.parsed.insert(path, node);
-    }
-
-    fn put(&mut self, path: String, text: String) {
-        self.known.insert(path.clone(), text.clone());
-        self.pending.delete.retain(|p| *p != path);
-        self.pending.write.insert(path, text);
     }
 
     fn remove(&mut self, path: &str) {
@@ -283,7 +229,7 @@ impl Workspace {
     /// an event by `disk`, and a file that can't be read is left as it was understood before.
     pub fn files_changed(&mut self, changes: BTreeMap<String, Option<String>>) -> Changed {
         let mut out = Changed::default();
-        let (mut graph, mut proposals) = (false, false);
+        let mut graph = false;
         for (path, text) in changes {
             if self.known.get(&path) == text.as_ref() {
                 continue;
@@ -303,8 +249,6 @@ impl Workspace {
                         self.parsed.remove(&path);
                     }
                 }
-            } else if is_proposal_path(&path) {
-                proposals = true;
             } else if path == CONFIG {
                 match text.as_deref().map(read_config) {
                     Some(Ok(c)) if c.systems == self.config.systems => {
@@ -321,15 +265,6 @@ impl Workspace {
             self.homes = homes_of(&self.parsed);
             let (seq, _) = self.log.reconcile(&graph_of(&self.parsed, &self.homes), "disk");
             out.graph = seq.is_some();
-        }
-        if proposals {
-            match read_proposals(&self.known) {
-                Ok(p) => {
-                    out.proposals = p != self.proposals;
-                    self.proposals = p;
-                }
-                Err(e) => out.problems.push(e.to_string()),
-            }
         }
         out
     }
@@ -373,57 +308,6 @@ impl Workspace {
         self.log.redo(author).map_err(refusal)
     }
 
-    /// Store a change-set for review. It has to apply cleanly as things stand.
-    pub fn propose(&mut self, title: String, rationale: String, ops: Vec<Value>, author: &str) -> Result<Proposal, Error> {
-        let resolved = resolve_ops(ops, self.log.graph()).map_err(Error::Refused)?;
-        self.formulas_work(&resolved.ops)?;
-        let created = recollect_graph::now_ms();
-        let mut id = format!("{created}-{}", slug(&title));
-        let mut n = 2;
-        while self.proposals.iter().any(|p| p.id == id) {
-            id = format!("{created}-{}-{n}", slug(&title));
-            n += 1;
-        }
-        let p = Proposal { id, title, rationale, ops: resolved.ops, author: author.to_string(), created };
-        self.put(proposal_path(&p.id), serde_json::to_string_pretty(&p).expect("proposals serialise"));
-        self.proposals.push(p.clone());
-        Ok(p)
-    }
-
-    pub fn proposal_views(&self) -> Vec<ProposalView> {
-        self.proposals
-            .iter()
-            .map(|p| {
-                let error = self.log.what_if(&p.ops).err().map(|v| v.iter().map(|v| format!("{}: {}", v.rule, v.detail)).collect::<Vec<_>>().join("; "));
-                ProposalView { proposal: p.clone(), error }
-            })
-            .collect()
-    }
-
-    /// Commit a proposal, or some of its ops by index, and take it out of the inbox.
-    pub fn accept(&mut self, id: &str, only: Option<&[usize]>) -> Result<u64, Error> {
-        let at = self.proposals.iter().position(|p| p.id == id).ok_or_else(|| Error::NotFound(format!("proposal {id}")))?;
-        let p = self.proposals[at].clone();
-        let ops: Vec<Op> = match only {
-            Some(idx) => idx.iter().filter_map(|i| p.ops.get(*i).cloned()).collect(),
-            None => p.ops.clone(),
-        };
-        let why = if p.rationale.is_empty() { p.title.clone() } else { format!("{}: {}", p.title, p.rationale) };
-        let seq = self.log.commit(&p.author, &why, ops).map_err(refusal)?;
-        self.remove(&proposal_path(id));
-        self.proposals.remove(at);
-        Ok(seq)
-    }
-
-    pub fn reject(&mut self, id: &str) -> Result<(), Error> {
-        let before = self.proposals.len();
-        self.proposals.retain(|p| p.id != id);
-        if self.proposals.len() == before {
-            return Err(Error::NotFound(format!("proposal {id}")));
-        }
-        self.remove(&proposal_path(id));
-        Ok(())
-    }
 }
 
 #[cfg(test)]

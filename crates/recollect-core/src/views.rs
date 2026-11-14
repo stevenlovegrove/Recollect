@@ -403,7 +403,6 @@ pub struct View {
     pub checks: Vec<CheckView>,
     /// The cells that actually ran to answer this, since the last time anyone asked.
     pub ran: Vec<RanView>,
-    pub proposals: usize,
 }
 
 struct Labels(HashMap<String, String>);
@@ -992,7 +991,6 @@ pub fn view(o: &Workspace, world: &World) -> View {
         worlds,
         checks: checks(&o.log, &labels).into_iter().chain(refused).collect(),
         ran,
-        proposals: o.proposals.len(),
     }
 }
 
@@ -1161,25 +1159,6 @@ pub fn history(o: &Workspace, node: Option<Entity>) -> Vec<EventView> {
     o.log.events().iter().rev().filter(|ev| node.is_none_or(|n| ev.ops.iter().any(|op| op.target().nodes().contains(&n)))).map(event_view).collect()
 }
 
-/// A proposal as the inbox shows it.
-#[derive(Debug, Serialize)]
-pub struct ProposalBrief {
-    pub id: String,
-    pub title: String,
-    pub rationale: String,
-    pub author: String,
-    pub created: u64,
-    pub error: Option<String>,
-    pub ops: Vec<OpView>,
-}
-
-pub fn proposals(o: &Workspace) -> Vec<ProposalBrief> {
-    o.proposal_views()
-        .into_iter()
-        .map(|p| ProposalBrief { ops: p.proposal.ops.iter().map(op_view).collect(), id: p.proposal.id, title: p.proposal.title, rationale: p.proposal.rationale, author: p.proposal.author, created: p.proposal.created, error: p.error })
-        .collect()
-}
-
 // ---------- for reading in smaller pieces, as Claude does ----------
 
 #[derive(Debug, Serialize)]
@@ -1292,7 +1271,6 @@ pub struct Overview {
     pub cells: Vec<CellInfo>,
     pub checks: Vec<CheckView>,
     pub open_choices: Vec<VarView>,
-    pub pending_proposals: usize,
     pub events: usize,
 }
 
@@ -1305,7 +1283,6 @@ pub fn overview(o: &Workspace) -> Overview {
         cells: v.cells,
         checks: v.checks,
         open_choices: v.worlds.vars,
-        pending_proposals: v.proposals,
         events: o.log.events().len(),
     }
 }

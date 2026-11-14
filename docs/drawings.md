@@ -1,6 +1,6 @@
 # Drawings
 
-A drawing shows a problem the way it's really thought about: a sudoku with its boxes, a colouring as a map. It's a node with a `drawing` component, whose `drawing` cell holds TypeScript, so it's in the log, it can be proposed, reviewed and undone like anything else, and a workspace can have several. The Worlds tab has a **Show** menu to pick one or the default view, and remembers the choice per workspace in that browser.
+A drawing shows a problem the way it's really thought about: a sudoku with its boxes, a colouring as a map. It's a node with a `drawing` component, whose `drawing` cell holds TypeScript, so it's in the log, with who wrote it and why, and can be undone like anything else, and a workspace can have several. The Worlds tab has a **Show** menu to pick one or the default view, and remembers the choice per workspace in that browser.
 
 The app's own views stay general. Anything specific to one problem, such as where sudoku's boxes are, belongs in a drawing.
 
@@ -44,7 +44,7 @@ If it throws, doesn't parse or takes more than 2 seconds, the Worlds tab says wh
 
 ## What it can't do
 
-A drawing is code that can arrive from a `git pull` or a proposal, and the local server has no login, so it's given nothing:
+A drawing is code that can arrive from a `git pull` or from Claude, and the local server has no login, so it's given nothing:
 
 | Layer | What it does |
 |---|---|
@@ -60,4 +60,4 @@ Checked in the browser with drawings trying `fetch`, WebSocket, XHR, EventSource
 
 - **No memory between worlds,** so no animation or state. Everything has to come from `world`.
 - **Reading a drawing's source doesn't tell you it's correct.** A drawing could show something different from the real values. It's only a picture of them, and the default view is one menu choice away.
-- **A person still reviews it as code,** when it's proposed. The sandbox limits what it can do, not whether it's misleading.
+- **A person still has to read it as code** to trust it. The sandbox limits what it can do, not whether it's misleading.

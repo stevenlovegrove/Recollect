@@ -61,7 +61,7 @@ UI development against the server: `RECOLLECT_BACKEND=http://127.0.0.1:7878 npm 
 |---|---|
 | `crates/recollect-graph` | The engine: nodes and edges with components and their cells, memoised computation, worlds as a value type, and the log of changes, for undo and redo. See [docs/components.md](docs/components.md). |
 | `crates/recollect-systems` | What a workspace can be made of: notes, formulas, planning and scheduling, plus the samples. See [docs/expressions.md](docs/expressions.md) for formulas. |
-| `crates/recollect-core` | A workspace: its files, proposals, and every call the app and Claude make of it, through one `dispatch`. No I/O: it's given files and says which to write. |
+| `crates/recollect-core` | A workspace: its files, and every call the app and Claude make of it, through one `dispatch`. No I/O: it's given files and says which to write. |
 | `crates/recollect-wasm` | `recollect-core` for the browser. |
 | `crates/recollect-server` | The `recollect` binary: workspaces on disk, REST and WebSocket events, MCP, and watching files. |
 | `web/` | React, React Flow and ELK. `web/src/engine` runs the engine in a worker, and keeps workspaces in the browser or in folders. |

@@ -17,7 +17,6 @@ A workspace is a directory of plain files:
 ```
 recollect.toml       its name, and which systems it uses
 nodes/<id>.yaml      a node each, with its edges, as plain data that can be edited by hand
-proposals/<id>.json  changes waiting for review
 ```
 
 The files are what's true. While a workspace is open, every change is an event in a log kept in memory, saying who made it and why, which is what undo and redo work from: undoing is a change too, so it can be redone. Editing a file by hand, another program writing one, or a `git pull`, is noticed and recorded as an event under the author `disk`, which can be undone like anything else. A workspace lives happily in git, and git is what keeps its history between sessions.
@@ -46,7 +45,7 @@ A component also says what it means to someone looking at it: what it's for, its
 
 ## Formulas
 
-A spreadsheet and a puzzle aren't separate systems here. Each is nodes with values, some of them formulas, and a puzzle's solutions are the worlds where a `requires` node is true. Because a formula can read a plan's cells and fill its `estimate`, a plan, its costs and its constraints are one graph: `sum(t in task: if(t.need, t.estimate, 0))`, on a node that labels each task, is its effort in every world, with shared work counted once, and a `requires` node saying that's at most 6 rules out the options that can't meet it. Claude writes formulas the same way a person does, as reviewable text in a proposal. A person types them as in a spreadsheet: in the Inspector or the Table, `=` starts a formula and anything else is a value, and a leading `'` means the rest is literal text. See [docs/expressions.md](docs/expressions.md).
+A spreadsheet and a puzzle aren't separate systems here. Each is nodes with values, some of them formulas, and a puzzle's solutions are the worlds where a `requires` node is true. Because a formula can read a plan's cells and fill its `estimate`, a plan, its costs and its constraints are one graph: `sum(t in task: if(t.need, t.estimate, 0))`, on a node that labels each task, is its effort in every world, with shared work counted once, and a `requires` node saying that's at most 6 rules out the options that can't meet it. Claude writes formulas the same way a person does, as text, with a reason in the log. A person types them as in a spreadsheet: in the Inspector or the Table, `=` starts a formula and anything else is a value, and a leading `'` means the rest is literal text. See [docs/expressions.md](docs/expressions.md).
 
 A cell holds a typed value or a formula, and that's the same whether a person wrote it or a system did. A component's cell can default to a formula, which is how dates and `done` work, so what's worked out can be read, overridden and restored like anything else. Some defaults are built into a system instead: what makes worlds, such as `choice`, and for now `need`, the blocking cells and `scope`.
 
@@ -87,7 +86,7 @@ crates/
   recollect-graph         The engine: entities, components and cells, memoisation, worlds, the log. Knows nothing of planning
   recollect-graph-macros  #[cell] and #[component]
   recollect-systems       notes, formulas, plan, schedule, views, and the samples
-  recollect-core          A workspace: its files, proposals, views, and every call through one `dispatch`. No I/O
+  recollect-core          A workspace: its files, views, and every call through one `dispatch`. No I/O
   recollect-wasm          recollect-core for the browser
   recollect-server        The `recollect` binary: workspaces on disk, REST, WebSocket events, MCP
 examples/                 The sample workspaces, written by recollect-systems' write_samples
@@ -106,9 +105,10 @@ The first version had its own model, and these didn't survive the move to the en
 - **Robustness as a number.** It assumed paths were independent, which gave wrong answers. Probability is now worked out exactly from the formula, and only where someone gives weights.
 - **Status (`live`, `parked`, `dropped`, `superseded`) and per-component states.** `dropped` and `done` are cells, and a `supersedes` edge says the rest.
 - **Tags, aliases, wikilinks and `created_by`.** A name is a cell, and the log says who did what.
-- **`merge_nodes`.** It can come back as a proposal that moves edges, with no special op.
+- **`merge_nodes`.** It can come back as a change-set that moves edges, with no special op.
 - **`outcome`, `actionable`, `uncertain`, `principle` and `artifact`, with presets.** Now `goal`, `task` and `question`, with `constrains` for a principle. Confidence on a question went too.
 - **Markdown files with frontmatter.** Plain YAML, one file per node.
+- **Proposals and the Inbox.** Claude's changes waited in `proposals/` to be accepted whole or in part. Nobody reviewed them op by op, so they now land directly, and History takes any one back. A leftover `proposals/` folder is ignored.
 - **A log on disk, and history as a tree.** The log was the source of truth, kept in `log.jsonl`, and you could go back to any event and branch from it. Now the files are what's true, the log is for the session, for undo and redo, and history between sessions is git's.
 - **Client-side what-ifs.** The engine narrows by world instead, which is exact.
 - **Some gap checks.** Those that needed timestamps or authors on nodes (stale work, ungrounded LLM nodes), and leverage across outcomes, could come back as checks. The rest became notices in `plan`.

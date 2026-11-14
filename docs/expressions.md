@@ -181,7 +181,7 @@ cells:
     body: if(t.need, t.estimate, 0)
 ```
 
-A formula labels an edge to it `effort`, and calls `effort(t)`. So it's in the log with an author and a reason, it can be reviewed in the inbox, and changing it reruns only what uses it.
+A formula labels an edge to it `effort`, and calls `effort(t)`. So it's in the log with an author and a reason, it can be taken back from History, and changing it reruns only what uses it.
 
 - **Recursion needs no special check.** A macro's body can use macros it has label edges to. Its expanded form is an internal cell on its own node, `macro_body`, read by whatever calls it, so a caller only reads one hop. A macro that calls itself is a loop in those cells, which the engine already reports.
 - **Bodies are closed.** A body can only use its parameters and other macros, so the same call means the same thing wherever it appears. The library is the exception, for what the schedule's own formulas need: `is_leaf()` follows this node's edges. Nothing in it reads the whole workspace.
@@ -258,7 +258,7 @@ call     := name "(" (name "in" path ":" expr ("," expr)? | expr ("," expr)*)? "
 
 ## Typing one
 
-The Inspector and the Table have one field for a cell, as in a spreadsheet: `=price * 2` is a formula, and `5`, `true` or `hello` is a value. Clearing it takes away what's written, so the cell goes back to its kind or its default. A leading `'` means take the rest literally, for text that really starts with `=`. The `=` is only how it's typed: what's stored is `price * 2`, so a file or a proposal doesn't have one. Turning a formula back into a value takes its labels with it.
+The Inspector and the Table have one field for a cell, as in a spreadsheet: `=price * 2` is a formula, and `5`, `true` or `hello` is a value. Clearing it takes away what's written, so the cell goes back to its kind or its default. A leading `'` means take the rest literally, for text that really starts with `=`. The `=` is only how it's typed: what's stored is `price * 2`, so a file doesn't have one. Turning a formula back into a value takes its labels with it.
 
 The Inspector asks which node each new name refers to. The Table can use the names a cell already has, and sends you to the Inspector for a new one.
 
@@ -279,7 +279,7 @@ Any part of a formula can be tried on a node with nothing changed, which is what
 
 ### Claims you can check, not just structure
 
-Claude can say "this depends on that", and with formulas it can say "this has to come in under £200", in a form the app holds it to. It arrives as reviewable text through the usual path: `propose`, checked as if committed, then the inbox. An idea can go from coarse text, to structure, to a checkable claim, and each step has an author and a reason.
+Claude can say "this depends on that", and with formulas it can say "this has to come in under £200", in a form the app holds it to. It arrives as text through the usual path: `apply`, checked as it's committed, with its reason in the log. An idea can go from coarse text, to structure, to a checkable claim, and each step has an author and a reason.
 
 ### The separate systems become one model
 
@@ -307,7 +307,7 @@ Neutral, but it fails well. A merge can leave a formula and its labels disagreei
 
 ### Ingesting sessions and documents (speculative)
 
-Text from past sessions often holds claims like "must be under 200ms" or "about three weeks". Extraction could propose these as formulas with `sources`, for review. Nothing here gets in its way.
+Text from past sessions often holds claims like "must be under 200ms" or "about three weeks". Extraction could write these as formulas with `sources`. Nothing here gets in its way.
 
 ## Risks
 
@@ -333,7 +333,7 @@ The limits are 10,000 distinct values for one formula, 4,000,000 pairs for one s
 | **Samples keep their answers** | 96, `Stay=Hotel`, 18, 92, 288, and the Japanese owning the zebra |
 | **A held-out problem** | See below |
 
-**The held-out test is the one that matters.** Every sample was written alongside the code, so none of them shows the library is enough. These are solved using only data, through `propose`, with no Rust:
+**The held-out test is the one that matters.** Every sample was written alongside the code, so none of them shows the library is enough. These are solved using only data, through `apply`, with no Rust:
 
 1. A budget cap on the handbook plan, with estimates depending on a decision, which crosses systems.
 2. A logic puzzle with a clause that isn't a pair: at most one of three people is lying.

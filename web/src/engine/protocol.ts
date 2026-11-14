@@ -36,6 +36,6 @@ export type Request =
 /** `seq` pairs an answer with its question. It isn't `id`, which some requests have of their own. */
 export type ToWorker = { seq: number; request: Request };
 
-export type ServerEvent = { type: "graph_changed"; by: string } | { type: "proposals_changed" } | { type: "workspace_changed" } | { type: "resync" };
+export type ServerEvent = { type: "graph_changed"; by: string } | { type: "workspace_changed" } | { type: "resync" };
 
 export type FromWorker = { seq: number; ok: true; value: unknown } | { seq: number; ok: false; error: EngineError } | { event: ServerEvent } | { status: SaveStatus };

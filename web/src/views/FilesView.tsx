@@ -18,8 +18,8 @@ export function FilesView({ ws, selected }: ViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
 
-  // Anything that changes the graph or the inbox changes the files.
-  const { view, proposals } = ws;
+  // Anything that changes the graph changes the files.
+  const { view } = ws;
   useEffect(() => {
     let stale = false;
     const failed = (e: unknown) => {
@@ -39,7 +39,7 @@ export function FilesView({ ws, selected }: ViewProps) {
     return () => {
       stale = true;
     };
-  }, [wanted, view, proposals]);
+  }, [wanted, view]);
 
   const nameOf = (path: string) => {
     const id = path.match(NODE_FILE)?.[1];

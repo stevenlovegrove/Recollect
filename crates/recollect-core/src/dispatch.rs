@@ -13,7 +13,6 @@ use crate::workspace::{Error, Workspace};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 pub struct Effect {
     pub graph: bool,
-    pub proposals: bool,
 }
 
 /// The most values one sweep can try, which is plenty for a chart.
@@ -81,33 +80,13 @@ struct UndoArgs {
     why: String,
 }
 
-#[derive(Deserialize)]
-struct ProposeArgs {
-    title: String,
-    #[serde(default)]
-    rationale: String,
-    ops: Vec<Value>,
-}
-
-#[derive(Deserialize)]
-struct AcceptArgs {
-    id: String,
-    /// Which ops to apply, by index. All of them if absent.
-    ops: Option<Vec<usize>>,
-}
-
-#[derive(Deserialize)]
-struct RejectArgs {
-    id: String,
-}
-
 /// The methods `dispatch` knows.
-pub const METHODS: &[&str] = &["view", "plan", "try", "sweep", "rows", "history", "proposals", "apply", "undo", "redo", "propose", "accept", "reject"];
+pub const METHODS: &[&str] = &["view", "plan", "try", "sweep", "rows", "history", "apply", "undo", "redo"];
 
 /// Answer one call on the workspace. `author` is who's asking, for anything that changes it.
 pub fn dispatch(ws: &mut Workspace, method: &str, a: Value, author: &str) -> Result<(Value, Effect), Error> {
     let read = |v: Value| Ok((v, Effect::default()));
-    let graph = Effect { graph: true, proposals: false };
+    let graph = Effect { graph: true };
     match method {
         "view" => read(to_json(views::view(ws, &args::<WorldArgs>(a)?.world))),
         "plan" => read(to_json(views::planning(ws, &args::<WorldArgs>(a)?.world).map_err(Error::Refused)?)),
@@ -130,7 +109,6 @@ pub fn dispatch(ws: &mut Workspace, method: &str, a: Value, author: &str) -> Res
             read(to_json(views::rows(ws, &r.table, r.from, r.to, &r.world)))
         }
         "history" => read(to_json(views::history(ws, args::<HistoryArgs>(a)?.node))),
-        "proposals" => read(to_json(views::proposals(ws))),
         "apply" => {
             let o: ApplyArgs = args(a)?;
             Ok((to_json(ws.apply(o.ops, author, &o.why)?), graph))
@@ -144,18 +122,6 @@ pub fn dispatch(ws: &mut Workspace, method: &str, a: Value, author: &str) -> Res
             Ok((json!({ "seq": seq }), graph))
         }
         "redo" => Ok((json!({ "seq": ws.redo(author)? }), graph)),
-        "propose" => {
-            let p: ProposeArgs = args(a)?;
-            Ok((to_json(ws.propose(p.title, p.rationale, p.ops, author)?), Effect { graph: false, proposals: true }))
-        }
-        "accept" => {
-            let p: AcceptArgs = args(a)?;
-            Ok((json!({ "seq": ws.accept(&p.id, p.ops.as_deref())? }), Effect { graph: true, proposals: true }))
-        }
-        "reject" => {
-            ws.reject(&args::<RejectArgs>(a)?.id)?;
-            Ok((Value::Null, Effect { graph: false, proposals: true }))
-        }
         other => Err(Error::NotFound(format!("method {other}"))),
     }
 }

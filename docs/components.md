@@ -246,9 +246,8 @@ History is a line. Undoing appends the inverse of the newest change not yet undo
 A workspace is files at paths relative to its root:
 
 ```
-recollect.toml       its name, which systems it uses, and whether Claude may change it directly
+recollect.toml       its name, and which systems it uses
 nodes/<id>.yaml      a node each, with its edges
-proposals/<id>.json  changes waiting for review
 ```
 
 `recollect-core` reads them and says which to write after each change, and the host, the server or a browser, does the reading and writing. A node's file looks like this:

@@ -21,7 +21,6 @@ use tokio::sync::broadcast;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     GraphChanged { by: String },
-    ProposalsChanged,
     WorkspaceChanged,
 }
 
@@ -82,13 +81,13 @@ pub struct App {
 /// The files that make up a workspace, as `recollect_core` reads them. Anything else in the directory
 /// is the user's own.
 fn is_workspace_file(path: &str) -> bool {
-    path == "recollect.toml" || path == SAMPLE_MARKER || recollect_graph::is_node_path(path) || path.strip_prefix("proposals/").is_some_and(|n| n.ends_with(".json") && !n.starts_with('.') && !n.contains('/'))
+    path == "recollect.toml" || path == SAMPLE_MARKER || recollect_graph::is_node_path(path)
 }
 
 /// Every workspace file in a directory.
 pub fn read_files(dir: &Path) -> Result<Files> {
     let mut out = Files::new();
-    for (sub, prefix) in [(dir.to_path_buf(), ""), (dir.join("nodes"), "nodes/"), (dir.join("proposals"), "proposals/")] {
+    for (sub, prefix) in [(dir.to_path_buf(), ""), (dir.join("nodes"), "nodes/")] {
         let Ok(entries) = std::fs::read_dir(&sub) else { continue };
         for entry in entries {
             let entry = entry?;
@@ -140,8 +139,7 @@ fn take_lock(dir: &Path) -> Result<File> {
 }
 
 impl Open {
-    /// Read the files again, and bring in whatever someone else changed. Returns whether the graph
-    /// or the proposals changed.
+    /// Read the files again, and bring in whatever someone else changed. Returns what changed.
     fn sync(&mut self) -> Result<recollect_core::Changed> {
         let disk = read_files(&self.dir)?;
         let paths: BTreeSet<&String> = disk.keys().chain(self.ws.files().keys()).collect();
@@ -193,19 +191,16 @@ impl App {
     /// again, so it's made on top of whatever someone else has done to them.
     pub fn call(&self, method: &str, args: Value, author: &str) -> Result<Value, AppError> {
         let (value, effect, changed) = self.with(|o| {
-            let reads = matches!(method, "view" | "plan" | "try" | "sweep" | "rows" | "history" | "proposals");
+            let reads = matches!(method, "view" | "plan" | "try" | "sweep" | "rows" | "history");
             let changed = if reads { Default::default() } else { o.sync()? };
             let (value, effect) = dispatch(&mut o.ws, method, args, author)?;
             o.flush()?;
             Ok((value, effect, changed))
         })?;
         self.announce(&changed, "disk");
-        let Effect { graph, proposals } = effect;
+        let Effect { graph } = effect;
         if graph {
             self.send(Event::GraphChanged { by: author.to_string() });
-        }
-        if proposals {
-            self.send(Event::ProposalsChanged);
         }
         Ok(value)
     }
@@ -213,9 +208,6 @@ impl App {
     fn announce(&self, changed: &recollect_core::Changed, by: &str) {
         if changed.graph {
             self.send(Event::GraphChanged { by: by.to_string() });
-        }
-        if changed.proposals {
-            self.send(Event::ProposalsChanged);
         }
         if changed.workspace {
             self.send(Event::WorkspaceChanged);
@@ -331,7 +323,7 @@ fn watch(app: Arc<App>, dir: &Path) -> Result<notify::RecommendedWatcher> {
         if let Ok(ev) = res {
             let relevant = ev.paths.iter().any(|p| {
                 let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                !name.starts_with('.') && (name.ends_with(".yaml") || name.ends_with(".json") || name.ends_with(".toml"))
+                !name.starts_with('.') && (name.ends_with(".yaml") || name.ends_with(".toml"))
             });
             if relevant {
                 let _ = tx.send(());
@@ -339,10 +331,8 @@ fn watch(app: Arc<App>, dir: &Path) -> Result<notify::RecommendedWatcher> {
         }
     })?;
     std::fs::create_dir_all(dir.join("nodes"))?;
-    std::fs::create_dir_all(dir.join("proposals"))?;
     watcher.watch(dir, RecursiveMode::NonRecursive)?;
     watcher.watch(&dir.join("nodes"), RecursiveMode::NonRecursive)?;
-    watcher.watch(&dir.join("proposals"), RecursiveMode::NonRecursive)?;
     let dir = dir.to_path_buf();
     tokio::spawn(async move {
         while rx.recv().await.is_some() {

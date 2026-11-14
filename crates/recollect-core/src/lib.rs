@@ -8,7 +8,6 @@
 //! ```text
 //! recollect.toml       its name, and which systems it uses
 //! nodes/<id>.yaml      a node each, with its edges
-//! proposals/<id>.json  changes waiting for review
 //! ```
 
 pub mod dispatch;
@@ -17,4 +16,4 @@ pub mod views;
 pub mod workspace;
 
 pub use dispatch::{Effect, METHODS, dispatch};
-pub use workspace::{Changed, Config, Error, Files, Proposal, ProposalView, SAMPLE_FORMAT, SAMPLE_MARKER, Workspace, Writes, new_files, sample_files};
+pub use workspace::{Changed, Config, Error, Files, SAMPLE_FORMAT, SAMPLE_MARKER, Workspace, Writes, new_files, sample_files};

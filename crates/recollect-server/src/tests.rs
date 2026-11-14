@@ -54,8 +54,9 @@ impl Client {
         self.post("/api/call/history", json!({ "node": node })).await
     }
 
-    fn propose(&self, title: &str, rationale: &str, ops: Vec<Value>) -> Result<Value, AppError> {
-        self.app.call("propose", json!({ "title": title, "rationale": rationale, "ops": ops }), "claude")
+    /// A change as Claude makes it over MCP.
+    fn claude_applies(&self, why: &str, ops: Vec<Value>) -> Result<Value, AppError> {
+        self.app.call("apply", json!({ "why": why, "ops": ops }), "claude")
     }
 
     /// Where the open workspace is on disk.
@@ -519,35 +520,29 @@ async fn a_sheet_workspace_has_no_plan_to_show() {
 }
 
 #[tokio::test]
-async fn proposals_wait_for_review_and_can_be_taken_in_part() {
+async fn claudes_changes_land_at_once_under_its_name_and_can_be_taken_back() {
     let c = Client::new();
     c.open("handbook").await;
-    let before = c.view(json!({})).await;
-    let p = c.propose("Add two", "both are needed", vec![
+    c.claude_applies("both are needed", vec![
         json!({ "op": "add_node", "id": "new:a", "name": "One" }),
         json!({ "op": "add_node", "id": "new:b", "name": "Two" }),
     ]).unwrap();
-    assert_eq!(c.view(json!({})).await["last_seq"], before["last_seq"], "nothing has happened yet");
-
-    let (_, list) = (StatusCode::OK, c.post("/api/call/proposals", json!({})).await);
-    assert_eq!(list[0]["id"], p["id"]);
-    assert_eq!(list[0]["error"], Value::Null);
-    assert_eq!(list[0]["ops"].as_array().unwrap().len(), 4, "each node is made, then named");
-
-    // Only the first.
-    c.post("/api/call/accept", json!({ "id": p["id"], "ops": [0, 1] })).await;
     let v = c.view(json!({})).await;
-    assert!(v["nodes"].as_array().unwrap().iter().any(|n| n["name"] == "One"));
-    assert!(!v["nodes"].as_array().unwrap().iter().any(|n| n["name"] == "Two"));
-    assert_eq!((StatusCode::OK, c.post("/api/call/proposals", json!({})).await).1.as_array().unwrap().len(), 0);
-    let (_, history) = (StatusCode::OK, c.history(None).await);
-    assert_eq!(history[0]["author"], "claude", "the log says who proposed it");
-    assert!(history[0]["why"].as_str().unwrap().contains("both are needed"));
+    assert!(["One", "Two"].iter().all(|name| v["nodes"].as_array().unwrap().iter().any(|n| n["name"] == *name)));
+    let history = c.history(None).await;
+    assert_eq!(history[0]["author"], "claude", "the log says who made it");
+    assert_eq!(history[0]["why"], "both are needed");
 
-    // One that wouldn't apply is refused before it gets to anyone.
+    // Taken back, the change is gone whole.
+    c.post("/api/call/undo", json!({ "seq": history[0]["seq"] })).await;
     let v = c.view(json!({})).await;
-    let refused = c.propose("Bad", "", vec![json!({ "op": "set", "id": "How do we publish it?", "cell": "chosen", "value": { "ref": id(&v, "One") } })]);
+    assert!(!v["nodes"].as_array().unwrap().iter().any(|n| n["name"] == "One" || n["name"] == "Two"));
+
+    // One that wouldn't apply is refused, and nothing lands.
+    let seq = v["last_seq"].clone();
+    let refused = c.claude_applies("", vec![json!({ "op": "set", "id": "How do we publish it?", "cell": "chosen", "value": { "ref": id(&v, "Agree who approves it") } })]);
     assert!(refused.is_err());
+    assert_eq!(c.view(json!({})).await["last_seq"], seq);
 }
 
 #[tokio::test]
@@ -761,8 +756,8 @@ async fn a_formula_and_its_labels_are_one_change_and_a_bad_one_is_refused() {
     assert!(why.contains("a label has to be a name"), "{why}");
     assert_eq!(c.view(json!({})).await["last_seq"], seq, "and nothing changed");
 
-    // A proposal is held to the same, before anyone is asked to look at it.
-    assert!(c.propose("Bad", "", vec![json!({ "op": "add_node", "id": "new:y", "name": "Y", "cells": { "value": { "formula": "nope" } } })]).is_err());
+    // Claude is held to the same.
+    assert!(c.claude_applies("", vec![json!({ "op": "add_node", "id": "new:y", "name": "Y", "cells": { "value": { "formula": "nope" } } })]).is_err());
 }
 
 #[tokio::test]
@@ -816,14 +811,11 @@ async fn held_out_a_budget_cap_on_a_plan() {
     let (approach, cad, free, board) = (id(&v, "How do we publish it?"), id(&v, "As a printed booklet"), id(&v, "As a PDF"), id(&v, "As a website"));
 
     // A PDF needs the layout checked again once it's tagged, so what's shared costs more on that path.
-    let p = c.propose("Cap the effort at six days", "the review is in a week", vec![
+    c.claude_applies("Cap the effort at six days: the review is in a week", vec![
         json!({ "op": "set", "id": "Lay out the pages", "cell": "estimate", "formula": "if(chose(approach, free), 3, 2)", "labels": { "approach": approach, "free": free } }),
         json!({ "op": "add_node", "id": "new:effort", "name": "Effort", "cells": { "value": { "formula": "if(any(u in gap: u.need), undefined, sum(t in task: if(t.need, t.estimate, 0)))", "labels": { "gap": "Something else", "task": ["Agree who approves it", "Lay out the pages", "Get it printed", "Tag it for screen readers", "Build the site"] } } } }),
         json!({ "op": "add_node", "id": "new:cap", "name": "Within six days", "components": ["requires"], "cells": { "value": { "formula": "effort <= 6", "labels": { "effort": "new:effort" } } } }),
     ]).unwrap();
-    let (_, list) = (StatusCode::OK, c.post("/api/call/proposals", json!({})).await);
-    assert!(list[0]["ops"].as_array().unwrap().iter().any(|o| o["value"] == "effort <= 6"), "the formula is what gets reviewed: {list}");
-    c.post("/api/call/accept", json!({ "id": p["id"] })).await;
 
     let v = c.view(json!({})).await;
     let at = |o: &str| json!({ approach.as_str(): o });

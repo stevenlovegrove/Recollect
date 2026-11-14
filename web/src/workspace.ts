@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { backend, type Backend, type ServerEvent, type Status } from "./backend";
-import { api, isNothingOpen, type CellInfo, type ComponentInfo, type Edge, type GraphNode, type Op, type PlanData, type Proposal, type View, type Workspaces, type World } from "./api";
+import { api, isNothingOpen, type CellInfo, type ComponentInfo, type Edge, type GraphNode, type Op, type PlanData, type View, type Workspaces, type World } from "./api";
 
 export interface Workspace {
   view: View | null;
@@ -8,7 +8,6 @@ export interface Workspace {
   nothingOpen: boolean;
   byId: Map<string, GraphNode>;
   plan: PlanData;
-  proposals: Proposal[];
   available: Workspaces | null;
   /** Where the answers come from, and what it can open. */
   backend: Backend | null;
@@ -52,7 +51,6 @@ export function useWorkspace(): Workspace {
   const [view, setView] = useState<View | null>(null);
   const [nothingOpen, setNothingOpen] = useState(false);
   const [plan, setPlan] = useState<PlanData>(NO_PLAN);
-  const [proposals, setProposals] = useState<Proposal[]>([]);
   const [available, setAvailable] = useState<Workspaces | null>(null);
   const [status, setStatus] = useState<Status>({ state: "saved" });
   const [be, setBackend] = useState<Backend | null>(null);
@@ -99,14 +97,6 @@ export function useWorkspace(): Workspace {
     }
   }, []);
 
-  const loadProposals = useCallback(async () => {
-    try {
-      setProposals(await api.proposals());
-    } catch (e) {
-      if (isNothingOpen(e)) setProposals([]);
-    }
-  }, []);
-
   const loadAvailable = useCallback(async () => setAvailable(await api.workspaces()), []);
 
   useEffect(() => {
@@ -120,19 +110,13 @@ export function useWorkspace(): Workspace {
     function onEvent(ev: ServerEvent) {
       if (ev.type === "graph_changed") {
         refresh();
-        loadProposals();
-      } else if (ev.type === "proposals_changed") {
-        loadProposals();
-        refresh();
       } else if (ev.type === "workspace_changed") {
         setWorld({});
         worldRef.current = {};
         refresh();
-        loadProposals();
         loadAvailable();
       } else {
         refresh();
-        loadProposals();
         loadAvailable();
       }
     }
@@ -140,7 +124,7 @@ export function useWorkspace(): Workspace {
       gone = true;
       stop?.();
     };
-  }, [refresh, loadProposals, loadAvailable]);
+  }, [refresh, loadAvailable]);
 
   // A different world is only a different question.
   const first = useRef(true);
@@ -201,7 +185,7 @@ export function useWorkspace(): Workspace {
     await api.openSample(name, reset);
   }, []);
 
-  return { view, nothingOpen, byId, edgeById, plan, proposals, available, backend: be, status, error, recent, recentCells, world, pin, setWorld, undo, redo, arranging, shape, ends, partKind, info, cellInfo, refresh, apply, openSample };
+  return { view, nothingOpen, byId, edgeById, plan, available, backend: be, status, error, recent, recentCells, world, pin, setWorld, undo, redo, arranging, shape, ends, partKind, info, cellInfo, refresh, apply, openSample };
 }
 
 /**

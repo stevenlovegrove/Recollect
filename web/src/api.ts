@@ -245,7 +245,6 @@ export interface View {
   worlds: WorldsView;
   checks: Check[];
   ran: { node: string; cell: string }[];
-  proposals: number;
 }
 
 export interface Blocker {
@@ -324,16 +323,6 @@ export interface EventView {
   at: number;
   author: string;
   why: string;
-  ops: OpView[];
-}
-
-export interface Proposal {
-  id: string;
-  title: string;
-  rationale: string;
-  author: string;
-  created: number;
-  error: string | null;
   ops: OpView[];
 }
 
@@ -419,7 +408,4 @@ export const api = {
   history: (node?: string) => call<EventView[]>("history", { node }),
   files: async () => (await backend()).files(),
   file: async (path: string) => (await backend()).file(path),
-  proposals: () => call<Proposal[]>("proposals"),
-  accept: (id: string, ops?: number[]) => call<{ seq: number }>("accept", { id, ops }),
-  reject: (id: string) => call<void>("reject", { id }),
 };

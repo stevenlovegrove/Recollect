@@ -23,7 +23,7 @@ export type Stamp = { size: number; modified: number };
 
 export interface FileStore {
   readonly kind: "browser" | "folder";
-  /** The files the engine reads: settings, nodes and proposals. */
+  /** The files the engine reads: settings and nodes. */
   readWorkspace(): Promise<Files>;
   /** Everything there, for the Files tab. */
   list(): Promise<FileInfo[]>;
@@ -35,10 +35,8 @@ export interface FileStore {
 /** The files that make up a workspace, as the engine reads them. Anything else is the user's own. */
 export function isWorkspaceFile(path: string): boolean {
   if (path === "recollect.toml" || path === "sample-format") return true;
-  const m = path.match(/^(nodes|proposals)\/([^/]+)$/);
-  if (!m) return false;
-  const ext = m[1] === "nodes" ? ".yaml" : ".json";
-  return !m[2].startsWith(".") && m[2].endsWith(ext) && m[2].length > ext.length;
+  const m = path.match(/^nodes\/([^/]+)$/);
+  return !!m && !m[1].startsWith(".") && m[1].endsWith(".yaml") && m[1].length > ".yaml".length;
 }
 
 const MOST = 2 * 1024 * 1024;
@@ -126,7 +124,6 @@ export class FolderStore implements FileStore {
     };
     await visit(this.root, "");
     await visit(await dirAt(this.root, ["nodes"], false), "nodes/");
-    await visit(await dirAt(this.root, ["proposals"], false), "proposals/");
     return out;
   }
 

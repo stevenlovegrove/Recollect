@@ -140,25 +140,13 @@ fn a_node_stays_in_whatever_file_it_was_made_in() {
 }
 
 #[test]
-fn proposals_are_files_and_land_in_the_inbox_from_either_side() {
-    let mut ws = invoice();
-    let rate = id(&view(&mut ws), "Tax rate");
-    let (p, effect) = dispatch(&mut ws, "propose", json!({ "title": "Higher tax", "rationale": "because", "ops": [{ "op": "set", "id": rate, "cell": "value", "value": 0.3 }] }), "claude").unwrap();
-    assert!(effect.proposals && !effect.graph);
-    let path = format!("proposals/{}.json", p["id"].as_str().unwrap());
-    let w = ws.take_writes();
-    assert!(w.write.contains_key(&path));
-
-    // Written by someone else, it's picked up.
-    let mut other = invoice();
-    let changed = other.files_changed(BTreeMap::from([(path.clone(), Some(w.write[&path].clone()))]));
-    assert!(changed.proposals);
-    assert_eq!(dispatch(&mut other, "proposals", json!({}), "t").unwrap().0.as_array().unwrap().len(), 1);
-
-    dispatch(&mut ws, "accept", json!({ "id": p["id"] }), "t").unwrap();
-    let w = ws.take_writes();
-    assert!(w.delete.contains(&path));
-    assert_eq!(value(&view(&mut ws), "Tax"), json!(24.0));
+fn a_proposal_left_from_when_there_was_an_inbox_is_ignored() {
+    let path = "proposals/1-higher-tax.json".to_string();
+    let mut files = sample_files("invoice").unwrap();
+    files.insert(path.clone(), "{ not even what a proposal was }".to_string());
+    let mut ws = open(files);
+    assert!(ws.take_writes().is_empty());
+    assert_eq!(ws.files_changed(BTreeMap::from([(path, Some("{}".to_string()))])), Changed::default());
 }
 
 #[test]

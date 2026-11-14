@@ -35,7 +35,7 @@ let unsaved: Writes = { write: {}, delete: [] };
 const channel = new BroadcastChannel("recollect");
 
 /** These change the workspace. */
-const CHANGES = new Set(["apply", "undo", "redo", "propose", "accept", "reject"]);
+const CHANGES = new Set(["apply", "undo", "redo"]);
 
 class Failure extends Error {
   constructor(
@@ -220,7 +220,7 @@ async function sync() {
     for (const p of new Set([...Object.keys(disk), ...Object.keys(mine)])) if (disk[p] !== mine[p] && isWorkspaceFile(p)) changes[p] = disk[p] ?? null;
   }
   if (current !== c || !Object.keys(changes).length) return;
-  const r = JSON.parse(engine.filesChanged(JSON.stringify(changes))) as { changed: { graph: boolean; proposals: boolean; workspace: boolean; reopen: boolean; problems: string[] }; writes: Writes };
+  const r = JSON.parse(engine.filesChanged(JSON.stringify(changes))) as { changed: { graph: boolean; workspace: boolean; reopen: boolean; problems: string[] }; writes: Writes };
   for (const p of r.changed.problems) console.warn(p);
   if (r.changed.reopen) {
     await open(c.known, c.store);
@@ -228,7 +228,6 @@ async function sync() {
   }
   await persist(r.writes);
   if (r.changed.graph) emit({ type: "graph_changed", by: "disk" });
-  if (r.changed.proposals) emit({ type: "proposals_changed" });
   if (r.changed.workspace) emit({ type: "workspace_changed" });
 }
 
@@ -329,10 +328,9 @@ async function handle(req: Request): Promise<unknown> {
         // On top of whatever someone else has done to the files.
         await sync();
       }
-      const r = JSON.parse(engine.call(req.method, JSON.stringify(req.args ?? {}))) as { value: unknown; effect: { graph: boolean; proposals: boolean }; writes: Writes };
+      const r = JSON.parse(engine.call(req.method, JSON.stringify(req.args ?? {}))) as { value: unknown; effect: { graph: boolean }; writes: Writes };
       await persist(r.writes);
       if (r.effect.graph) emit({ type: "graph_changed", by: "you" });
-      if (r.effect.proposals) emit({ type: "proposals_changed" });
       return r.value;
     }
     case "files":
