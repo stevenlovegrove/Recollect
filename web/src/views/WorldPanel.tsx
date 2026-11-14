@@ -78,7 +78,7 @@ export function WorldPanel({ ws, onSelect, summary }: { ws: Workspace; onSelect:
               <button className="icon small" onClick={() => step(-1)} aria-label="Previous solution">
                 ◀
               </button>
-              <span className="muted small">{stepping ? `${stepping.at + 1}/${stepping.list.length}` : `${solutions} solutions`}</span>
+              <span className="stepper-text">{stepping ? `Solution ${stepping.at + 1} of ${stepping.list.length}` : `Step through ${solutions} solutions`}</span>
               <button className="icon small" onClick={() => step(1)} aria-label="Next solution">
                 ▶
               </button>

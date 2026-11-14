@@ -3865,11 +3865,28 @@ button.icon.act.revert:hover {
   flex: 0 1 auto;
   min-width: 0;
 }
+/* A puzzle's solutions, one at a time: a control of its own, so it's seen. */
 .world-panel .stepper {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   white-space: nowrap;
+  height: 28px;
+  padding: 0 2px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel-2);
+}
+.world-panel .stepper button {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: var(--text);
+}
+.stepper-text {
+  font-size: 12.5px;
+  padding: 0 4px;
+  font-variant-numeric: tabular-nums;
 }
 .world-panel .drawing-pick {
   min-width: 0;
