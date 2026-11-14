@@ -23,6 +23,7 @@ pub struct Sample {
 pub const SAMPLES: &[Sample] = &[
     Sample { name: "handbook", title: "Publishing a handbook", about: "A first plan to read: a team publishing a handbook, with one decision held open.", group: "plan", systems: &["plan", "schedule"], build: handbook },
     Sample { name: "critical-path", title: "Critical path", about: "A plain schedule with no decisions: dates go forward over the dependencies, and slack comes from following them backward.", group: "plan", systems: &["plan", "schedule"], build: critical_path },
+    Sample { name: "launch", title: "A launch, give or take", about: "A plan whose estimates are guesses with a least, a likeliest and a most: what they add up to, when it's likely to end, and how likely that is to be within a fortnight.", group: "plan", systems: &["plan", "schedule"], build: launch },
     Sample { name: "invoice", title: "Invoice", about: "Two lines, a subtotal, tax and a total. Edit a number and only what it reaches reruns.", group: "sheet", systems: &[], build: invoice },
     Sample { name: "trip-budget", title: "Trip budget", about: "A budget with decisions left open: the total is exact in every world, and so is what would put it over.", group: "sheet", systems: &["plan"], build: trip_budget },
     Sample { name: "choosing-a-car", title: "Choosing a car", about: "Petrol and electric cars as tables: what every car has, and what only petrol or electric cars have. What each costs a year over mileage you can only guess at, and which can get to Edinburgh without stopping.", group: "sheet", systems: &["plan"], build: choosing_a_car },
@@ -45,7 +46,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "24";
+pub const FORMAT: &str = "25";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -204,6 +205,44 @@ fn critical_path(b: &mut Build) {
     b.link("Paint", "Wire the rooms", DEPENDS_ON);
     b.link("Paint", "Frame the walls", DEPENDS_ON);
     b.put("Lay foundations", Done::NAME, json!(true));
+}
+
+fn launch(b: &mut Build) {
+    about(b, r#"A small plan whose estimates aren't one number each. Nobody knows a task takes four days: they know it's at least three, probably four, and could be eight. Here each estimate says that, as `triangular(3, 4, 8)`, and everything worked out from them is uncertain in the same way.
+
+- **An estimate is a formula**, so nothing new is saved: a least, a likeliest and a most.
+- **What's worked out carries it.** The effort is every estimate added, and the end is the later of two chains of work, which is later on average than either.
+- **A question about it is a chance.** "Done within a fortnight" is true in some draws and not others.
+- **One thing is a coin toss.** Whether the review asks for changes is a matter of chance with two answers, so what depends on it shows both, and what they come to taken together.
+
+A histogram that's solid is exact. A paler one was read from 4,096 draws, and hovering over it says how far out it could be.
+
+**Things to try**
+
+- Select **Days until launch** to see where the end is likely to fall.
+- Pin **The review asks for changes** in the bar at the top to see the plan if it does, or doesn't.
+- Change an estimate's most, and see what moves."#);
+    let goal = "Launch the new site";
+    b.add(goal, GOAL).note(goal, "The goal. Everything beneath it has an estimate that's a guess, so when this is done is a guess too, and the plan says how good a one.");
+    for (task, days, about) in [
+        ("Write the copy", "triangular(2, 3, 6)", "At least two days, probably three, and six if the product team keep changing their minds."),
+        ("Design the pages", "triangular(3, 4, 8)", "A three-point estimate: a least, a likeliest and a most. Its histogram leans toward the least, because the most is further from the likeliest than the least is."),
+        ("Build it", "triangular(4, 6, 12)", "Waits for the design, so it starts whenever that ends, which isn't one day either."),
+    ] {
+        b.add(task, TASK).formula_on(task, Estimate::NAME, days).link(task, goal, PART_OF).note(task, about);
+    }
+    b.link("Build it", "Design the pages", DEPENDS_ON);
+    let changes = "The review asks for changes";
+    b.formula(changes, "bernoulli(0.3)").note(changes, "A matter of chance with two answers, three times in ten. It's a short list, so it's held exactly, as an uncertain decision is, and it can be pinned in the bar at the top.");
+    let review = "Review and fix";
+    b.add(review, TASK).formula_on(review, Estimate::NAME, "if(changes, triangular(2, 3, 5), 1)").label(review, changes, "changes").link(review, goal, PART_OF);
+    b.link(review, "Build it", DEPENDS_ON).link(review, "Write the copy", DEPENDS_ON);
+    b.note(review, "A day if the review passes, and two to five if it asks for changes. Its estimate shows each, and what they come to taken together.");
+    b.formula("Effort", "effort()").note("Effort", "Every estimate added up. The same draws are in the dates, so the two move together.");
+    let end = "Days until launch";
+    b.formula(end, "whole.plan_end").note(end, "When the last task ends. The build waits for the design, and the review for the build and the copy, so this is the later of two chains.");
+    let soon = "Done within a fortnight";
+    b.formula(soon, "end <= 14").label(soon, end, "end").note(soon, "True in some draws and false in others, so what it says is how likely. It was read from draws, and says so.");
 }
 
 fn invoice(b: &mut Build) {

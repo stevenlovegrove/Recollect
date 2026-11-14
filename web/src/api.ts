@@ -16,6 +16,45 @@ export type Shown =
   | { kind: "cond"; cases: { when: Reading; value: unknown }[] }
   | { kind: "named"; items: { node: string; when: Reading }[] };
 
+/**
+ * What an uncertain number comes to, sent as `{"dist": …}` wherever the number would be. See
+ * docs/distributions.md.
+ */
+export interface Dist {
+  mean: number;
+  /** Its spread: the standard deviation. */
+  sd: number;
+  /** It's below this one time in twenty. */
+  low: number;
+  /** It's below this half the time. */
+  mid: number;
+  /** It's above this one time in twenty. */
+  high: number;
+  /** It's never below this, or above that, where that's known. */
+  least?: number;
+  most?: number;
+  /** How much of the time it's undefined. The rest is about when it isn't. */
+  undefined: number;
+  hist: { from: number; to: number; bars: number[] };
+  /** The distribution it is, if it has a name, as it would be written. */
+  law?: string;
+  /** These are exactly right. Otherwise they were read from `draws` draws, and `error` is how far out the mean could be. */
+  exact: boolean;
+  draws: number;
+  error: number;
+}
+
+/** How likely an uncertain truth is, sent as `{"chance": …}` wherever the truth would be. */
+export interface Chance {
+  chance: number;
+  undefined: number;
+  exact: boolean;
+  draws: number;
+  /** In how many of the draws it was true. */
+  hits: number;
+  error: number;
+}
+
 export interface Cell {
   /** Where what's in it comes from: written here, taken from a kind, or its component's default. */
   source: "own" | "kind" | "default";
@@ -33,6 +72,8 @@ export interface Cell {
   varies?: boolean;
   /** How likely it is, at the least and the most, over the ways the open choices that are yours could go. */
   over?: { low: number; high: number };
+  /** Uncertain, and differing only over what's a matter of chance: what it comes to with all of that taken together. */
+  mix?: unknown;
   error?: string;
 }
 

@@ -604,7 +604,7 @@ export function entryOp(target: Target, cell: string, entry: ReturnType<typeof p
   return (entry.kind === "value" ? { op: "set", ...on, cell, value: entry.value, ...dropped } : { op: "set", ...on, cell, ...dropped }) as Op;
 }
 
-const NOT_NAMES = new Set(["true", "false", "undefined", "self", "from", "to", "via", "in", "out", "with", "if", "defined", "chose", "round", "floor", "ceil", "sum", "product", "all", "any", "count", "pick", "distinct", "row", "rows", "prev", "next", "abs", "min", "max", "or", "effort", "has", "whole", "is_leaf", "done_beneath", "days"]);
+const NOT_NAMES = new Set(["true", "false", "undefined", "self", "from", "to", "via", "in", "out", "with", "if", "defined", "chose", "round", "floor", "ceil", "sum", "product", "all", "any", "count", "pick", "distinct", "row", "rows", "prev", "next", "abs", "min", "max", "or", "effort", "has", "whole", "is_leaf", "done_beneath", "days", "exp", "ln", "sqrt", "normal", "lognormal", "uniform", "triangular", "exponential", "between", "integers", "bernoulli"]);
 
 /** The names a formula uses that have to come from somewhere: its labels. */
 function namesIn(formula: string): string[] {

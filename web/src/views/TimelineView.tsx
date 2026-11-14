@@ -1,15 +1,23 @@
 import { useMemo } from "react";
-import type { GraphNode } from "../api";
+import type { Dist, GraphNode } from "../api";
 import type { ViewProps } from "./MapView";
-import { casesOf, reading } from "../bits";
+import { casesOf, distOf, reading } from "../bits";
 
 type Row = { node: GraphNode; depth: number; again: boolean };
 
-type Span = { start: number | null; finish: number | null; slack: number | null };
+/** A date: a day, or what an uncertain one comes to, or nothing where it can't be known. */
+type When = number | { dist: Dist } | null;
+type Span = { start: When; finish: When; slack: When };
 
 /** When it happens, in each world still in play that needs it. */
 const spans = (n: GraphNode) => casesOf(n.cells.dates).filter((v): v is Span => v !== null);
-const known = (values: (number | null)[]) => values.filter((v): v is number => v !== null);
+/** The days a date could be: itself, or for an uncertain one, where it falls nine times in ten. */
+const known = (values: When[]) =>
+  values.flatMap((v) => {
+    const d = distOf(v);
+    return d ? (d.undefined >= 1 ? [] : [d.low, d.high]) : typeof v === "number" ? [v] : [];
+  });
+const uncertain = (n: GraphNode) => spans(n).some((s) => distOf(s.start) || distOf(s.finish));
 
 /**
  * Dates, as a chart. With decisions open a date can be several: the solid bar is what's true in
@@ -66,6 +74,7 @@ export function TimelineView({ ws, selected, onSelect }: ViewProps) {
       <div className="map-toolbar flat">
         <span className="muted">
           Days from the start. {Object.keys(ws.world).length === 0 && g.worlds.vars.length > 0 && "Decisions are open, so hatching shows how far a date could move, and a pale bar is work only some worlds need."}
+          {rows.some((r) => uncertain(r.node)) && " Some dates are uncertain: their hatching runs between where they fall nine times in ten."}
           {unknownEnd && " Something isn't specified in a world still in play, so the end can't be dated there."}
         </span>
       </div>
@@ -132,7 +141,7 @@ export function TimelineView({ ws, selected, onSelect }: ViewProps) {
         <span><i className="swatch bar-work" /> work</span>
         <span><i className="swatch bar-work contingent" /> only in some worlds</span>
         <span><i className="swatch bar-done" /> finished</span>
-        <span><i className="swatch hatch" /> depends on what's decided</span>
+        <span><i className="swatch hatch" /> depends on what's decided, or on chance</span>
         <span><i className="swatch bar-slack" /> slack: room to slip</span>
         <span><i className="swatch dot" /> critical: any slip moves the end</span>
       </div>

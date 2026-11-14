@@ -1,0 +1,16 @@
+id: 01a1d760-4545-746a-8af8-8d0fa9ee3801
+components:
+- notes
+- task
+cells:
+  body: Waits for the design, so it starts whenever that ends, which isn't one day either.
+  name: Build it
+formulas:
+  estimate: triangular(4, 6, 12)
+links:
+- to: 01a1d760-4545-746a-8af8-8d0c0d7698cb
+  components:
+  - part_of
+- to: 01a1d760-4545-746a-8af8-8d0ea58125b8
+  components:
+  - depends_on

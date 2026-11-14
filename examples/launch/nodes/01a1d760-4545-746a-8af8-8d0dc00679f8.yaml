@@ -1,0 +1,13 @@
+id: 01a1d760-4545-746a-8af8-8d0dc00679f8
+components:
+- notes
+- task
+cells:
+  body: At least two days, probably three, and six if the product team keep changing their minds.
+  name: Write the copy
+formulas:
+  estimate: triangular(2, 3, 6)
+links:
+- to: 01a1d760-4545-746a-8af8-8d0c0d7698cb
+  components:
+  - part_of

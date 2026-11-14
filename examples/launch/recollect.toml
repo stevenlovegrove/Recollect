@@ -1,0 +1,3 @@
+name = "A launch, give or take"
+about = "A plan whose estimates are guesses with a least, a likeliest and a most: what they add up to, when it's likely to end, and how likely that is to be within a fortnight."
+systems = ["plan", "schedule"]

@@ -1,0 +1,7 @@
+id: 01a1d760-4545-746a-8af8-8d0c0d7698cb
+components:
+- goal
+- notes
+cells:
+  body: The goal. Everything beneath it has an estimate that's a guess, so when this is done is a guess too, and the plan says how good a one.
+  name: Launch the new site

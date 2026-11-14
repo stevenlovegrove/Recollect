@@ -2117,6 +2117,31 @@ input.sheet-input {
   color: var(--danger);
   font-size: 12px;
 }
+.dist {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.dist-how {
+  font-size: 11px;
+}
+.hist {
+  flex: none;
+  border-bottom: 1px solid var(--border);
+}
+.hist rect {
+  fill: var(--accent);
+}
+/* What was read from draws is paler than what's exact, so the two don't look alike. */
+.hist.drawn rect {
+  fill: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.case.mix {
+  border-top: 1px dashed var(--border);
+  padding-top: 3px;
+  margin-top: 2px;
+}
 .cases,
 .named {
   display: flex;

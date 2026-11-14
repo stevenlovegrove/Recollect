@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type Cell, type Matrix, type MatrixOption, type MatrixRow, type VarView, type View } from "../api";
 import type { ViewProps } from "./MapView";
 import type { Workspace } from "../workspace";
-import { BELIEF_MEANS, Formula, NodeChip, PRIOR_MEANS, beliefOf, beliefText, casesOf, valueText } from "../bits";
+import { BELIEF_MEANS, Formula, NodeChip, PRIOR_MEANS, beliefOf, beliefText, casesOf, cellText, valueText } from "../bits";
 import { SweepChart, type Line } from "./SweepChart";
 import { nodeColor, pct } from "../theme";
 import { askWhy } from "../Ask";
@@ -417,6 +417,10 @@ function Summary({ cell, vars }: { cell: Cell | undefined; vars: VarView[] }) {
       );
     }
     if (s.cases.length === 1) return <span>{valueText(s.cases[0].value)}</span>;
+    // Something uncertain among them: what it comes to taken together, if that's only over chance, and
+    // otherwise where it could fall.
+    if (cell.mix !== undefined) return <span title={s.cases.map((c) => `${valueText(c.value)} when ${c.when.when}`).join("\n")}>{valueText(cell.mix)}</span>;
+    return <span>{cellText(cell)}</span>;
   }
   return <span>{valueText(cell.value)}</span>;
 }

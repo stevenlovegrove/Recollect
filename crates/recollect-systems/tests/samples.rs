@@ -190,3 +190,44 @@ fn a_drawing_is_an_ordinary_node_in_the_log() {
     let (valid, vars, _) = solutions(&open("sudoku"), 1);
     assert_eq!(valid.count(&vars), 288);
 }
+
+#[test]
+fn the_launch_is_likely_within_a_fortnight_and_says_how_it_knows() {
+    use recollect_graph::chance::{Num, Reader, Share, Term};
+    use recollect_systems::plan::Estimate;
+    let o = open("launch");
+    let mut reader = Reader::new();
+    let one = |v: &Val| match v {
+        Val::Rand(r) => [Share { weight: 1.0, value: Term::Rand(*r) }],
+        other => panic!("{other:?} isn't uncertain"),
+    };
+
+    // An estimate is the law it's written as, exactly.
+    let design = o.get::<Estimate>("Design the pages").0.0;
+    let Some(Num::Rand(design)) = design.cases()[0].1.clone() else { panic!("{design:?}") };
+    let s = reader.summary(&[Share { weight: 1.0, value: Term::Rand(design) }]);
+    assert!(s.exact && s.law.as_deref() == Some("triangular(3, 4, 8)") && s.mean == 5.0, "{s:?}");
+
+    // The review is a day, or two to five, depending on a coin that comes up three times in ten.
+    let review = o.get::<Estimate>("Review and fix").0.0;
+    assert_eq!(review.len(), 2);
+    let quick = review.cases().iter().find(|(_, d)| **d == Some(Num::Plain(1.0))).map(|(when, _)| when.prob()).expect("a day if it passes");
+    assert!((quick - 0.7).abs() < 1e-12);
+
+    // The end differs over the coin and by chance. With no changes asked for it's the build's chain or the
+    // copy, then a day: at least 3 + 4 + 1, and on average about 5 + 7⅓ + 1.
+    let end = o.get::<ValueCell>("Days until launch").0.0;
+    assert_eq!(end.len(), 2);
+    let changes = o.id("The review asks for changes");
+    let passes = end.at(&BTreeMap::from([(format!("~{changes}/value#0"), "false".to_string())]));
+    let s = reader.summary(&one(passes));
+    assert!(!s.exact && s.draws == 4096 && s.least == Some(8.0) && (s.mean - 13.33).abs() < 0.1, "{s:?}");
+
+    // Whether that's within a fortnight is a chance, read from the same draws.
+    let soon = o.get::<ValueCell>("Done within a fortnight").0.0;
+    let passes = soon.at(&BTreeMap::from([(format!("~{changes}/value#0"), "false".to_string())]));
+    let c = reader.chance(&one(passes));
+    assert!(!c.exact && c.chance > 0.55 && c.chance < 0.7, "{c:?}");
+    let fails = soon.at(&BTreeMap::from([(format!("~{changes}/value#0"), "true".to_string())]));
+    assert!(reader.chance(&one(fails)).chance < c.chance, "and it's less likely if changes are asked for");
+}
