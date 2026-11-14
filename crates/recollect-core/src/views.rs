@@ -502,6 +502,10 @@ fn mixed(s: &Shown, in_play: &Bool, reader: &RefCell<Reader>) -> Option<Value> {
         return None;
     }
     let held = in_play.prob();
+    // With nothing left in play, as when what's known can't all be true, there's nothing to take together.
+    if !(held > 0.0) {
+        return None;
+    }
     let shares: Vec<Share> = cases
         .iter()
         .map(|(when, v)| {

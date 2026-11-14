@@ -55,16 +55,18 @@ export function estimateHow(e: Estimate): string {
 /** How likely an uncertain truth is, if that's what this is: `{"chance": …}`. */
 export const chanceOf = (v: unknown): Chance | undefined => only(v, "chance") as Chance | undefined;
 
-const figures = (n: number) => valueText(+n.toPrecision(3));
+/** A number for reading. One that isn't there, or isn't a number, says so rather than breaking the page. */
+const figures = (n: number | null | undefined) => (typeof n === "number" && Number.isFinite(n) ? valueText(+n.toPrecision(3)) : "–");
 
 /** A small number, such as how far out something could be, to two figures however small it is. */
-const smallFigures = (n: number) => (Math.abs(n) >= 1 ? figures(n) : String(+n.toPrecision(2)));
+const smallFigures = (n: number | null | undefined) => (typeof n !== "number" || !Number.isFinite(n) ? "–" : Math.abs(n) >= 1 ? figures(n) : String(+n.toPrecision(2)));
 
 /**
  * A number that could be out by about `error`, written to as many places as that leaves meaningful, so
  * rounding it never moves it further than it could be out anyway.
  */
 function toWithin(n: number, error: number): string {
+  if (!Number.isFinite(n)) return "–";
   if (!(error > 0)) return figures(n);
   const places = Math.max(0, 1 - Math.floor(Math.log10(error)));
   return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: Math.min(places, 12) });
@@ -72,7 +74,7 @@ function toWithin(n: number, error: number): string {
 
 /** An uncertain number in a few words: its middle and its spread. What was read from draws says it's about that. */
 export function distText(d: Dist): string {
-  if (d.undefined >= 1) return "undefined";
+  if (d.undefined >= 1 || !Number.isFinite(d.mean)) return "undefined";
   return `${d.exact ? `${figures(d.mean)}` : `≈ ${toWithin(d.mean, d.error)}`} ± ${smallFigures(d.sd)}`;
 }
 
@@ -86,6 +88,7 @@ export function distHow(d: Dist): string {
 
 /** A chance in a few words. One nothing settled says how many draws it held in, and never says never. */
 export function chanceText(c: Chance): string {
+  if (c.undefined >= 1) return "undefined";
   if (c.exact) return beliefText(c.chance);
   if (c.hits === 0) return `0 in ${c.draws.toLocaleString()} draws`;
   if (c.hits === c.draws) return `all ${c.draws.toLocaleString()} draws`;
@@ -121,7 +124,7 @@ export function Hist({ d, wide }: { d: Dist; wide?: boolean }) {
 
 /** An uncertain number: its histogram, what it comes to, and how that was got. */
 export function DistValue({ d, wide }: { d: Dist; wide?: boolean }) {
-  if (d.undefined >= 1) return <span className="mono-value">undefined</span>;
+  if (d.undefined >= 1 || !Number.isFinite(d.mean) || !d.hist.bars.length) return <span className="mono-value">undefined</span>;
   return (
     <span className={`dist ${wide ? "wide" : ""}`} title={distHow(d)}>
       <Hist d={d} wide={wide} />
@@ -230,7 +233,7 @@ export function beliefOf(ws: Workspace, decision: string, option: string): { cha
 }
 
 /** A chance as a percentage, saying when it's almost but not quite certain either way. */
-export const beliefText = (p: number) => (p > 0 && p < 0.005 ? "<1%" : p < 1 && p > 0.995 ? ">99%" : `${Math.round(p * 100)}%`);
+export const beliefText = (p: number) => (typeof p !== "number" || !Number.isFinite(p) ? "–" : p > 0 && p < 0.005 ? "<1%" : p < 1 && p > 0.995 ? ">99%" : `${Math.round(p * 100)}%`);
 
 /** What a belief means, for a tooltip. */
 export const BELIEF_MEANS = "How strongly it's believed, given the evidence and anything pinned or found out";

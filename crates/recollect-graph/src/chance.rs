@@ -1227,6 +1227,14 @@ pub struct Summary {
     pub error: f64,
 }
 
+impl Summary {
+    /// What a number comes to where there's nothing it could be: undefined, all of the time. Its numbers are
+    /// 0 rather than nothing, so whatever reads them never has to ask, and `undefined` says not to.
+    pub fn nothing() -> Summary {
+        Summary { mean: 0.0, sd: 0.0, low: 0.0, mid: 0.0, high: 0.0, least: None, most: None, undefined: 1.0, hist: Hist { from: 0.0, to: 0.0, bars: vec![] }, below0: None, law: None, exact: true, draws: 0, error: 0.0 }
+    }
+}
+
 /// How likely a truth is, and how that was got.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Chance {
@@ -1687,6 +1695,10 @@ impl Reader {
     /// read from draws.
     pub fn summary(&mut self, shares: &[Share]) -> Summary {
         let whole: f64 = shares.iter().map(|s| s.weight).sum();
+        // With nothing it could be, as when what's known can't all be true, there's nothing to average.
+        if !(whole > 0.0) {
+            return Summary::nothing();
+        }
         let live: Vec<&Share> = shares.iter().filter(|s| s.weight > 0.0).collect();
         let (mut least, mut most) = (f64::INFINITY, f64::NEG_INFINITY);
         for share in &live {
@@ -1739,6 +1751,9 @@ impl Reader {
             values.extend(spread.into_iter().map(|v| (v, each)));
         }
         let values = Weighted::new(values);
+        if values.0.is_empty() {
+            return Summary { undefined: 1.0, ..Summary::nothing() };
+        }
         let sd = values.sd();
         // Given something, only the draws where it holds were read.
         let draws = if live.iter().any(|s| matches!(&s.value, Term::Rand(r) if self.tied(r))) { self.draws_kept() } else { DRAWS };
@@ -1750,6 +1765,9 @@ impl Reader {
     /// How likely a truth is, if it's each of these this much of the time.
     pub fn chance(&mut self, shares: &[Share]) -> Chance {
         let whole: f64 = shares.iter().map(|s| s.weight).sum();
+        if !(whole > 0.0) {
+            return Chance { chance: 0.0, undefined: 1.0, exact: true, draws: 0, hits: 0, error: 0.0 };
+        }
         let (mut yes, mut undefined, mut drawn, mut hits, mut read) = (0.0, 0.0, 0, 0, 0);
         for share in shares.iter().filter(|s| s.weight > 0.0) {
             let w = share.weight / whole;
@@ -2173,6 +2191,19 @@ mod tests {
         assert_eq!(reader.summary(&one(&normal("t/zero/y", 5.0, 1.0))).below0, None, "it doesn't come near");
         let drawn = reader.summary(&one(&bin(Op::Mul, &normal("t/zero/a", 0.0, 1.0), &normal("t/zero/b", 0.0, 1.0))));
         assert!(!drawn.exact && (drawn.below0.unwrap() - 0.5).abs() < 0.03, "{drawn:?}");
+    }
+
+    #[test]
+    fn with_nothing_it_could_be_it_says_undefined_and_never_not_a_number() {
+        let mut reader = Reader::new();
+        let none = [Share { weight: 0.0, value: normal("t/none/x", 0.0, 1.0) }, Share { weight: 0.0, value: n(3.0) }];
+        let s = reader.summary(&none);
+        assert!(s.undefined == 1.0 && [s.mean, s.sd, s.low, s.mid, s.high, s.error].iter().all(|v| v.is_finite()), "{s:?}");
+        assert!(serde_json::to_string(&s).unwrap().find("null").is_none());
+        let c = reader.chance(&[Share { weight: 0.0, value: Term::Flag(true) }]);
+        assert!(c.undefined == 1.0 && c.chance.is_finite() && c.error.is_finite(), "{c:?}");
+        let s = reader.summary(&[Share { weight: 1.0, value: Term::Undefined }]);
+        assert!(s.undefined == 1.0 && s.mean.is_finite(), "{s:?}");
     }
 
     #[test]

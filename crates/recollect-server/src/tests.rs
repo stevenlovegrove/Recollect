@@ -1359,3 +1359,35 @@ async fn a_pinned_quantity_reads_as_typing_it_in_or_knowing_it() {
     assert_eq!(cell(&c.view(json!({})).await, "Expected total", "value")["value"], 7.0);
     assert_eq!(cell(&c.view(json!({ die.as_str(): "6" })).await, "Expected total", "value")["value"], 9.5);
 }
+
+/// Knowing things that can't all be true leaves nothing, and says so, and nothing in what's sent is a
+/// number that isn't one: the page that crashed on this is the test.
+#[tokio::test]
+async fn knowing_what_cant_be_true_leaves_nothing_and_breaks_nothing() {
+    let c = Client::new();
+    c.open("tea").await;
+    let v = c.view(json!({})).await;
+    c.post("/api/call/apply", json!({ "ops": [
+        { "op": "add", "id": id(&v, "It says 35 ten minutes later"), "component": "evidence" },
+        { "op": "add", "id": id(&v, "Made in the last half hour"), "component": "evidence" },
+    ] })).await;
+    let v = c.view(json!({})).await;
+    assert_eq!(v["worlds"]["count"], "0");
+    fn walk(v: &Value, path: &str, bad: &mut Vec<String>) {
+        match v {
+            Value::Object(o) => {
+                for (k, x) in o {
+                    if x.is_null() && ["mean", "sd", "low", "mid", "high", "chance", "error", "from", "to"].contains(&k.as_str()) {
+                        bad.push(format!("{path}.{k}"));
+                    }
+                    walk(x, &format!("{path}.{k}"), bad);
+                }
+            }
+            Value::Array(a) => a.iter().enumerate().for_each(|(i, x)| walk(x, &format!("{path}[{i}]"), bad)),
+            _ => {}
+        }
+    }
+    let mut bad = Vec::new();
+    walk(&v, "", &mut bad);
+    assert!(bad.is_empty(), "{bad:?}");
+}
