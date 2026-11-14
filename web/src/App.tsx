@@ -246,6 +246,10 @@ export function App() {
               ))}
             </Dropdown>
           </span>
+        {/* The worlds, by adding to them: what's shown and what can be done to it, on the right. */}
+        <div className="topbar-worlds">
+          <Worlds ws={ws} open={worldsOpen} onOpen={setWorldsOpen} onSelect={select} />
+        </div>
         <div className="topbar-right">
           <button className="primary key-host new-node" onClick={() => startNew({ heading: "New node" })} title="New node (n)" aria-label="New node">
             <Key k="n" />+<span className="new-node-word"> Node</span>
@@ -255,14 +259,12 @@ export function App() {
       </header>
       {ws.status.readOnly && <div className="at-bar">This workspace is open in another tab, so it can only be looked at here. Close it there, and this tab takes over.</div>}
       {ws.status.state === "failed" && <div className="at-bar error">{ws.status.error} It'll be tried again with the next change.</div>}
-      {/* On the map the worlds chip floats over it instead. */}
-      {tab !== "map" && <Worlds ws={ws} open={worldsOpen} onOpen={setWorldsOpen} onSelect={select} />}
       {ws.error && <div className="error about-error">{ws.error}</div>}
       <main className="main">
         <section className="view">
           {mapOpened.current && (
             <div className={tab === "map" ? "map-layer" : "map-layer hidden"}>
-              <MapView key={mapKey} ws={ws} selected={selected} onSelect={select} active={tab === "map"} onContext={setCtx} onShowTable={showTable} worldsOpen={worldsOpen} onWorldsOpen={setWorldsOpen} />
+              <MapView key={mapKey} ws={ws} selected={selected} onSelect={select} active={tab === "map"} onContext={setCtx} onShowTable={showTable} />
             </div>
           )}
           {body}

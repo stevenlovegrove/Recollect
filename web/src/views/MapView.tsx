@@ -25,7 +25,6 @@ import { type SummaryLine, summaryOf } from "../summary";
 import { DdItem, Dropdown } from "../Dropdown";
 import { Key, isTyping } from "../Shortcuts";
 import type { CtxTarget } from "../ContextMenu";
-import { Worlds } from "../WorldBar";
 
 export interface ViewProps {
   ws: Workspace;
@@ -536,9 +535,9 @@ function LinkMenu({ ws, drop, onSwap, onDone }: { ws: Workspace; drop: LinkDrop;
   );
 }
 
-type MapProps = ViewProps & { active: boolean; onContext: (t: CtxTarget) => void; /** Show a table's grid, by its name. */ onShowTable?: (name: string) => void; worldsOpen: boolean; onWorldsOpen: (open: boolean) => void };
+type MapProps = ViewProps & { active: boolean; onContext: (t: CtxTarget) => void; /** Show a table's grid, by its name. */ onShowTable?: (name: string) => void };
 
-function MapInner({ ws, selected, onSelect, active, onContext, onShowTable, worldsOpen, onWorldsOpen }: MapProps) {
+function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: MapProps) {
   const view = ws.view!;
   // A row nobody wrote is on the map when something written reads it, and only then.
   const g = useMemo(() => ({ ...view, nodes: [...view.nodes, ...view.unwritten] }), [view]);
@@ -649,14 +648,18 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable, worl
   const [showDead, setShowDead] = useState(false);
   const [focus, setFocus] = useState(0);
   const [query, setQuery] = useState("");
-  // The view options and the worlds are each a chip over the map, opened when wanted, one at a time.
-  // Whether the worlds are open is the app's, since every page shares it.
-  const [optsWanted, setOpts] = useState(false);
-  const opts = optsWanted && !worldsOpen;
-  const openOpts = (on: boolean) => {
-    setOpts(on);
-    if (on) onWorldsOpen(false);
-  };
+  // The view options are a round button over the map, opened when wanted and put away on a click
+  // anywhere else.
+  const [opts, openOpts] = useState(false);
+  const optsHere = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!opts) return;
+    const away = (e: PointerEvent) => {
+      if (!optsHere.current?.contains(e.target as Node)) openOpts(false);
+    };
+    document.addEventListener("pointerdown", away);
+    return () => document.removeEventListener("pointerdown", away);
+  }, [opts]);
   // Laid-out node list (ids + sizes) and the positions currently on screen (animated).
   const [layout, setLayout] = useState<{ ids: string[]; target: Map<string, XY> }>({ ids: [], target: new Map() });
   const [pos, setPos] = useState<Map<string, XY>>(new Map());
@@ -1267,151 +1270,153 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable, worl
 
   return (
     <div className="map">
-      <button
-        className={`opts-toggle ${opts ? "open" : ""} ${query || hiddenFacts.size || hiddenRels.size || focus ? "narrowed" : ""}`}
-        onClick={() => openOpts(!opts)}
-        aria-expanded={opts}
-        aria-label={opts ? "Hide view options" : "View options"}
-        title="View options"
-      >
-        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden>
-          <path d="M4 7h10M18 7h2M4 17h4M12 17h8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          <circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
-          <circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
-        </svg>
-      </button>
-      <Worlds ws={ws} open={worldsOpen} onOpen={onWorldsOpen} onSelect={onSelect} floating />
-      <div className={`map-toolbar nowrap ${opts ? "opts-open" : ""}`}>
-        <span className="key-host search-host">
-          <Key k="/" />
-          <input
-            ref={searchRef}
-            className={`search ${q ? "active" : ""}`}
-            placeholder="Search…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                // Handled here so the app's Esc doesn't also deselect the match you landed on.
-                e.stopPropagation();
-                setQuery("");
-                e.currentTarget.blur();
-              } else if (e.key === "Enter" || e.key === "ArrowDown") {
-                e.preventDefault();
-                stepMatch.current(e.shiftKey ? -1 : 1);
-              } else if (e.key === "ArrowUp") {
-                e.preventDefault();
-                stepMatch.current(-1);
-              }
-            }}
-          />
-          {q && (
-            <span className="search-ctl">
-              <span className={`search-count ${found.length ? "" : "none"}`}>
-                {found.length ? `${foundAt >= 0 ? `${foundAt + 1}/` : ""}${found.length}` : "none"}
-              </span>
-              <button className="icon small" title="Previous match (⇧⏎)" disabled={!found.length} onClick={() => stepMatch.current(-1)}>
-                ▲
-              </button>
-              <button className="icon small" title="Next match (⏎)" disabled={!found.length} onClick={() => stepMatch.current(1)}>
-                ▼
-              </button>
-              <button className="icon small" title="Clear search (esc)" onClick={() => setQuery("")}>
-                ×
-              </button>
-            </span>
-          )}
-        </span>
-        <Dropdown label={<>Nodes {shownCount < present.length || showDead ? `${shownCount}/${present.length}` : ""}</>} active={shownCount < present.length}>
-          <div className="dd-head">
-            Show nodes with
-            <span>
-              <button className="link" onClick={() => setHiddenFacts(new Set())}>
-                all
-              </button>
-              <button className="link" onClick={() => setHiddenFacts(new Set(present.map(([f]) => f)))}>
-                none
-              </button>
-            </span>
-          </div>
-          {present.map(([f, n]) => (
-            <DdItem key={f} checked={!hiddenFacts.has(f)} onChange={() => setHiddenFacts(toggle(hiddenFacts, f))} color={compColor(f)}>
-              <span className="dd-label">{f === "none" ? "· notes" : f === "own" ? "· only their own cells" : `${ws.info(f)?.icon ?? ""} ${labelOf(f)}`}</span>
-              <span className="muted">{n}</span>
-            </DdItem>
-          ))}
-          <div className="dd-sep" />
-          <DdItem checked={showDead} onChange={() => setShowDead(!showDead)}>
-            <span className="dd-label">dropped</span>
-          </DdItem>
-        </Dropdown>
-        <Dropdown label={<>Links {relCount < rels.length ? `${relCount}/${rels.length}` : ""}</>} active={relCount < rels.length}>
-          <div className="dd-head">
-            Show links
-            <span>
-              <button className="link" onClick={() => setHiddenRels(new Set())}>
-                all
-              </button>
-              <button className="link" onClick={() => setHiddenRels(new Set(rels.map(([r]) => r).filter((r) => !shapes(r))))}>
-                layout only
-              </button>
-            </span>
-          </div>
-          <div className="dd-columns muted">
-            <span>show</span>
-            <span>layout</span>
-          </div>
-          {kindRels.map(([r, n]) => (
-            <DdItem key={r} checked={!hiddenRels.has(r)} onChange={() => setHiddenRels(toggle(hiddenRels, r))} title={ws.info(r)?.about}>
-              <span className={`dd-swatch rel-${r}`} />
-              <span className="dd-label">{labelOf(r)}</span>
-              <span className="muted">{n}</span>
-              <LayoutTick on={shapes(r)} name={labelOf(r)} onChange={(on) => setShapes([r], on)} />
-            </DdItem>
-          ))}
-          {labelRels.length > 0 && (
-            <DdItem
-              checked={labelRels.every(([r]) => !hiddenRels.has(r))}
-              onChange={() => {
-                const allShown = labelRels.every(([r]) => !hiddenRels.has(r));
-                const next = new Set(hiddenRels);
-                for (const [r] of labelRels) {
-                  if (allShown) next.add(r);
-                  else next.delete(r);
+      {/* The button and what it opens are one place, so a click in either keeps it open. */}
+      <div className="map-opts" ref={optsHere}>
+        <button
+          className={`opts-toggle ${opts ? "open" : ""} ${query || hiddenFacts.size || hiddenRels.size || focus ? "narrowed" : ""}`}
+          onClick={() => openOpts(!opts)}
+          aria-expanded={opts}
+          aria-label={opts ? "Hide view options" : "View options"}
+          title="View options"
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden>
+            <path d="M4 7h10M18 7h2M4 17h4M12 17h8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            <circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+            <circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+          </svg>
+        </button>
+        <div className={`map-toolbar nowrap ${opts ? "opts-open" : ""}`}>
+          <span className="key-host search-host">
+            <Key k="/" />
+            <input
+              ref={searchRef}
+              className={`search ${q ? "active" : ""}`}
+              placeholder="Search…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  // Handled here so the app's Esc doesn't also deselect the match you landed on.
+                  e.stopPropagation();
+                  setQuery("");
+                  e.currentTarget.blur();
+                } else if (e.key === "Enter" || e.key === "ArrowDown") {
+                  e.preventDefault();
+                  stepMatch.current(e.shiftKey ? -1 : 1);
+                } else if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  stepMatch.current(-1);
                 }
-                setHiddenRels(next);
               }}
-              title={ws.info("label")?.about}
-            >
-              <span className="dd-swatch rel-label" />
-              <span className="dd-label">Label</span>
-              <span className="muted">{labelRels.reduce((sum, [, n]) => sum + n, 0)}</span>
-              <LayoutTick on={labelRels.every(([r]) => shapes(r))} name="every label" onChange={(on) => setShapes(labelRels.map(([r]) => r), on)} />
-            </DdItem>
-          )}
-          {labelRels.map(([r, n]) => (
-            <DdItem key={r} className="dd-sub" checked={!hiddenRels.has(r)} onChange={() => setHiddenRels(toggle(hiddenRels, r))}>
-              <span className="dd-label">
-                <code>{r.slice(LABEL_REL.length)}</code>
+            />
+            {q && (
+              <span className="search-ctl">
+                <span className={`search-count ${found.length ? "" : "none"}`}>
+                  {found.length ? `${foundAt >= 0 ? `${foundAt + 1}/` : ""}${found.length}` : "none"}
+                </span>
+                <button className="icon small" title="Previous match (⇧⏎)" disabled={!found.length} onClick={() => stepMatch.current(-1)}>
+                  ▲
+                </button>
+                <button className="icon small" title="Next match (⏎)" disabled={!found.length} onClick={() => stepMatch.current(1)}>
+                  ▼
+                </button>
+                <button className="icon small" title="Clear search (esc)" onClick={() => setQuery("")}>
+                  ×
+                </button>
               </span>
-              <span className="muted">{n}</span>
-              <LayoutTick on={shapes(r)} name={r.slice(LABEL_REL.length)} onChange={(on) => setShapes([r], on)} />
+            )}
+          </span>
+          <Dropdown label={<>Nodes {shownCount < present.length || showDead ? `${shownCount}/${present.length}` : ""}</>} active={shownCount < present.length}>
+            <div className="dd-head">
+              Show nodes with
+              <span>
+                <button className="link" onClick={() => setHiddenFacts(new Set())}>
+                  all
+                </button>
+                <button className="link" onClick={() => setHiddenFacts(new Set(present.map(([f]) => f)))}>
+                  none
+                </button>
+              </span>
+            </div>
+            {present.map(([f, n]) => (
+              <DdItem key={f} checked={!hiddenFacts.has(f)} onChange={() => setHiddenFacts(toggle(hiddenFacts, f))} color={compColor(f)}>
+                <span className="dd-label">{f === "none" ? "· notes" : f === "own" ? "· only their own cells" : `${ws.info(f)?.icon ?? ""} ${labelOf(f)}`}</span>
+                <span className="muted">{n}</span>
+              </DdItem>
+            ))}
+            <div className="dd-sep" />
+            <DdItem checked={showDead} onChange={() => setShowDead(!showDead)}>
+              <span className="dd-label">dropped</span>
             </DdItem>
-          ))}
-          <div className="dd-note muted">Hiding links never moves nodes. Only the layout ticks do.</div>
-        </Dropdown>
-        <label className="toggle" title="Show only the neighbourhood of the selected node">
-          focus
-          <select value={focus} onChange={(e) => setFocus(Number(e.target.value))}>
-            <option value={0}>off</option>
-            <option value={1}>1 hop</option>
-            <option value={2}>2 hops</option>
-            <option value={3}>3 hops</option>
-          </select>
-        </label>
-        <span className="map-hint" title="With a mouse: drag to pan, ⌘-scroll to zoom. Press ? for all keyboard shortcuts">
-          scroll to pan · pinch to zoom · hold <kbd>⌘</kbd> for keys
-        </span>
+          </Dropdown>
+          <Dropdown label={<>Links {relCount < rels.length ? `${relCount}/${rels.length}` : ""}</>} active={relCount < rels.length}>
+            <div className="dd-head">
+              Show links
+              <span>
+                <button className="link" onClick={() => setHiddenRels(new Set())}>
+                  all
+                </button>
+                <button className="link" onClick={() => setHiddenRels(new Set(rels.map(([r]) => r).filter((r) => !shapes(r))))}>
+                  layout only
+                </button>
+              </span>
+            </div>
+            <div className="dd-columns muted">
+              <span>show</span>
+              <span>layout</span>
+            </div>
+            {kindRels.map(([r, n]) => (
+              <DdItem key={r} checked={!hiddenRels.has(r)} onChange={() => setHiddenRels(toggle(hiddenRels, r))} title={ws.info(r)?.about}>
+                <span className={`dd-swatch rel-${r}`} />
+                <span className="dd-label">{labelOf(r)}</span>
+                <span className="muted">{n}</span>
+                <LayoutTick on={shapes(r)} name={labelOf(r)} onChange={(on) => setShapes([r], on)} />
+              </DdItem>
+            ))}
+            {labelRels.length > 0 && (
+              <DdItem
+                checked={labelRels.every(([r]) => !hiddenRels.has(r))}
+                onChange={() => {
+                  const allShown = labelRels.every(([r]) => !hiddenRels.has(r));
+                  const next = new Set(hiddenRels);
+                  for (const [r] of labelRels) {
+                    if (allShown) next.add(r);
+                    else next.delete(r);
+                  }
+                  setHiddenRels(next);
+                }}
+                title={ws.info("label")?.about}
+              >
+                <span className="dd-swatch rel-label" />
+                <span className="dd-label">Label</span>
+                <span className="muted">{labelRels.reduce((sum, [, n]) => sum + n, 0)}</span>
+                <LayoutTick on={labelRels.every(([r]) => shapes(r))} name="every label" onChange={(on) => setShapes(labelRels.map(([r]) => r), on)} />
+              </DdItem>
+            )}
+            {labelRels.map(([r, n]) => (
+              <DdItem key={r} className="dd-sub" checked={!hiddenRels.has(r)} onChange={() => setHiddenRels(toggle(hiddenRels, r))}>
+                <span className="dd-label">
+                  <code>{r.slice(LABEL_REL.length)}</code>
+                </span>
+                <span className="muted">{n}</span>
+                <LayoutTick on={shapes(r)} name={r.slice(LABEL_REL.length)} onChange={(on) => setShapes([r], on)} />
+              </DdItem>
+            ))}
+            <div className="dd-note muted">Hiding links never moves nodes. Only the layout ticks do.</div>
+          </Dropdown>
+          <label className="toggle" title="Show only the neighbourhood of the selected node">
+            focus
+            <select value={focus} onChange={(e) => setFocus(Number(e.target.value))}>
+              <option value={0}>off</option>
+              <option value={1}>1 hop</option>
+              <option value={2}>2 hops</option>
+              <option value={3}>3 hops</option>
+            </select>
+          </label>
+          <span className="map-hint" title="With a mouse: drag to pan, ⌘-scroll to zoom. Press ? for all keyboard shortcuts">
+            scroll to pan · pinch to zoom · hold <kbd>⌘</kbd> for keys
+          </span>
+        </div>
       </div>
       {g.nodes.length === 0 ? (
         <div className="empty">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { OptionView, VarView, World } from "../api";
 import type { ViewProps } from "./MapView";
 import type { Workspace } from "../workspace";
@@ -33,13 +33,15 @@ export function useRemembered(key: string): [string, (v: string) => void] {
 /**
  * What's still possible: every open choice and its options, or a workspace's own drawing of them. Pin
  * one and everything narrows, on every page, with nothing saved. For a puzzle, the worlds left are its
- * solutions. It's what the worlds chip opens into, wherever it is.
+ * solutions. It's what the worlds chip grows into: `summary` is the chip's own line, at its head.
  */
-export function WorldPanel({ ws, onSelect, onClose }: { ws: Workspace; onSelect: (id: string | null) => void; onClose: () => void }) {
+export function WorldPanel({ ws, onSelect, summary }: { ws: Workspace; onSelect: (id: string | null) => void; summary: ReactNode }) {
   const g = ws.view!;
   const w = g.worlds;
   const quantities = w.quantities ?? [];
   const pinned = Object.keys(w.picks).length + quantities.length;
+  // What it all means, for whoever asks.
+  const [help, setHelp] = useState(false);
   // Stepping through solutions pins every choice, which leaves one, so remember the list it was in.
   const [stepping, setStepping] = useState<{ list: World[]; at: number } | null>(null);
   useEffect(() => {
@@ -52,6 +54,7 @@ export function WorldPanel({ ws, onSelect, onClose }: { ws: Workspace; onSelect:
     setStepping({ list, at });
     ws.setWorld(list[at]);
   };
+  const solutions = `${w.solutions.length}${w.solutions.length === 300 ? "+" : ""}`;
 
   const drawings = g.nodes.filter((n) => typeof n.cells.drawing?.value === "string");
   const [wanted, setWanted] = useRemembered(`recollect.drawing:${g.workspace.id}`);
@@ -67,36 +70,22 @@ export function WorldPanel({ ws, onSelect, onClose }: { ws: Workspace; onSelect:
 
   return (
     <div className="world-panel">
+      {/* The chip it grew from stays at the right end, where it was, with what acts on it before it. */}
       <div className="worlds-head">
-        <div className={`world-count ${w.count === "0" ? "none" : ""}`}>
-          <b>{w.count === "0" ? "No worlds" : Number(w.count).toLocaleString()}</b>{" "}
-          <span className="muted">{w.count === "0" ? "are consistent with these" : w.count === "1" ? "world left" : "worlds left"}</span>
-        </div>
-        {w.constrained && (stepping || w.solutions.length > 1) && (
-          <span className="stepper">
-            <button onClick={() => step(-1)} title="Previous solution">
-              ◀
-            </button>
-            <span className="muted small">{stepping ? `Solution ${stepping.at + 1} of ${stepping.list.length}` : `Step through ${w.solutions.length}${w.solutions.length === 300 ? "+" : ""}`}</span>
-            <button onClick={() => step(1)} title="Next solution">
-              ▶
-            </button>
-          </span>
-        )}
-        {pinned > 0 && (
-          <button
-            onClick={() => {
-              setStepping(null);
-              ws.setWorld({});
-            }}
-          >
-            Clear {pinned} pinned
-          </button>
-        )}
-        {drawings.length > 0 && (
-          <label className="drawing-pick small">
-            <span className="muted">Show</span>{" "}
-            <select value={drawing?.id ?? DEFAULT} onChange={(e) => setWanted(e.target.value)}>
+        <span className="worlds-tools left">
+          {w.constrained && (stepping || w.solutions.length > 1) && (
+            <span className="stepper" title={stepping ? `Solution ${stepping.at + 1} of ${stepping.list.length}` : `Step through the ${solutions} solutions`}>
+              <button className="icon small" onClick={() => step(-1)} aria-label="Previous solution">
+                ◀
+              </button>
+              <span className="muted small">{stepping ? `${stepping.at + 1}/${stepping.list.length}` : `${solutions} solutions`}</span>
+              <button className="icon small" onClick={() => step(1)} aria-label="Next solution">
+                ▶
+              </button>
+            </span>
+          )}
+          {drawings.length > 0 && (
+            <select className="small drawing-pick" value={drawing?.id ?? DEFAULT} onChange={(e) => setWanted(e.target.value)} aria-label="Show" title="Show the choices, or a drawing of them">
               <option value={DEFAULT}>Choices</option>
               {drawings.map((n) => (
                 <option key={n.id} value={n.id}>
@@ -104,12 +93,38 @@ export function WorldPanel({ ws, onSelect, onClose }: { ws: Workspace; onSelect:
                 </option>
               ))}
             </select>
-          </label>
-        )}
-        <button className="icon world-panel-close" onClick={onClose} aria-label="Close" title="Close (esc)">
-          ×
-        </button>
+          )}
+        </span>
+        <span className="worlds-tools right">
+          {pinned > 0 && (
+            <button
+              className="icon worlds-clear"
+              aria-label={`Clear ${pinned} pinned`}
+              title={`Clear ${pinned} pinned`}
+              onClick={() => {
+                setStepping(null);
+                ws.setWorld({});
+              }}
+            >
+              ⟲
+            </button>
+          )}
+          <button className={`icon worlds-help ${help ? "on" : ""}`} aria-pressed={help} aria-label="What this means" title="What this means" onClick={() => setHelp(!help)}>
+            ?
+          </button>
+        </span>
+        {summary}
       </div>
+      {help && (
+        <div className="world-help muted small">
+          <p>
+            Every way the open choices could land is a world. Click an option to pin it, and again to let it go: every page then shows what's true if so, and nothing is
+            saved. Solid means pinned, a dot means it's the only one left, and blank means no world lands there.
+          </p>
+          {w.vars.some((v) => v.uncertain) && <p>For what's uncertain, the percentage is the belief in each: how strongly it's believed given the evidence and whatever's pinned, so it changes as you pin things.</p>}
+          {w.constrained && <p>Requirements rule some worlds out, so for a puzzle the worlds left are its solutions, and they can be stepped through.</p>}
+        </div>
+      )}
       {quantities.length > 0 && (
         <div className="world-pins">
           {quantities.map((q) => (
@@ -140,19 +155,8 @@ export function WorldPanel({ ws, onSelect, onClose }: { ws: Workspace; onSelect:
         </>
       )}
       {(!drawing || failed) &&
-        (!w.vars.length ? (
-          <p className="muted small">Every decision here has been made, so there's only one world.</p>
-        ) : (
-          <>
-            {isBoard ? <Board ws={ws} /> : shared ? <Grid ws={ws} /> : <Lists ws={ws} />}
-            <p className="muted small world-hint">
-              Click to pin a choice, and again to let it go. Solid means pinned, a dot means it's the only one left, and blank means no world lands there.
-              {w.vars.some((v) => v.uncertain) && " For what's uncertain, the percentage is the belief in each: how strongly it's believed given the evidence and whatever's pinned, so it changes as you pin things."}
-            </p>
-          </>
-        ))}
-      {pinned > 0 && <p className="muted small">Every page shows what's true if so. Nothing is saved.</p>}
-      <WorthFindingOut ws={ws} onSelect={onSelect} />
+        (!w.vars.length ? <p className="muted small">Every decision here has been made, so there's only one world.</p> : isBoard ? <Board ws={ws} /> : shared ? <Grid ws={ws} /> : <Lists ws={ws} />)}
+      <WorthFindingOut ws={ws} onSelect={onSelect} help={help} />
     </div>
   );
 }
@@ -278,7 +282,7 @@ function Lists({ ws }: { ws: ViewProps["ws"] }) {
  * For something uncertain, what's most worth finding out next: each other open question, by how sure of
  * the answer you'd be on average once you knew it. Pinning one is finding it out.
  */
-function WorthFindingOut({ ws, onSelect }: { ws: ViewProps["ws"]; onSelect: (id: string) => void }) {
+function WorthFindingOut({ ws, onSelect, help }: { ws: ViewProps["ws"]; onSelect: (id: string) => void; help: boolean }) {
   const w = ws.view!.worlds;
   const open = w.vars.filter((v) => v.sure !== undefined);
   // What the case is about: whatever has the most answers, such as who it was, which stays put as things
@@ -302,7 +306,7 @@ function WorthFindingOut({ ws, onSelect }: { ws: ViewProps["ws"]; onSelect: (id:
         </select>
       </h4>
       <p className="muted small">
-        Believed most now: {optionName(ws, likeliest)}, {percent(likeliest.chance)}.{target.clues?.length ? " Each of these, once known, would leave you this sure on average." : ""}
+        Believed most now: {optionName(ws, likeliest)}, {percent(likeliest.chance)}.{help && target.clues?.length ? " Each of these, once known, would leave you this sure on average." : ""}
       </p>
       {!target.clues?.length && <p className="muted small">Nothing else that's open would change which is believed most, on its own.</p>}
       <ol>
