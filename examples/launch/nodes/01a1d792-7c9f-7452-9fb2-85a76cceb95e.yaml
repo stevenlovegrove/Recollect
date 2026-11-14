@@ -1,4 +1,4 @@
-id: 01a1d760-4545-746a-8af8-8d0b2a5c3827
+id: 01a1d792-7c9f-7452-9fb2-85a76cceb95e
 components:
 - notes
 cells:
@@ -6,7 +6,7 @@ cells:
     A small plan whose estimates aren't one number each. Nobody knows a task takes four days: they know it's at least three, probably four, and could be eight. Here each estimate says that, as `triangular(3, 4, 8)`, and everything worked out from them is uncertain in the same way.
 
     - **An estimate is a formula**, so nothing new is saved: a least, a likeliest and a most.
-    - **What's worked out carries it.** The effort is every estimate added, and the end is the later of two chains of work, which is later on average than either.
+    - **What's worked out carries it.** The effort is the four estimates added, and the end is the later of two chains of work, which is later on average than either.
     - **A question about it is a chance.** "Done within a fortnight" is true in some draws and not others.
     - **One thing is a coin toss.** Whether the review asks for changes is a matter of chance with two answers, so what depends on it shows both, and what they come to taken together.
 

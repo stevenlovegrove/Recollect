@@ -1,0 +1,15 @@
+id: 01a1d792-7c9f-7452-9fb2-85af08c8dc0e
+components:
+- notes
+- value
+cells:
+  body: When the goal is finished, which is when the last of its parts is. The build waits for the design, and the review for the build and the copy, so this is the later of two chains.
+  name: Days until launch
+formulas:
+  value: goal.finish
+links:
+- to: 01a1d792-7c9f-7452-9fb2-85a8d6fd602c
+  components:
+  - label
+  cells:
+    called: goal

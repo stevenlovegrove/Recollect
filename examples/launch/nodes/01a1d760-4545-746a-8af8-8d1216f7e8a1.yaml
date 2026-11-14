@@ -1,9 +1,0 @@
-id: 01a1d760-4545-746a-8af8-8d1216f7e8a1
-components:
-- notes
-- value
-cells:
-  body: Every estimate added up. The same draws are in the dates, so the two move together.
-  name: Effort
-formulas:
-  value: effort()

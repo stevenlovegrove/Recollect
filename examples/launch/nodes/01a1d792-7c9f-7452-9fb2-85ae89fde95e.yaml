@@ -1,0 +1,30 @@
+id: 01a1d792-7c9f-7452-9fb2-85ae89fde95e
+components:
+- notes
+- value
+cells:
+  body: The estimates of the four tasks it labels, added up. The same draws are in the dates, so the two move together.
+  name: Effort
+formulas:
+  value: 'sum(t in task: t.estimate)'
+links:
+- to: 01a1d792-7c9f-7452-9fb2-85a99edc5bd2
+  components:
+  - label
+  cells:
+    called: task
+- to: 01a1d792-7c9f-7452-9fb2-85aaecd6d51d
+  components:
+  - label
+  cells:
+    called: task
+- to: 01a1d792-7c9f-7452-9fb2-85ab70a15547
+  components:
+  - label
+  cells:
+    called: task
+- to: 01a1d792-7c9f-7452-9fb2-85addaee8dce
+  components:
+  - label
+  cells:
+    called: task

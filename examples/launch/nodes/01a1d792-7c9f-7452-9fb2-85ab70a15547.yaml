@@ -1,4 +1,4 @@
-id: 01a1d760-4545-746a-8af8-8d0fa9ee3801
+id: 01a1d792-7c9f-7452-9fb2-85ab70a15547
 components:
 - notes
 - task
@@ -8,9 +8,9 @@ cells:
 formulas:
   estimate: triangular(4, 6, 12)
 links:
-- to: 01a1d760-4545-746a-8af8-8d0c0d7698cb
+- to: 01a1d792-7c9f-7452-9fb2-85a8d6fd602c
   components:
   - part_of
-- to: 01a1d760-4545-746a-8af8-8d0ea58125b8
+- to: 01a1d792-7c9f-7452-9fb2-85aaecd6d51d
   components:
   - depends_on

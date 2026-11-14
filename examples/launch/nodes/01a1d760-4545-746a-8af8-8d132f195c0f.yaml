@@ -1,9 +1,0 @@
-id: 01a1d760-4545-746a-8af8-8d132f195c0f
-components:
-- notes
-- value
-cells:
-  body: When the last task ends. The build waits for the design, and the review for the build and the copy, so this is the later of two chains.
-  name: Days until launch
-formulas:
-  value: whole.plan_end

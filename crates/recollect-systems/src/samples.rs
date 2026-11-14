@@ -46,7 +46,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "25";
+pub const FORMAT: &str = "26";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -211,7 +211,7 @@ fn launch(b: &mut Build) {
     about(b, r#"A small plan whose estimates aren't one number each. Nobody knows a task takes four days: they know it's at least three, probably four, and could be eight. Here each estimate says that, as `triangular(3, 4, 8)`, and everything worked out from them is uncertain in the same way.
 
 - **An estimate is a formula**, so nothing new is saved: a least, a likeliest and a most.
-- **What's worked out carries it.** The effort is every estimate added, and the end is the later of two chains of work, which is later on average than either.
+- **What's worked out carries it.** The effort is the four estimates added, and the end is the later of two chains of work, which is later on average than either.
 - **A question about it is a chance.** "Done within a fortnight" is true in some draws and not others.
 - **One thing is a coin toss.** Whether the review asks for changes is a matter of chance with two answers, so what depends on it shows both, and what they come to taken together.
 
@@ -238,9 +238,12 @@ A histogram that's solid is exact. A paler one was read from 4,096 draws, and ho
     b.add(review, TASK).formula_on(review, Estimate::NAME, "if(changes, triangular(2, 3, 5), 1)").label(review, changes, "changes").link(review, goal, PART_OF);
     b.link(review, "Build it", DEPENDS_ON).link(review, "Write the copy", DEPENDS_ON);
     b.note(review, "A day if the review passes, and two to five if it asks for changes. Its estimate shows each, and what they come to taken together.");
-    b.formula("Effort", "effort()").note("Effort", "Every estimate added up. The same draws are in the dates, so the two move together.");
+    b.formula("Effort", "sum(t in task: t.estimate)").note("Effort", "The estimates of the four tasks it labels, added up. The same draws are in the dates, so the two move together.");
+    for task in ["Write the copy", "Design the pages", "Build it", review] {
+        b.label("Effort", task, "task");
+    }
     let end = "Days until launch";
-    b.formula(end, "whole.plan_end").note(end, "When the last task ends. The build waits for the design, and the review for the build and the copy, so this is the later of two chains.");
+    b.formula(end, "goal.finish").label(end, goal, "goal").note(end, "When the goal is finished, which is when the last of its parts is. The build waits for the design, and the review for the build and the copy, so this is the later of two chains.");
     let soon = "Done within a fortnight";
     b.formula(soon, "end <= 14").label(soon, end, "end").note(soon, "True in some draws and false in others, so what it says is how likely. It was read from draws, and says so.");
 }
