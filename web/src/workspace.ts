@@ -158,7 +158,11 @@ export function useWorkspace(): Workspace {
     setWorld((w) => {
       const next = { ...w };
       if (option === null) delete next[choice];
-      else next[choice] = option;
+      else {
+        next[choice] = option;
+        // Pinning an option that was ruled out, from wherever, brings it back: both at once leave nothing.
+        delete next[`!${choice}/${option}`];
+      }
       return next;
     });
   }, []);
