@@ -383,6 +383,13 @@ impl Arena {
         match (op, &self.nodes[a as usize]) {
             (Un::Neg, Node::Un(Un::Neg, inner)) | (Un::Not, Node::Un(Un::Not, inner)) => return *inner,
             (Un::Defined, _) if self.total(a) => return self.flag(true),
+            // Rounding what's already whole changes nothing.
+            (Un::Floor | Un::Ceil, Node::Un(Un::Floor | Un::Ceil, _)) => return a,
+            // Not below is at or above, where both sides are always something.
+            (Un::Not, Node::Bin(cmp @ (Op::Lt | Op::Le), l, r)) if self.total(a) => {
+                let (cmp, l, r) = (*cmp, *l, *r);
+                return self.bin(if cmp == Op::Lt { Op::Le } else { Op::Lt }, r, l);
+            }
             _ => {}
         }
         let (lo, hi) = self.span(a);
@@ -426,6 +433,9 @@ impl Arena {
         match op {
             Op::Add if self.is(a, 0.0) => return b,
             Op::Add | Op::Sub if self.is(b, 0.0) => return a,
+            Op::Sub if self.is(a, 0.0) => return self.un(Un::Neg, b),
+            // A number over itself is one, where it's never nothing.
+            Op::Div if a == b && both && (al > 0.0 || ah < 0.0) => return self.num(1.0),
             Op::Sub if a == b && both => return self.num(0.0),
             Op::Mul if self.is(a, 1.0) => return b,
             Op::Mul | Op::Div if self.is(b, 1.0) => return a,
@@ -450,6 +460,13 @@ impl Arena {
             Op::Or if self.nodes[a as usize] == Node::Flag(false) => return b,
             Op::Or if self.nodes[b as usize] == Node::Flag(false) => return a,
             _ => {}
+        }
+        // Something and its opposite: never both, and always one or the other.
+        if matches!(op, Op::And | Op::Or) && both {
+            let opposite = |x: X, y: X| self.nodes[x as usize] == Node::Un(Un::Not, y);
+            if opposite(a, b) || opposite(b, a) {
+                return self.flag(op == Op::Or);
+            }
         }
         // Two limits on one number that leave nothing between them: x > 5 && x < 3.
         if op == Op::And
@@ -515,6 +532,16 @@ impl Arena {
         }
         if a == b && self.total(c) {
             return a;
+        }
+        // Choosing on the opposite is choosing the other way round, and at or below is the opposite of
+        // above where both sides are always something. So each choice is held one way.
+        match self.nodes[c as usize] {
+            Node::Un(Un::Not, inner) => return self.pick(inner, b, a),
+            Node::Bin(Op::Le, l, r) if self.total(c) => {
+                let above = self.bin(Op::Lt, r, l);
+                return self.pick(above, b, a);
+            }
+            _ => {}
         }
         let (ia, ib) = (self.info[a as usize], self.info[b as usize]);
         let info = Info { truth: ia.truth || ib.truth, total: self.total(c) && ia.total && ib.total, lo: ia.lo.min(ib.lo), hi: ia.hi.max(ib.hi) };
@@ -811,9 +838,10 @@ impl<'de> Deserialize<'de> for Rand {
     }
 }
 
-// ---------- laws: what an expression is exactly, where that has a name ----------
+// ---------- laws: what an expression is exactly, where that can be said ----------
 
-/// A distribution with a name, which can be read exactly.
+/// A distribution that can be read exactly: one with a name, or one made of those in a way that still
+/// says how much of it is below any point.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Law {
     Normal { mean: f64, sd: f64 },
@@ -823,6 +851,17 @@ pub enum Law {
     /// A number whose log is a normal with this mean and spread.
     Lognormal { mu: f64, sigma: f64 },
     Triangular { low: f64, likely: f64, high: f64 },
+    /// One number, for certain.
+    Point(f64),
+    /// The greatest of several that share no draw.
+    Greatest(Vec<Law>),
+    /// The least of several that share no draw.
+    Least(Vec<Law>),
+    /// Each of these this much of the time. The shares add to 1.
+    Mixed(Vec<(f64, Law)>),
+    /// One of the smooth ones above, times `by` and then plus `shift`, where that has no name of its
+    /// own: a wait turned over, or a lognormal moved along.
+    Moved { of: Box<Law>, by: f64, shift: f64 },
 }
 
 /// A number as it's written for reading: four figures, and no more zeros than it needs.
@@ -835,65 +874,238 @@ pub fn figures(x: f64) -> String {
     if text.contains('.') { text.trim_end_matches('0').trim_end_matches('.').to_string() } else { text }
 }
 
+/// Where a sum is worked out between two points, and how much each counts: five-point Gauss-Legendre.
+const GAUSS: [(f64, f64); 5] = [
+    (0.0, 0.568_888_888_888_888_9),
+    (0.538_469_310_105_683_1, 0.478_628_670_499_366_5),
+    (-0.538_469_310_105_683_1, 0.478_628_670_499_366_5),
+    (0.906_179_845_938_664, 0.236_926_885_056_189_1),
+    (-0.906_179_845_938_664, 0.236_926_885_056_189_1),
+];
+
 impl Law {
-    pub fn mean(&self) -> f64 {
-        match *self {
-            Law::Normal { mean, .. } => mean,
-            Law::Uniform { from, to } => (from + to) / 2.0,
-            Law::Exponential { from, mean } => from + mean,
-            Law::Lognormal { mu, sigma } => (mu + sigma * sigma / 2.0).exp(),
-            Law::Triangular { low, likely, high } => (low + likely + high) / 3.0,
-        }
-    }
-
-    pub fn sd(&self) -> f64 {
-        match *self {
-            Law::Normal { sd, .. } => sd,
-            Law::Uniform { from, to } => (to - from) / 12f64.sqrt(),
-            Law::Exponential { mean, .. } => mean,
-            Law::Lognormal { mu, sigma } => (((sigma * sigma).exp() - 1.0) * (2.0 * mu + sigma * sigma).exp()).sqrt(),
-            Law::Triangular { low: a, likely: b, high: c } => ((a * a + b * b + c * c - a * b - a * c - b * c) / 18.0).sqrt(),
-        }
-    }
-
-    /// Where it has this much of its weight below it.
-    pub fn quantile(&self, p: f64) -> f64 {
-        match *self {
-            Law::Normal { mean, sd } => mean + sd * probit(p),
-            Law::Uniform { from, to } => from + (to - from) * p,
-            Law::Exponential { from, mean } => from + mean * apply_std(Std::Exponential, p),
-            Law::Lognormal { mu, sigma } => (mu + sigma * probit(p)).exp(),
-            Law::Triangular { low, likely, high } => apply_tri(p, low, likely, high),
-        }
-    }
-
-    /// How much of its weight is below this. Each of these is smooth, so that's the same as at or below.
-    pub fn below(&self, x: f64) -> f64 {
-        match *self {
+    /// How much of its weight is below this point, or at it too if `inclusive`. The two differ only where
+    /// some of the weight is on one number, as `max(x, 0)` has at 0.
+    pub fn mass(&self, x: f64, inclusive: bool) -> f64 {
+        match self {
             Law::Normal { mean, sd } => phi((x - mean) / sd),
             Law::Uniform { from, to } => ((x - from) / (to - from)).clamp(0.0, 1.0),
-            Law::Exponential { from, .. } if x <= from => 0.0,
+            Law::Exponential { from, .. } if x <= *from => 0.0,
             // A wait is never certainly over, however long it's been.
             Law::Exponential { from, mean } => (-(-(x - from) / mean).exp_m1()).min(1.0 - f64::EPSILON / 2.0),
             Law::Lognormal { .. } if x <= 0.0 => 0.0,
             Law::Lognormal { mu, sigma } => phi((x.ln() - mu) / sigma),
-            Law::Triangular { low, .. } if x <= low => 0.0,
-            Law::Triangular { high, .. } if x >= high => 1.0,
-            Law::Triangular { low, likely, high } if x <= likely => (x - low) * (x - low) / ((high - low) * (likely - low)),
+            Law::Triangular { low, .. } if x <= *low => 0.0,
+            Law::Triangular { high, .. } if x >= *high => 1.0,
+            Law::Triangular { low, likely, high } if x <= *likely => (x - low) * (x - low) / ((high - low) * (likely - low)),
             Law::Triangular { low, likely, high } => 1.0 - (high - x) * (high - x) / ((high - low) * (high - likely)),
+            Law::Point(at) => f64::from(u8::from(x > *at || (inclusive && x == *at))),
+            // All of them are below a point exactly when the greatest is, and they share nothing.
+            Law::Greatest(of) => of.iter().map(|l| l.mass(x, inclusive)).product(),
+            Law::Least(of) => 1.0 - of.iter().map(|l| 1.0 - l.mass(x, inclusive)).product::<f64>(),
+            Law::Mixed(of) => of.iter().map(|(share, l)| share * l.mass(x, inclusive)).sum(),
+            Law::Moved { of, by, shift } if *by > 0.0 => of.mass((x - shift) / by, inclusive),
+            // Turned over, what was above is below.
+            Law::Moved { of, by, shift } => 1.0 - of.mass((x - shift) / by, inclusive),
         }
     }
 
-    /// As it would be written in a formula.
-    pub fn text(&self) -> String {
-        match *self {
-            Law::Normal { mean, sd } => format!("normal({}, {})", figures(mean), figures(sd)),
-            Law::Uniform { from, to } => format!("uniform({}, {})", figures(from), figures(to)),
-            Law::Exponential { from, mean } if from == 0.0 => format!("exponential({})", figures(mean)),
-            Law::Exponential { from, mean } => format!("{} + exponential({})", figures(from), figures(mean)),
-            Law::Lognormal { mu, sigma } => format!("lognormal({}, {})", figures(mu), figures(sigma)),
-            Law::Triangular { low, likely, high } => format!("triangular({}, {}, {})", figures(low), figures(likely), figures(high)),
+    /// How much of its weight is at or below this.
+    pub fn below(&self, x: f64) -> f64 {
+        self.mass(x, true)
+    }
+
+    /// The numbers some of its weight sits on, rather than being spread about.
+    fn points(&self, out: &mut Vec<f64>) {
+        match self {
+            Law::Point(at) => out.push(*at),
+            Law::Greatest(of) | Law::Least(of) => of.iter().for_each(|l| l.points(out)),
+            Law::Mixed(of) => of.iter().for_each(|(_, l)| l.points(out)),
+            _ => {}
         }
+    }
+
+    /// Where it has this much of its weight at or below it.
+    pub fn quantile(&self, p: f64) -> f64 {
+        let (low, high) = match self {
+            Law::Normal { mean, sd } => return mean + sd * probit(p),
+            Law::Uniform { from, to } => return from + (to - from) * p,
+            Law::Exponential { from, mean } => return from + mean * apply_std(Std::Exponential, p),
+            Law::Lognormal { mu, sigma } => return (mu + sigma * probit(p)).exp(),
+            Law::Triangular { low, likely, high } => return apply_tri(p, *low, *likely, *high),
+            Law::Point(at) => return *at,
+            Law::Moved { of, by, shift } => return shift + by * of.quantile(if *by > 0.0 { p } else { 1.0 - p }),
+            // Between where each of them has this much, and where each has enough that together they do.
+            Law::Greatest(of) => {
+                let each = p.powf(1.0 / of.len() as f64);
+                (of.iter().map(|l| l.quantile(p)).fold(f64::NEG_INFINITY, f64::max), of.iter().map(|l| l.quantile(each)).fold(f64::NEG_INFINITY, f64::max))
+            }
+            Law::Least(of) => {
+                let each = 1.0 - (1.0 - p).powf(1.0 / of.len() as f64);
+                (of.iter().map(|l| l.quantile(each)).fold(f64::INFINITY, f64::min), of.iter().map(|l| l.quantile(p)).fold(f64::INFINITY, f64::min))
+            }
+            Law::Mixed(of) => (of.iter().map(|(_, l)| l.quantile(p)).fold(f64::INFINITY, f64::min), of.iter().map(|(_, l)| l.quantile(p)).fold(f64::NEG_INFINITY, f64::max)),
+        };
+        // A number with weight on it is the answer for every share that weight spans, and exactly so.
+        let mut points = Vec::new();
+        self.points(&mut points);
+        if let Some(at) = points.into_iter().find(|at| self.mass(*at, true) >= p && self.mass(*at, false) < p) {
+            return at;
+        }
+        let (mut low, mut high) = (low, high);
+        for _ in 0..200 {
+            let mid = low + (high - low) / 2.0;
+            if !(mid > low && mid < high) {
+                break;
+            }
+            if self.mass(mid, true) >= p {
+                high = mid;
+            } else {
+                low = mid;
+            }
+        }
+        high
+    }
+
+    /// Its mean and its spread, for one with no formula for them: summed between a few hundred points
+    /// chosen so each stretch holds little of the weight, and finely out in the tails. It's right to about
+    /// nine figures where the law is smooth.
+    fn moments(&self) -> (f64, f64) {
+        let tails = || (9..=50).map(|k| 0.5f64.powi(k));
+        let mut shares: Vec<f64> = tails().collect();
+        shares.reverse();
+        shares.extend((1..256).map(|i| f64::from(i) / 256.0));
+        shares.extend(tails().map(|p| 1.0 - p));
+        let at: Vec<f64> = shares.iter().map(|p| self.quantile(*p)).collect();
+        let (first, last) = (at[0], at[at.len() - 1]);
+        // What's beyond the last point either way counts as being at it.
+        let (under, over) = (self.below(first), 1.0 - self.below(last));
+        let (mut mean, mut square) = (first * under + last * over, first * first * under + last * last * over);
+        for pair in at.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            if !(b > a) {
+                continue;
+            }
+            let (half, middle) = ((b - a) / 2.0, (a + b) / 2.0);
+            let (mut area, mut moment) = (0.0, 0.0);
+            for (x, weight) in GAUSS {
+                let x = middle + half * x;
+                let below = self.below(x);
+                area += weight * below * half;
+                moment += weight * x * below * half;
+            }
+            // By parts: the sum of x over the weight between a and b is what's below b times b, less the
+            // same at a, less the area under how much is below.
+            let (fa, fb) = (self.below(a), self.below(b));
+            mean += b * fb - a * fa - area;
+            square += b * b * fb - a * a * fa - 2.0 * moment;
+        }
+        (mean, (square - mean * mean).max(0.0).sqrt())
+    }
+
+    pub fn mean(&self) -> f64 {
+        match self {
+            Law::Normal { mean, .. } => *mean,
+            Law::Uniform { from, to } => (from + to) / 2.0,
+            Law::Exponential { from, mean } => from + mean,
+            Law::Lognormal { mu, sigma } => (mu + sigma * sigma / 2.0).exp(),
+            Law::Triangular { low, likely, high } => (low + likely + high) / 3.0,
+            Law::Point(at) => *at,
+            Law::Greatest(_) | Law::Least(_) => self.moments().0,
+            Law::Mixed(of) => of.iter().map(|(share, l)| share * l.mean()).sum(),
+            Law::Moved { of, by, shift } => shift + by * of.mean(),
+        }
+    }
+
+    pub fn sd(&self) -> f64 {
+        match self {
+            Law::Normal { sd, .. } => *sd,
+            Law::Uniform { from, to } => (to - from) / 12f64.sqrt(),
+            Law::Exponential { mean, .. } => *mean,
+            Law::Lognormal { mu, sigma } => (((sigma * sigma).exp() - 1.0) * (2.0 * mu + sigma * sigma).exp()).sqrt(),
+            Law::Triangular { low: a, likely: b, high: c } => ((a * a + b * b + c * c - a * b - a * c - b * c) / 18.0).sqrt(),
+            Law::Point(_) => 0.0,
+            Law::Greatest(_) | Law::Least(_) => self.moments().1,
+            Law::Moved { of, by, .. } => by.abs() * of.sd(),
+            Law::Mixed(of) => {
+                let mean = self.mean();
+                let square: f64 = of
+                    .iter()
+                    .map(|(share, l)| {
+                        let (m, s) = (l.mean(), l.sd());
+                        share * (s * s + m * m)
+                    })
+                    .sum();
+                (square - mean * mean).max(0.0).sqrt()
+            }
+        }
+    }
+
+    /// This, times `by` and then plus `shift`. Only nothing times it, or something that isn't a number,
+    /// leaves nothing to say.
+    pub fn scaled(&self, by: f64, shift: f64) -> Option<Law> {
+        if by == 0.0 || !by.is_finite() || !shift.is_finite() {
+            return None;
+        }
+        let at = |x: f64| x * by + shift;
+        let each = |of: &[Law]| of.iter().map(|l| l.scaled(by, shift)).collect::<Option<Vec<Law>>>();
+        Some(match self {
+            Law::Normal { mean, sd } => Law::Normal { mean: at(*mean), sd: sd * by.abs() },
+            Law::Uniform { from, to } => Law::Uniform { from: at(*from).min(at(*to)), to: at(*from).max(at(*to)) },
+            Law::Exponential { from, mean } if by > 0.0 => Law::Exponential { from: at(*from), mean: mean * by },
+            Law::Lognormal { mu, sigma } if by > 0.0 && shift == 0.0 => Law::Lognormal { mu: mu + by.ln(), sigma: *sigma },
+            Law::Triangular { low, likely, high } if by > 0.0 => Law::Triangular { low: at(*low), likely: at(*likely), high: at(*high) },
+            Law::Triangular { low, likely, high } => Law::Triangular { low: at(*high), likely: at(*likely), high: at(*low) },
+            Law::Point(x) => Law::Point(at(*x)),
+            // Turned over, the greatest is the least.
+            Law::Greatest(of) if by > 0.0 => Law::Greatest(each(of)?),
+            Law::Greatest(of) => Law::Least(each(of)?),
+            Law::Least(of) if by > 0.0 => Law::Least(each(of)?),
+            Law::Least(of) => Law::Greatest(each(of)?),
+            Law::Mixed(of) => Law::Mixed(of.iter().map(|(share, l)| Some((*share, l.scaled(by, shift)?))).collect::<Option<_>>()?),
+            Law::Moved { of, by: was, shift: from } => return of.scaled(was * by, at(*from)),
+            Law::Exponential { .. } | Law::Lognormal { .. } => Law::Moved { of: Box::new(self.clone()), by, shift },
+        })
+    }
+
+    /// As it would be written in a formula, if it can be.
+    pub fn text(&self) -> Option<String> {
+        let listed = |name: &str, of: &[Law]| Some(format!("{name}({})", of.iter().map(Law::text).collect::<Option<Vec<String>>>()?.join(", ")));
+        match self {
+            Law::Normal { mean, sd } => Some(format!("normal({}, {})", figures(*mean), figures(*sd))),
+            Law::Uniform { from, to } => Some(format!("uniform({}, {})", figures(*from), figures(*to))),
+            Law::Exponential { from, mean } if *from == 0.0 => Some(format!("exponential({})", figures(*mean))),
+            Law::Exponential { from, mean } => Some(format!("{} + exponential({})", figures(*from), figures(*mean))),
+            Law::Lognormal { mu, sigma } => Some(format!("lognormal({}, {})", figures(*mu), figures(*sigma))),
+            Law::Triangular { low, likely, high } => Some(format!("triangular({}, {}, {})", figures(*low), figures(*likely), figures(*high))),
+            Law::Point(at) => Some(figures(*at)),
+            Law::Greatest(of) => listed("max", of),
+            Law::Least(of) => listed("min", of),
+            Law::Mixed(_) => None,
+            Law::Moved { of, by, shift } => {
+                let of = of.text()?;
+                let stretched = if *by == 1.0 { of } else if *by == -1.0 { format!("-{of}") } else { format!("{} * {of}", figures(*by)) };
+                Some(if *shift == 0.0 { stretched } else if let Some(taken) = stretched.strip_prefix('-') { format!("{} - {taken}", figures(*shift)) } else { format!("{} + {stretched}", figures(*shift)) })
+            }
+        }
+    }
+
+    /// Its histogram: how much is in each stretch, from what's below each end.
+    fn hist(&self) -> Hist {
+        let (from, to) = (self.quantile(0.002), self.quantile(0.998));
+        if !(to > from) {
+            return Hist { from, to, bars: vec![1.0] };
+        }
+        let edge = |i: usize| from + (to - from) * i as f64 / BARS as f64;
+        let bars = (0..BARS)
+            .map(|i| {
+                // What's beyond either end is in the first or the last.
+                let under = if i == 0 { 0.0 } else { self.below(edge(i)) };
+                let up_to = if i == BARS - 1 { 1.0 } else { self.below(edge(i + 1)) };
+                (up_to - under).max(0.0)
+            })
+            .collect();
+        Hist { from, to, bars }
     }
 }
 
@@ -908,7 +1120,8 @@ struct Straight {
 
 impl Straight {
     fn scaled(&self, by: f64) -> Straight {
-        Straight { plain: self.plain * by, of: self.of.iter().map(|(x, k)| (*x, k * by)).collect() }
+        // None of a draw is no draw at all, and what's left has to say so.
+        Straight { plain: self.plain * by, of: self.of.iter().map(|(x, k)| (*x, k * by)).filter(|(_, k)| *k != 0.0).collect() }
     }
 
     fn plus(&self, other: &Straight) -> Option<Straight> {
@@ -933,6 +1146,19 @@ impl Straight {
         }
         (of.len() <= MOST_ATOMS).then_some(Straight { plain: self.plain + other.plain, of })
     }
+
+    /// The plain number this is, if no draw is left in it.
+    fn only(&self) -> Option<f64> {
+        self.of.is_empty().then_some(self.plain)
+    }
+}
+
+/// What an expression is as a straight line over draws, and what its log is as one. The second is how
+/// products and powers of what's above nothing keep a law, as sums do.
+#[derive(Clone, Default)]
+struct Forms {
+    straight: Option<Arc<Straight>>,
+    log: Option<Arc<Straight>>,
 }
 
 // ---------- reading: by a law where there is one, and otherwise by drawing ----------
@@ -1024,8 +1250,14 @@ pub struct Share {
 pub struct Reader {
     uniforms: HashMap<u32, Arc<Vec<f64>>>,
     columns: HashMap<X, Arc<Vec<f64>>>,
-    straight: HashMap<X, Option<Arc<Straight>>>,
+    forms: HashMap<X, Forms>,
+    laws: HashMap<X, Option<Law>>,
+    draws: HashMap<X, Arc<std::collections::BTreeSet<u32>>>,
 }
+
+/// How far a law is looked for through one thing made of another. Past this it's read from draws, which
+/// is always right, where looking further could run out of room.
+const MOST_DEEP: usize = 48;
 
 /// Values with how much each counts, in order.
 struct Weighted(Vec<(f64, f64)>);
@@ -1127,32 +1359,65 @@ impl Reader {
         column
     }
 
-    /// It as a plain number plus so much of each of some draws, if that's what it is.
-    fn straight(&mut self, x: X) -> Option<Arc<Straight>> {
-        if let Some(known) = self.straight.get(&x) {
+    /// It as a straight line over draws, and its log as one, where each is that.
+    fn forms(&mut self, x: X) -> Forms {
+        if let Some(known) = self.forms.get(&x) {
             return known.clone();
         }
-        let parts = arena().reach(x, |x| self.straight.contains_key(&x));
+        let parts = arena().reach(x, |x| self.forms.contains_key(&x));
         for (x, node) in parts {
-            let of = |x: &X| self.straight.get(x).cloned().flatten();
-            let plain = |s: &Straight| s.of.is_empty().then_some(s.plain);
-            let found = match &node {
+            let of = |x: &X| self.forms.get(x).cloned().unwrap_or_default();
+            let both = |a: &X, b: &X, f: &dyn Fn(&Straight, &Straight) -> Option<Straight>, log: bool| {
+                let (a, b) = (of(a), of(b));
+                let (a, b) = if log { (a.log, b.log) } else { (a.straight, b.straight) };
+                a.zip(b).and_then(|(a, b)| f(&a, &b))
+            };
+            let add = |a: &Straight, b: &Straight| a.plus(b);
+            let take = |a: &Straight, b: &Straight| a.plus(&b.scaled(-1.0));
+            let straight = match &node {
                 Node::Num(b) if !f64::from_bits(*b).is_nan() => Some(Straight { plain: f64::from_bits(*b), of: vec![] }),
                 Node::Draw(..) => Some(Straight { plain: 0.0, of: vec![(x, 1.0)] }),
-                Node::Un(Un::Neg, a) => of(a).map(|a| a.scaled(-1.0)),
-                Node::Bin(Op::Add, a, b) => of(a).zip(of(b)).and_then(|(a, b)| a.plus(&b)),
-                Node::Bin(Op::Sub, a, b) => of(a).zip(of(b)).and_then(|(a, b)| a.plus(&b.scaled(-1.0))),
-                Node::Bin(Op::Mul, a, b) => of(a).zip(of(b)).and_then(|(a, b)| match (plain(&a), plain(&b)) {
-                    (Some(k), _) => Some(b.scaled(k)),
-                    (_, Some(k)) => Some(a.scaled(k)),
-                    _ => None,
-                }),
-                Node::Bin(Op::Div, a, b) => of(a).zip(of(b)).and_then(|(a, b)| plain(&b).filter(|k| *k != 0.0).map(|k| a.scaled(1.0 / k))),
+                Node::Un(Un::Neg, a) => of(a).straight.map(|a| a.scaled(-1.0)),
+                // The log of what's a product of powers is a sum.
+                Node::Un(Un::Ln, a) => of(a).log.map(|a| (*a).clone()),
+                Node::Bin(Op::Add, a, b) => both(a, b, &add, false),
+                Node::Bin(Op::Sub, a, b) => both(a, b, &take, false),
+                Node::Bin(Op::Mul, a, b) => both(a, b, &|a, b| a.only().map(|k| b.scaled(k)).or_else(|| b.only().map(|k| a.scaled(k))), false),
+                Node::Bin(Op::Div, a, b) => both(a, b, &|a, b| b.only().filter(|k| *k != 0.0).map(|k| a.scaled(1.0 / k)), false),
                 _ => None,
             };
-            self.straight.insert(x, found.map(Arc::new));
+            let log = match &node {
+                Node::Num(b) if f64::from_bits(*b) > 0.0 => Some(Straight { plain: f64::from_bits(*b).ln(), of: vec![] }),
+                Node::Un(Un::Exp, a) => of(a).straight.map(|a| (*a).clone()),
+                Node::Un(Un::Sqrt, a) => of(a).log.map(|a| a.scaled(0.5)),
+                Node::Bin(Op::Mul, a, b) => both(a, b, &add, true),
+                Node::Bin(Op::Div, a, b) => both(a, b, &take, true),
+                Node::Bin(Op::Pow, a, b) => of(a).log.zip(of(b).straight.and_then(|k| k.only())).map(|(a, k)| a.scaled(k)),
+                _ => None,
+            };
+            self.forms.insert(x, Forms { straight: straight.map(Arc::new), log: log.map(Arc::new) });
         }
-        self.straight.get(&x).cloned().flatten()
+        self.forms.get(&x).cloned().unwrap_or_default()
+    }
+
+    fn straight(&mut self, x: X) -> Option<Arc<Straight>> {
+        self.forms(x).straight
+    }
+
+    /// The draws it depends on. Two things that share none have nothing to do with each other.
+    fn draws_of(&mut self, x: X) -> Arc<std::collections::BTreeSet<u32>> {
+        if let Some(known) = self.draws.get(&x) {
+            return known.clone();
+        }
+        let found: std::collections::BTreeSet<u32> = arena().reach(x, |_| false).into_iter().filter_map(|(_, n)| if let Node::Draw(_, i) = n { Some(i) } else { None }).collect();
+        let found = Arc::new(found);
+        self.draws.insert(x, found.clone());
+        found
+    }
+
+    fn apart(&mut self, a: X, b: X) -> bool {
+        let (a, b) = (self.draws_of(a), self.draws_of(b));
+        a.is_disjoint(&b)
     }
 
     /// What a straight line over draws is, if every draw is a bell curve, or there's only the one.
@@ -1163,75 +1428,123 @@ impl Reader {
         };
         if !stds.is_empty() && stds.iter().all(|s| *s == Std::Normal) {
             // Bell curves that share nothing add to a bell curve, and each draw is here once.
-            return Some(Law::Normal { mean: s.plain, sd: s.of.iter().map(|(_, k)| k * k).sum::<f64>().sqrt() });
+            let sd = s.of.iter().map(|(_, k)| k * k).sum::<f64>().sqrt();
+            return (sd > 0.0 && sd.is_finite()).then_some(Law::Normal { mean: s.plain, sd });
         }
         match (stds.as_slice(), s.of.as_slice()) {
-            ([Std::Uniform], [(_, k)]) => Some(Law::Uniform { from: s.plain.min(s.plain + k), to: s.plain.max(s.plain + k) }),
+            ([Std::Uniform], [(_, k)]) if *k != 0.0 => Some(Law::Uniform { from: s.plain.min(s.plain + k), to: s.plain.max(s.plain + k) }),
             ([Std::Exponential], [(_, k)]) if *k > 0.0 => Some(Law::Exponential { from: s.plain, mean: *k }),
             _ => None,
         }
     }
 
-    /// The distribution a number is, if it has a name.
+    /// The distribution a number is, if that can be said exactly.
     pub fn law(&mut self, r: &Rand) -> Option<Law> {
-        self.law_at(r.0)
+        self.law_at(r.0, 0)
     }
 
     /// How likely a truth is, exactly, where it's a question a law answers: one number against another
     /// where the gap between them has a law, a number with a law against a plain one, two limits on one
-    /// such number, or the opposite of any of those.
-    fn sure(&mut self, x: X) -> Option<f64> {
+    /// such number, two questions about things that share nothing, or the opposite of any of those.
+    fn sure(&mut self, x: X, depth: usize) -> Option<f64> {
+        if depth > MOST_DEEP {
+            return None;
+        }
         let node = arena().nodes[x as usize].clone();
+        let plain = |x: X| arena().plain(x).filter(|v| !v.is_nan());
         match node {
-            Node::Un(Un::Not, inner) => Some(1.0 - self.sure(inner)?),
-            Node::Bin(Op::Lt | Op::Le, a, b) => {
+            Node::Un(Un::Not, inner) => Some(1.0 - self.sure(inner, depth + 1)?),
+            Node::Bin(op @ (Op::Lt | Op::Le | Op::Eq | Op::Ne), a, b) => {
+                let compares = matches!(op, Op::Lt | Op::Le);
                 if let (Some(left), Some(right)) = (self.straight(a), self.straight(b))
                     && let Some(gap) = left.plus(&right.scaled(-1.0))
-                    && let Some(law) = Self::law_of_straight(&gap)
                 {
-                    return Some(law.below(0.0));
+                    // With no draw left in it, the gap is one number, whatever the draws are.
+                    if let Some(gap) = gap.only() {
+                        let holds = match op {
+                            Op::Lt => gap < 0.0,
+                            Op::Le => gap <= 0.0,
+                            Op::Eq => gap == 0.0,
+                            _ => gap != 0.0,
+                        };
+                        return Some(f64::from(u8::from(holds)));
+                    }
+                    // Any law a straight line has is smooth, so it's never exactly anything.
+                    if let Some(law) = Self::law_of_straight(&gap) {
+                        return Some(match op {
+                            Op::Lt | Op::Le => law.below(0.0),
+                            Op::Eq => 0.0,
+                            _ => 1.0,
+                        });
+                    }
                 }
-                let plain = {
-                    let t = arena();
-                    (t.plain(a), t.plain(b))
-                };
-                match plain {
-                    (None, Some(at)) => Some(self.law_at(a)?.below(at)),
-                    (Some(at), None) => Some(1.0 - self.law_at(b)?.below(at)),
+                match (plain(a), plain(b)) {
+                    (None, Some(at)) if compares => Some(self.law_at(a, 0)?.mass(at, op == Op::Le)),
+                    (Some(at), None) if compares => Some(1.0 - self.law_at(b, 0)?.mass(at, op == Op::Lt)),
+                    (None, Some(at)) | (Some(at), None) => {
+                        let law = self.law_at(if plain(a).is_some() { b } else { a }, 0)?;
+                        let on = law.mass(at, true) - law.mass(at, false);
+                        Some(if op == Op::Eq { on } else { 1.0 - on })
+                    }
                     _ => None,
                 }
             }
             Node::Bin(op @ (Op::And | Op::Or), a, b) => {
-                let (p, q) = {
+                let limits = {
                     let t = arena();
-                    (t.bound(a)?, t.bound(b)?)
+                    t.bound(a).zip(t.bound(b)).filter(|(p, q)| p.of == q.of)
                 };
-                if p.of != q.of {
+                if let Some((p, q)) = limits
+                    && let Some(law) = self.law_at(p.of, 0)
+                {
+                    let holds = |b: &Bound| if b.below { law.mass(b.at, !b.strict) } else { 1.0 - law.mass(b.at, b.strict) };
+                    return Some(match (p.below == q.below, op == Op::And) {
+                        // On the same side, the tighter is both and the looser is either.
+                        (true, true) => holds(&p).min(holds(&q)),
+                        (true, false) => holds(&p).max(holds(&q)),
+                        (false, both) => {
+                            let (under, over) = if p.below { (&p, &q) } else { (&q, &p) };
+                            let (up_to, from) = (law.mass(under.at, !under.strict), law.mass(over.at, over.strict));
+                            if both { (up_to - from).max(0.0) } else { (up_to + 1.0 - from).min(1.0) }
+                        }
+                    });
+                }
+                // Two questions about things that share nothing: both is one times the other.
+                if !self.apart(a, b) {
                     return None;
                 }
-                let law = self.law_at(p.of)?;
-                let holds = |b: &Bound| if b.below { law.below(b.at) } else { 1.0 - law.below(b.at) };
-                Some(match (p.below == q.below, op == Op::And) {
-                    // On the same side, the tighter is both and the looser is either.
-                    (true, true) => holds(&p).min(holds(&q)),
-                    (true, false) => holds(&p).max(holds(&q)),
-                    (false, both) => {
-                        let (under, over) = if p.below { (&p, &q) } else { (&q, &p) };
-                        if both { (law.below(under.at) - law.below(over.at)).max(0.0) } else { (law.below(under.at) + 1.0 - law.below(over.at)).min(1.0) }
-                    }
-                })
+                let (p, q) = (self.sure(a, depth + 1)?, self.sure(b, depth + 1)?);
+                Some(if op == Op::And { p * q } else { 1.0 - (1.0 - p) * (1.0 - q) })
             }
             _ => None,
         }
     }
 
-    fn law_at(&mut self, x: X) -> Option<Law> {
+    fn law_at(&mut self, x: X, depth: usize) -> Option<Law> {
+        if let Some(known) = self.laws.get(&x) {
+            return known.clone();
+        }
+        let found = self.find_law(x, depth);
+        self.laws.insert(x, found.clone());
+        found
+    }
+
+    fn find_law(&mut self, x: X, depth: usize) -> Option<Law> {
+        if depth > MOST_DEEP {
+            return None;
+        }
+        let forms = self.forms(x);
+        if let Some(law) = forms.straight.as_deref().and_then(Self::law_of_straight) {
+            return Some(law);
+        }
+        // A product of powers of things whose logs are bell curves has a log that's one.
+        if let Some(Law::Normal { mean, sd }) = forms.log.as_deref().and_then(Self::law_of_straight) {
+            return Some(Law::Lognormal { mu: mean, sigma: sd });
+        }
         let node = arena().nodes[x as usize].clone();
+        let plain = |x: X| arena().plain(x).filter(|v| !v.is_nan());
+        let next = depth + 1;
         match node {
-            Node::Un(Un::Exp, inner) => match Self::law_of_straight(&*self.straight(inner)?)? {
-                Law::Normal { mean, sd } => Some(Law::Lognormal { mu: mean, sigma: sd }),
-                _ => None,
-            },
             Node::Tri(u, a, b, c) => {
                 let t = arena();
                 let Node::Draw(Std::Uniform, _) = t.nodes[u as usize] else { return None };
@@ -1240,40 +1553,87 @@ impl Reader {
                     _ => None,
                 }
             }
-            _ => Self::law_of_straight(&*self.straight(x)?),
+            // Something with a law, moved or stretched by a plain number, still has one.
+            Node::Un(Un::Neg, a) => self.law_at(a, next)?.scaled(-1.0, 0.0),
+            Node::Bin(Op::Add, a, b) => match (plain(a), plain(b)) {
+                (Some(c), None) => self.law_at(b, next)?.scaled(1.0, c),
+                (None, Some(c)) => self.law_at(a, next)?.scaled(1.0, c),
+                _ => None,
+            },
+            Node::Bin(Op::Sub, a, b) => match (plain(a), plain(b)) {
+                (Some(c), None) => self.law_at(b, next)?.scaled(-1.0, c),
+                (None, Some(c)) => self.law_at(a, next)?.scaled(1.0, -c),
+                _ => None,
+            },
+            Node::Bin(Op::Mul, a, b) => match (plain(a), plain(b)) {
+                (Some(k), None) => self.law_at(b, next)?.scaled(k, 0.0),
+                (None, Some(k)) => self.law_at(a, next)?.scaled(k, 0.0),
+                _ => None,
+            },
+            Node::Bin(Op::Div, a, b) => self.law_at(a, next)?.scaled(1.0 / plain(b)?, 0.0),
+            // The later, or the earlier, of things that share nothing: all of them are below a point
+            // exactly when the later is.
+            Node::Bin(op @ (Op::Max | Op::Min), ..) => {
+                let mut among = Vec::new();
+                {
+                    let t = arena();
+                    let mut stack = vec![x];
+                    while let Some(y) = stack.pop() {
+                        match t.nodes[y as usize] {
+                            Node::Bin(o, a, b) if o == op => stack.extend([b, a]),
+                            _ => among.push(y),
+                        }
+                    }
+                }
+                let mut seen = std::collections::BTreeSet::new();
+                let mut laws = Vec::with_capacity(among.len());
+                for y in among {
+                    if self.draws_of(y).iter().any(|d| !seen.insert(*d)) {
+                        return None;
+                    }
+                    laws.push(match plain(y) {
+                        Some(at) => Law::Point(at),
+                        None => self.law_at(y, next)?,
+                    });
+                }
+                // In an order of their own, so it reads the same whichever was made first: what's spread
+                // about before any plain number, and each as it's written.
+                // Of several plain numbers only the greatest, or the least, has any say.
+                let plains: Vec<f64> = laws.iter().filter_map(|l| if let Law::Point(at) = l { Some(*at) } else { None }).collect();
+                if plains.len() > 1 {
+                    let kept = plains.iter().copied().fold(if op == Op::Max { f64::NEG_INFINITY } else { f64::INFINITY }, if op == Op::Max { f64::max } else { f64::min });
+                    laws.retain(|l| !matches!(l, Law::Point(_)));
+                    laws.push(Law::Point(kept));
+                }
+                laws.sort_by_cached_key(|l| (matches!(l, Law::Point(_)), l.text().unwrap_or_default()));
+                Some(if op == Op::Max { Law::Greatest(laws) } else { Law::Least(laws) })
+            }
+            _ => None,
         }
     }
 
-    /// One thing a number could be, as values that each count the same, and whether they're exact.
-    fn spread(&mut self, value: &Term) -> (Vec<f64>, Option<Law>, bool) {
+    /// One thing a number could be, as values that each count the same.
+    fn spread(&mut self, value: &Term) -> Vec<f64> {
         match value {
-            Term::Undefined => (vec![f64::NAN], None, true),
-            Term::Num(n) => (vec![*n], None, true),
-            Term::Flag(b) => (vec![f64::from(u8::from(*b))], None, true),
+            Term::Undefined => vec![f64::NAN],
+            Term::Num(n) => vec![*n],
+            Term::Flag(b) => vec![f64::from(u8::from(*b))],
             Term::Rand(r) => match self.law(r) {
-                // Drawn from the law itself, evenly, so the picture is the law's and not a sample's.
-                Some(law) => ((0..DRAWS).map(|i| law.quantile((i as f64 + 0.5) / DRAWS as f64)).collect(), Some(law), true),
-                None => (self.column(r).to_vec(), None, false),
+                // From the law itself, evenly, so beside something drawn it's the law's and not a sample's.
+                Some(law) => (0..DRAWS).map(|i| law.quantile((i as f64 + 0.5) / DRAWS as f64)).collect(),
+                None => self.column(r).to_vec(),
             },
         }
     }
 
     /// What a number comes to, if it's each of these this much of the time. With one, that's what that
-    /// one comes to.
+    /// one comes to. It's exact where each of them is a plain number or has a law, and otherwise it's
+    /// read from draws.
     pub fn summary(&mut self, shares: &[Share]) -> Summary {
         let whole: f64 = shares.iter().map(|s| s.weight).sum();
-        let mut values = Vec::new();
-        let mut undefined = 0.0;
-        let mut exact = true;
-        let mut law = None;
+        let live: Vec<&Share> = shares.iter().filter(|s| s.weight > 0.0).collect();
         let (mut least, mut most) = (f64::INFINITY, f64::NEG_INFINITY);
-        for share in shares.iter().filter(|s| s.weight > 0.0) {
-            let (spread, its_law, its_exact) = self.spread(&share.value);
-            let each = share.weight / whole / spread.len() as f64;
-            undefined += spread.iter().filter(|v| v.is_nan()).count() as f64 * each;
-            values.extend(spread.into_iter().map(|v| (v, each)));
-            exact &= its_exact;
-            law = its_law;
+        for share in &live {
             let (lo, hi) = match &share.value {
                 Term::Rand(r) => r.bounds(),
                 Term::Num(n) => (*n, *n),
@@ -1281,31 +1641,46 @@ impl Reader {
             };
             (least, most) = (least.min(lo), most.max(hi));
         }
-        let several = shares.iter().filter(|s| s.weight > 0.0).count() > 1;
+        let (least, most) = (Some(least).filter(|v| v.is_finite()), Some(most).filter(|v| v.is_finite()));
+
+        // Each as a law, if every one of them is one.
+        let mut undefined = 0.0;
+        let mut laws: Option<Vec<(f64, Law)>> = Some(Vec::new());
+        for share in &live {
+            let w = share.weight / whole;
+            let law = match &share.value {
+                Term::Undefined => {
+                    undefined += w;
+                    continue;
+                }
+                Term::Num(n) => Some(Law::Point(*n)),
+                Term::Flag(b) => Some(Law::Point(f64::from(u8::from(*b)))),
+                Term::Rand(r) => self.law(r),
+            };
+            laws = laws.zip(law).map(|(mut all, law)| {
+                all.push((w, law));
+                all
+            });
+        }
+        if let Some(mut laws) = laws.filter(|l| !l.is_empty()) {
+            let defined: f64 = laws.iter().map(|(w, _)| w).sum();
+            laws.iter_mut().for_each(|(w, _)| *w /= defined);
+            let law = if laws.len() == 1 { laws.remove(0).1 } else { Law::Mixed(laws) };
+            let named = if matches!(law, Law::Point(_)) { None } else { law.text() };
+            return Summary { mean: law.mean(), sd: law.sd(), low: law.quantile(0.05), mid: law.quantile(0.5), high: law.quantile(0.95), least, most, undefined, hist: law.hist(), law: named, exact: true, draws: 0, error: 0.0 };
+        }
+
+        let mut values = Vec::new();
+        let mut undefined = 0.0;
+        for share in &live {
+            let spread = self.spread(&share.value);
+            let each = share.weight / whole / spread.len() as f64;
+            undefined += spread.iter().filter(|v| v.is_nan()).count() as f64 * each;
+            values.extend(spread.into_iter().map(|v| (v, each)));
+        }
         let values = Weighted::new(values);
-        let (mut mean, mut sd, mut low, mut mid, mut high) = (values.mean(), values.sd(), values.quantile(0.05), values.quantile(0.5), values.quantile(0.95));
-        // A mixture of laws has no law of its own, so only its mean and spread are exactly known, and
-        // it says it was read rather than claim more.
-        let law = law.filter(|_| !several);
-        if let Some(law) = &law {
-            (mean, sd, low, mid, high) = (law.mean(), law.sd(), law.quantile(0.05), law.quantile(0.5), law.quantile(0.95));
-        }
-        let exact = exact && (law.is_some() || values.0.len() <= shares.len());
-        Summary {
-            mean,
-            sd,
-            low,
-            mid,
-            high,
-            least: Some(least).filter(|v| v.is_finite()),
-            most: Some(most).filter(|v| v.is_finite()),
-            undefined,
-            hist: values.hist(),
-            law: law.map(|l| l.text()),
-            exact,
-            draws: if exact { 0 } else { DRAWS },
-            error: if exact { 0.0 } else { sd / (DRAWS as f64).sqrt() },
-        }
+        let sd = values.sd();
+        Summary { mean: values.mean(), sd, low: values.quantile(0.05), mid: values.quantile(0.5), high: values.quantile(0.95), least, most, undefined, hist: values.hist(), law: None, exact: false, draws: DRAWS, error: sd / (DRAWS as f64).sqrt() }
     }
 
     /// How likely a truth is, if it's each of these this much of the time.
@@ -1318,7 +1693,7 @@ impl Reader {
                 Term::Flag(true) => yes += w,
                 Term::Rand(r) => {
                     // A law says how likely exactly, and what has one is never undefined.
-                    if let Some(sure) = self.sure(r.0) {
+                    if let Some(sure) = self.sure(r.0, 0) {
                         yes += w * sure;
                         continue;
                     }
@@ -1432,16 +1807,237 @@ mod tests {
     #[test]
     fn what_has_no_law_is_drawn_and_says_so() {
         let (a, b) = (normal("t/drawn/a", 0.0, 1.0), normal("t/drawn/b", 0.0, 1.0));
+        let product = bin(Op::Mul, &a, &b);
+        let mut reader = Reader::new();
+        assert_eq!(reader.law(&rand(&product)), None);
+        let s = reader.summary(&one(&product));
+        assert!(!s.exact && s.draws == DRAWS && s.error > 0.0 && s.law.is_none());
+        // Two unrelated bell curves multiplied are about nothing, give or take one.
+        assert!(s.mean.abs() < 3.0 * s.error && (s.sd - 1.0).abs() < 0.1, "{s:?}");
+        let c = reader.chance(&one(&bin(Op::Lt, &product, &n(0.0))));
+        assert!(!c.exact && c.draws == DRAWS && (c.chance - 0.5).abs() < 3.0 * c.error, "{c:?}");
+    }
+
+    #[test]
+    fn the_later_of_things_that_share_nothing_has_a_law() {
+        let (a, b) = (normal("t/later/a", 0.0, 1.0), normal("t/later/b", 0.0, 1.0));
         let later = bin(Op::Max, &a, &b);
         let mut reader = Reader::new();
-        assert_eq!(reader.law(&rand(&later)), None);
+        assert_eq!(reader.law(&rand(&later)), Some(Law::Greatest(vec![Law::Normal { mean: 0.0, sd: 1.0 }, Law::Normal { mean: 0.0, sd: 1.0 }])));
         let s = reader.summary(&one(&later));
-        assert!(!s.exact && s.draws == DRAWS && s.error > 0.0);
-        // The later of two is later than either, on average: 1/√π.
-        assert!((s.mean - 0.5641895835).abs() < 3.0 * s.error, "{s:?}");
-        let c = reader.chance(&one(&bin(Op::Lt, &later, &n(0.5))));
-        // Both under a half: 0.6915 squared.
-        assert!(!c.exact && c.draws == DRAWS && (c.chance - 0.478_15).abs() < 3.0 * c.error, "{c:?}");
+        assert!(s.exact && s.law.as_deref() == Some("max(normal(0, 1), normal(0, 1))"), "{s:?}");
+        // The later of two is later than either, on average: 1/√π, give or take √(1 − 1/π).
+        let pi = std::f64::consts::PI;
+        assert!((s.mean - 1.0 / pi.sqrt()).abs() < 1e-9 && (s.sd - (1.0 - 1.0 / pi).sqrt()).abs() < 1e-8, "{s:?}");
+        // Both are under a point exactly when the later is.
+        let c = reader.chance(&one(&bin(Op::Lt, &later, &n(1.0))));
+        assert!(c.exact && (c.chance - phi(1.0) * phi(1.0)).abs() < 1e-12, "{c:?}");
+        // The earlier is the same thing turned over, and what shares a draw has no such law.
+        let earlier = reader.summary(&one(&bin(Op::Min, &a, &b)));
+        assert!(earlier.exact && (earlier.mean + 1.0 / pi.sqrt()).abs() < 1e-9, "{earlier:?}");
+        assert_eq!(reader.law(&rand(&bin(Op::Max, &a, &bin(Op::Add, &a, &b)))), None);
+    }
+
+    #[test]
+    fn a_number_held_at_nothing_or_above_has_weight_on_nothing() {
+        // max(x, 0), as a task that can't end before it starts: half the time it's exactly 0.
+        let held = bin(Op::Max, &normal("t/held/x", 0.0, 1.0), &n(0.0));
+        let mut reader = Reader::new();
+        let s = reader.summary(&one(&held));
+        assert!(s.exact && s.law.as_deref() == Some("max(normal(0, 1), 0)") && s.mid == 0.0 && s.low == 0.0, "{s:?}");
+        assert!((s.mean - 1.0 / (2.0 * std::f64::consts::PI).sqrt()).abs() < 1e-9, "{s:?}");
+        let mut sure = |t: Term| {
+            let c = reader.chance(&one(&t));
+            assert!(c.exact, "{c:?}");
+            c.chance
+        };
+        // At or below nothing half the time, below it never, and exactly it half the time.
+        assert_eq!((sure(bin(Op::Le, &held, &n(0.0))), sure(bin(Op::Eq, &held, &n(0.0))), sure(bin(Op::Ne, &held, &n(0.0)))), (0.5, 0.5, 0.5));
+        assert_eq!(bin(Op::Lt, &held, &n(0.0)), Term::Flag(false));
+        assert!((sure(bin(Op::Lt, &n(1.0), &held)) - (1.0 - phi(1.0))).abs() < 1e-12);
+    }
+
+    #[test]
+    fn products_and_powers_of_what_has_a_bell_curve_for_a_log_keep_a_law() {
+        let (a, b) = (normal("t/log/a", 0.5, 0.3), normal("t/log/b", 0.1, 0.4));
+        let (ea, eb) = (un(Un::Exp, &a), un(Un::Exp, &b));
+        let mut reader = Reader::new();
+        let mut law = |t: Term| reader.law(&rand(&t));
+        let near = |law: Option<Law>, mu: f64, sigma: f64| assert!(matches!(law, Some(Law::Lognormal { mu: m, sigma: s }) if (m - mu).abs() < 1e-12 && (s - sigma).abs() < 1e-12), "{law:?} isn't lognormal({mu}, {sigma})");
+        near(law(bin(Op::Mul, &ea, &eb)), 0.6, 0.5);
+        near(law(bin(Op::Div, &ea, &eb)), 0.4, 0.5);
+        near(law(bin(Op::Mul, &n(1000.0), &ea)), 0.5 + 1000f64.ln(), 0.3);
+        near(law(bin(Op::Pow, &ea, &n(2.0))), 1.0, 0.6);
+        near(law(un(Un::Sqrt, &ea)), 0.25, 0.15);
+        // Growing by an uncertain rate each year, compounded: still one law after any number of years.
+        let years = (0..10).fold(n(1000.0), |balance, year| bin(Op::Mul, &balance, &un(Un::Exp, &normal(&format!("t/log/year{year}"), 0.05, 0.1))));
+        near(law(years), 1000f64.ln() + 0.5, 0.1 * 10f64.sqrt());
+        // And the log of one is a bell curve again.
+        assert_eq!(law(un(Un::Ln, &bin(Op::Mul, &ea, &ea))), Some(Law::Normal { mean: 1.0, sd: 0.6 }));
+        // Moved along it has no name of its own, and is still read exactly.
+        let moved = law(bin(Op::Add, &ea, &n(1.0))).unwrap();
+        assert_eq!(moved.text().as_deref(), Some("1 + lognormal(0.5, 0.3)"));
+        assert!((moved.mean() - (1.0 + (0.5f64 + 0.045).exp())).abs() < 1e-12 && (moved.below(1.0 + 0.5f64.exp()) - 0.5).abs() < 1e-12, "{moved:?}");
+    }
+
+    #[test]
+    fn a_law_moved_or_stretched_by_a_plain_number_is_still_one() {
+        let estimate = tri(&Term::Rand(draw(Std::Uniform, "t/moved/t")), &n(2.0), &n(3.0), &n(6.0));
+        let wait = Term::Rand(draw(Std::Exponential, "t/moved/e"));
+        let mut reader = Reader::new();
+        let mut law = |t: Term| reader.law(&rand(&t));
+        assert_eq!(law(bin(Op::Add, &bin(Op::Mul, &n(2.0), &estimate), &n(1.0))), Some(Law::Triangular { low: 5.0, likely: 7.0, high: 13.0 }));
+        assert_eq!(law(bin(Op::Sub, &n(10.0), &estimate)), Some(Law::Triangular { low: 4.0, likely: 7.0, high: 8.0 }));
+        assert_eq!(law(bin(Op::Div, &estimate, &n(2.0))), Some(Law::Triangular { low: 1.0, likely: 1.5, high: 3.0 }));
+        assert_eq!(law(bin(Op::Add, &n(3.0), &bin(Op::Mul, &n(2.0), &wait))), Some(Law::Exponential { from: 3.0, mean: 2.0 }));
+        // A wait turned over has no name of its own, and is still read exactly: all of it is below nothing.
+        let turned = law(bin(Op::Sub, &n(10.0), &bin(Op::Mul, &n(2.0), &wait))).unwrap();
+        assert_eq!(turned.text().as_deref(), Some("10 - exponential(2)"));
+        assert!(turned.mean() == 8.0 && turned.sd() == 2.0 && turned.below(10.0) == 1.0 && (turned.below(8.0) - (-1f64).exp()).abs() < 1e-12, "{turned:?}");
+        assert!((turned.below(turned.quantile(0.3)) - 0.3).abs() < 1e-12);
+        // The later of two, moved, and turned over into the earlier of two.
+        let later = bin(Op::Max, &estimate, &n(4.0));
+        assert_eq!(law(bin(Op::Add, &later, &n(1.0))), Some(Law::Greatest(vec![Law::Triangular { low: 3.0, likely: 4.0, high: 7.0 }, Law::Point(5.0)])));
+        assert_eq!(law(un(Un::Neg, &later)), Some(Law::Least(vec![Law::Triangular { low: -6.0, likely: -3.0, high: -2.0 }, Law::Point(-4.0)])));
+    }
+
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self, n: usize) -> usize {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 % n as u64) as usize
+        }
+
+        /// A plain number from `from` to `to`, to one decimal place.
+        fn between(&mut self, from: f64, to: f64) -> f64 {
+            from + (self.next(((to - from) * 10.0) as usize + 1) as f64) / 10.0
+        }
+    }
+
+    /// Something uncertain with a law, on a draw of its own. `above` asks for one that's never below nothing.
+    fn any_law(rng: &mut Rng, case: usize, part: &mut usize, above: bool) -> Term {
+        *part += 1;
+        let name = format!("t/any/{case}/{part}");
+        match rng.next(if above { 3 } else { 5 }) {
+            0 => un(Un::Exp, &normal(&name, rng.between(-0.5, 1.0), rng.between(0.1, 0.4))),
+            1 => {
+                let low = rng.between(0.5, 3.0);
+                let likely = low + rng.between(0.5, 2.0);
+                tri(&Term::Rand(draw(Std::Uniform, &name)), &n(low), &n(likely), &n(likely + rng.between(0.5, 4.0)))
+            }
+            2 => bin(Op::Add, &n(rng.between(0.0, 2.0)), &bin(Op::Mul, &n(rng.between(0.5, 3.0)), &Term::Rand(draw(Std::Exponential, &name)))),
+            3 => normal(&name, rng.between(-3.0, 3.0), rng.between(0.5, 2.0)),
+            _ => bin(Op::Add, &n(rng.between(-3.0, 3.0)), &bin(Op::Mul, &n(rng.between(0.5, 4.0)), &Term::Rand(draw(Std::Uniform, &name)))),
+        }
+    }
+
+    /// Something made of those in a way that keeps a law.
+    fn made(rng: &mut Rng, case: usize, part: &mut usize, depth: usize) -> Term {
+        if depth == 0 {
+            return any_law(rng, case, part, false);
+        }
+        match rng.next(6) {
+            // Moved and stretched, which turns the later of two into the earlier.
+            0 => {
+                let inner = bin(Op::Max, &made(rng, case, part, depth - 1), &any_law(rng, case, part, false));
+                bin(Op::Add, &bin(Op::Mul, &n(if rng.next(2) == 0 { -1.5 } else { 2.0 }), &inner), &n(rng.between(-2.0, 2.0)))
+            }
+            1 => bin(Op::Max, &made(rng, case, part, depth - 1), &made(rng, case, part, depth - 1)),
+            2 => bin(Op::Min, &made(rng, case, part, depth - 1), &made(rng, case, part, depth - 1)),
+            // Held at or above a plain number, so some of its weight is on that number.
+            3 => bin(Op::Max, &made(rng, case, part, depth - 1), &n(rng.between(0.0, 3.0))),
+            // A sum of bell curves, one of them counted twice.
+            4 => {
+                *part += 3;
+                let (a, b) = (normal(&format!("t/any/{case}/{part}a"), rng.between(-2.0, 2.0), rng.between(0.5, 2.0)), normal(&format!("t/any/{case}/{part}b"), rng.between(-2.0, 2.0), rng.between(0.5, 2.0)));
+                bin(Op::Sub, &bin(Op::Add, &bin(Op::Mul, &n(2.0), &a), &b), &bin(Op::Div, &a, &n(4.0)))
+            }
+            // A product of things whose logs are bell curves.
+            _ => {
+                *part += 3;
+                let (a, b) = (un(Un::Exp, &normal(&format!("t/any/{case}/{part}a"), rng.between(-0.5, 0.5), rng.between(0.1, 0.3))), un(Un::Exp, &normal(&format!("t/any/{case}/{part}b"), rng.between(-0.5, 0.5), rng.between(0.1, 0.3))));
+                bin(Op::Div, &bin(Op::Mul, &n(rng.between(0.5, 3.0)), &bin(Op::Mul, &a, &b)), &un(Un::Sqrt, &b))
+            }
+        }
+    }
+
+    #[test]
+    fn every_law_found_agrees_with_drawing_what_it_was_found_for() {
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+        let (mut held, mut both_ways) = (0, 0);
+        for case in 0..300 {
+            let mut part = 0;
+            let depth = rng.next(3);
+            let term = made(&mut rng, case, &mut part, depth);
+            let Term::Rand(r) = term else { continue };
+            let mut reader = Reader::new();
+            let law = reader.law(&r).unwrap_or_else(|| panic!("case {case} should have a law"));
+            let column = Weighted::new(reader.column(&r).iter().map(|v| (*v, 1.0)).collect());
+            assert_eq!(column.0.len(), DRAWS, "case {case}: {law:?} is never undefined");
+            let (mean, sd) = (law.mean(), law.sd());
+            assert!((column.mean() - mean).abs() < 0.08 * sd + 1e-9, "case {case} {law:?}: mean {} isn't {mean}", column.mean());
+            // Where nearly all the weight is on one number, the little that isn't may not come up in the
+            // draws at all, which is the draws' doing: so within a little, as well as within a share.
+            assert!((column.sd() - sd).abs() < 0.12 * sd + 0.005, "case {case} {law:?}: spread {} isn't {sd}", column.sd());
+            let mut points = Vec::new();
+            law.points(&mut points);
+            held += usize::from(!points.is_empty());
+            both_ways += usize::from(matches!(law, Law::Least(_)));
+            for p in [0.1, 0.3, 0.5, 0.7, 0.9] {
+                let at = law.quantile(p);
+                // As much is below a point as the point was asked to have below it, unless weight sits on it.
+                assert!(law.mass(at, true) >= p - 1e-9 && law.mass(at, false) <= p + 1e-9, "case {case} {law:?} at {p}: {at} has {} to {} below", law.mass(at, false), law.mass(at, true));
+                let drawn = column.0.iter().filter(|(v, _)| *v <= at).count() as f64 / DRAWS as f64;
+                assert!((drawn - law.mass(at, true)).abs() < 0.035, "case {case} {law:?}: {drawn} of the draws are at or below {at}, not {}", law.mass(at, true));
+                // And a question about it is answered the same way the law would.
+                let c = reader.chance(&[Share { weight: 1.0, value: bin(Op::Le, &Term::Rand(r), &n(at)) }]);
+                assert!(c.exact && (c.chance - law.mass(at, true)).abs() < 1e-12, "case {case} {law:?} at {at}: {c:?}");
+            }
+        }
+        assert!(held >= 25 && both_ways >= 25, "the generator should make every kind: {held} held, {both_ways} earliest");
+    }
+
+    #[test]
+    fn questions_about_things_that_share_nothing_multiply() {
+        let (a, b) = (normal("t/apart/a", 0.0, 1.0), normal("t/apart/b", 0.0, 1.0));
+        let (first, second) = (bin(Op::Lt, &a, &n(1.0)), bin(Op::Lt, &n(0.0), &b));
+        let mut reader = Reader::new();
+        let both = reader.chance(&one(&bin(Op::And, &first, &second)));
+        assert!(both.exact && (both.chance - phi(1.0) * 0.5).abs() < 1e-12, "{both:?}");
+        let either = reader.chance(&one(&bin(Op::Or, &first, &second)));
+        assert!(either.exact && (either.chance - (1.0 - (1.0 - phi(1.0)) * 0.5)).abs() < 1e-12, "{either:?}");
+        // About things that share a draw, they don't, so that's read from draws.
+        let tied = reader.chance(&one(&bin(Op::And, &first, &bin(Op::Lt, &n(0.0), &bin(Op::Add, &a, &b)))));
+        assert!(!tied.exact && tied.draws == DRAWS, "{tied:?}");
+        // One number against itself moved along is settled whatever it is.
+        let moved = reader.chance(&one(&bin(Op::Lt, &bin(Op::Mul, &a, &n(2.0)), &bin(Op::Add, &bin(Op::Mul, &a, &n(2.0)), &n(1.0)))));
+        assert!(moved.exact && moved.chance == 1.0, "{moved:?}");
+    }
+
+    #[test]
+    fn simplifying_changes_nothing_in_any_draw() {
+        let x = normal("t/same2/x", 0.0, 1.0);
+        let u = Term::Rand(draw(Std::Uniform, "t/same2/u"));
+        let (under, over) = (bin(Op::Lt, &x, &n(1.0)), bin(Op::Lt, &n(1.0), &x));
+        assert_eq!(un(Un::Not, &under), bin(Op::Le, &n(1.0), &x), "not below is at or above");
+        assert_eq!(bin(Op::And, &under, &un(Un::Not, &under)), Term::Flag(false));
+        assert_eq!(bin(Op::Or, &under, &un(Un::Not, &under)), Term::Flag(true));
+        assert_eq!(pick(&un(Un::Not, &over), &x, &n(1.0)), pick(&over, &n(1.0), &x), "choosing on the opposite is choosing the other way round");
+        assert_eq!(pick(&bin(Op::Le, &x, &n(1.0)), &x, &n(1.0)), pick(&over, &n(1.0), &x), "and at or below is the opposite of above");
+        assert_eq!(bin(Op::Sub, &n(0.0), &x), un(Un::Neg, &x));
+        assert_eq!(un(Un::Floor, &un(Un::Ceil, &x)), un(Un::Ceil, &x));
+        let above = bin(Op::Add, &n(1.0), &u);
+        assert_eq!(bin(Op::Div, &above, &above), n(1.0), "a number over itself is one, where it's never nothing");
+        assert!(matches!(bin(Op::Div, &x, &x), Term::Rand(_)), "and isn't where it could be");
+        // Undefined in some draws, none of that holds, so it's left alone.
+        let root = un(Un::Sqrt, &x);
+        assert!(matches!(bin(Op::Sub, &root, &root), Term::Rand(_)));
+        let (below, opposite) = (rand(&bin(Op::Lt, &root, &n(1.0))), rand(&un(Un::Not, &bin(Op::Lt, &root, &n(1.0)))));
+        let held = arena().nodes[opposite.0 as usize].clone();
+        assert_eq!(held, Node::Un(Un::Not, below.0), "not below isn't at or above where it could be neither");
     }
 
     #[test]
@@ -1492,8 +2088,9 @@ mod tests {
 
     #[test]
     fn drawing_is_the_same_every_time() {
-        let x = bin(Op::Max, &normal("t/again/a", 0.0, 1.0), &normal("t/again/b", 0.0, 1.0));
+        let x = bin(Op::Mul, &normal("t/again/a", 0.0, 1.0), &normal("t/again/b", 0.0, 1.0));
         let (first, second) = (Reader::new().summary(&one(&x)), Reader::new().summary(&one(&x)));
+        assert!(!first.exact);
         assert_eq!(first, second);
     }
 
@@ -1502,8 +2099,16 @@ mod tests {
         let mut reader = Reader::new();
         let s = reader.summary(&[Share { weight: 3.0, value: n(10.0) }, Share { weight: 1.0, value: n(20.0) }]);
         assert!(s.exact && s.mean == 12.5 && s.mid == 10.0, "{s:?}");
+        // A mixture of laws is read exactly, though it has no name: either of two bell curves ten apart.
         let s = reader.summary(&[Share { weight: 1.0, value: normal("t/mix/a", 0.0, 1.0) }, Share { weight: 1.0, value: normal("t/mix/b", 10.0, 1.0) }]);
-        assert!(s.law.is_none() && !s.exact && (s.mean - 5.0).abs() < 0.05, "{s:?}");
+        assert!(s.law.is_none() && s.exact && s.mean == 5.0 && (s.sd - 26f64.sqrt()).abs() < 1e-12 && (s.mid - 5.0).abs() < 1e-6, "{s:?}");
+        // A plain number some of the time puts weight on that number.
+        let s = reader.summary(&[Share { weight: 3.0, value: n(30.0) }, Share { weight: 1.0, value: normal("t/mix/c", 50.0, 5.0) }]);
+        assert!(s.exact && s.mean == 35.0 && s.mid == 30.0 && s.low == 30.0, "{s:?}");
+        // With one that has no law among them, it's all read from draws.
+        let lawless = bin(Op::Mul, &normal("t/mix/d", 0.0, 1.0), &normal("t/mix/e", 0.0, 1.0));
+        let s = reader.summary(&[Share { weight: 1.0, value: lawless }, Share { weight: 1.0, value: n(10.0) }]);
+        assert!(!s.exact && s.draws == DRAWS && (s.mean - 5.0).abs() < 0.05, "{s:?}");
         // True in every draw one way and in none the other is half the time, not "in every draw".
         let (x, y) = (normal("t/mix/x", 0.0, 1.0), normal("t/mix/y", 0.0, 1.0));
         let (always, never) = (bin(Op::Le, &n(0.0), &bin(Op::Mul, &bin(Op::Max, &x, &y), &bin(Op::Max, &x, &y))), bin(Op::Lt, &bin(Op::Mul, &bin(Op::Max, &x, &y), &bin(Op::Max, &x, &y)), &n(0.0)));

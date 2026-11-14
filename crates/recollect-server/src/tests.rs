@@ -1233,6 +1233,7 @@ async fn held_out_estimates_that_are_distributions() {
         task("new:test", "Test", "normal(2, 2)"),
         { "op": "add_node", "id": "new:effort", "name": "Effort", "cells": { "value": { "formula": "sum(t in task: t.estimate)", "labels": { "task": ["new:design", "new:build", "new:test"] } } } },
         { "op": "add_node", "id": "new:late", "name": "Later of two", "cells": { "value": { "formula": "max(a.estimate, b.estimate)", "labels": { "a": "new:design", "b": "new:build" } } } },
+        { "op": "add_node", "id": "new:area", "name": "One times another", "cells": { "value": { "formula": "a.estimate * b.estimate", "labels": { "a": "new:design", "b": "new:build" } } } },
         { "op": "add_node", "id": "new:tight", "name": "Under a fortnight", "cells": { "value": { "formula": "e < 14", "labels": { "e": "new:effort" } } } },
         { "op": "add_node", "id": "new:die", "name": "Die", "cells": { "value": { "formula": "integers(1, 6)" } } },
         { "op": "add_node", "id": "new:six", "name": "A six", "cells": { "value": { "formula": "d = 6", "labels": { "d": "new:die" } } } },
@@ -1249,10 +1250,15 @@ async fn held_out_estimates_that_are_distributions() {
     let effort = &cell(&v, "Effort", "value")["value"]["dist"];
     assert_eq!((effort["law"].as_str(), effort["exact"].as_bool(), effort["draws"].as_u64()), (Some("normal(10, 3)"), Some(true), Some(0)), "{effort}");
 
-    // The later of two has no name, so it's read from draws, and says so.
+    // The later of two that share nothing has a law, though no name of its own.
     let late = &cell(&v, "Later of two", "value")["value"]["dist"];
-    assert_eq!((late["law"].as_str(), late["exact"].as_bool(), late["draws"].as_u64()), (None, Some(false), Some(4096)), "{late}");
-    assert!(late["mean"].as_f64().unwrap() > 5.0 && late["error"].as_f64().unwrap() > 0.0, "{late}");
+    assert_eq!((late["law"].as_str(), late["exact"].as_bool(), late["draws"].as_u64()), (Some("max(normal(3, 1), normal(5, 2))"), Some(true), Some(0)), "{late}");
+    assert!(late["mean"].as_f64().unwrap() > 5.0, "{late}");
+
+    // One times another has none, so it's read from draws, and says so.
+    let area = &cell(&v, "One times another", "value")["value"]["dist"];
+    assert_eq!((area["law"].as_str(), area["exact"].as_bool(), area["draws"].as_u64()), (None, Some(false), Some(4096)), "{area}");
+    assert!((area["mean"].as_f64().unwrap() - 15.0).abs() < 3.0 * area["error"].as_f64().unwrap(), "{area}");
 
     // A truth about something uncertain is a chance. A bell curve has a law, so this one is exact: under
     // 1⅓ spreads above its middle. Against the later of two, which has none, it's read from draws.
@@ -1271,7 +1277,7 @@ async fn held_out_estimates_that_are_distributions() {
     let trip = cell(&v, "Trip", "value");
     assert_eq!(trip["shown"]["cases"].as_array().unwrap().len(), 2, "{trip}");
     let mix = &trip["mix"]["dist"];
-    assert!((mix["mean"].as_f64().unwrap() - 35.0).abs() < 0.05 && mix["mid"] == 30.0 && mix["exact"] == false, "{mix}");
+    assert!(mix["mean"] == 35.0 && mix["mid"] == 30.0 && mix["exact"] == true, "a plain number and a law, mixed, are still exact: {mix}");
 
     // Finding out that it rained leaves the one answer, which is a bell curve again.
     let rain = die["id"].as_str().unwrap().replace(&id(&v, "Die"), &id(&v, "Rain"));

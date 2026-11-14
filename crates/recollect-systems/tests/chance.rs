@@ -84,7 +84,7 @@ fn number(rng: &mut Rng, depth: usize) -> String {
         };
     }
     let d = depth - 1;
-    match rng.next(14) {
+    match rng.next(17) {
         0 => format!("({} + {})", number(rng, d), number(rng, d)),
         1 => format!("({} - {})", number(rng, d), number(rng, d)),
         2 => format!("({} * {})", number(rng, d), number(rng, d)),
@@ -98,6 +98,9 @@ fn number(rng: &mut Rng, depth: usize) -> String {
         10 => format!("floor({})", number(rng, d)),
         11 => format!("sqrt({})", number(rng, d)),
         12 => format!("round({}, 1)", number(rng, d)),
+        13 => format!("ceil({})", number(rng, d)),
+        14 => format!("exp({})", number(rng, d)),
+        15 => format!("ln({})", number(rng, d)),
         _ => format!("({} ^ 2)", number(rng, d)),
     }
 }
@@ -107,7 +110,7 @@ fn truth_of(rng: &mut Rng, depth: usize) -> String {
         return ["true", "false", "(a < 1)", "(b > 2)", "(p = 1)", "(d >= 2)"][rng.next(6)].to_string();
     }
     let d = depth - 1;
-    match rng.next(8) {
+    match rng.next(11) {
         0 => format!("({} && {})", truth_of(rng, d), truth_of(rng, d)),
         1 => format!("({} || {})", truth_of(rng, d), truth_of(rng, d)),
         2 => format!("(!{})", truth_of(rng, d)),
@@ -115,6 +118,9 @@ fn truth_of(rng: &mut Rng, depth: usize) -> String {
         4 => format!("({} >= {})", number(rng, d), number(rng, d)),
         5 => format!("({} = {})", number(rng, d), number(rng, d)),
         6 => format!("({} = {})", truth_of(rng, d), truth_of(rng, d)),
+        7 => format!("({} != {})", number(rng, d), number(rng, d)),
+        8 => format!("({} <= {})", number(rng, d), number(rng, d)),
+        9 => format!("({} > {})", number(rng, d), number(rng, d)),
         _ => format!("defined({})", number(rng, d)),
     }
 }
@@ -139,7 +145,10 @@ fn plain(e: &Expr, vars: &BTreeMap<&str, f64>) -> Val {
             "defined" => Bool(arg(0) != Undefined),
             "abs" => number(&|n| if n < 0.0 { -n } else { n }),
             "floor" => number(&f64::floor),
+            "ceil" => number(&f64::ceil),
             "sqrt" => number(&f64::sqrt),
+            "exp" => number(&f64::exp),
+            "ln" => number(&f64::ln),
             "round" => match (arg(0), arg(1)) {
                 (Num(n), Num(places)) => finite((n * 10f64.powf(places)).round() / 10f64.powf(places)),
                 _ => Undefined,
@@ -217,7 +226,7 @@ fn with_inputs() -> N {
 fn in_every_world_and_every_draw_a_formula_is_what_a_plain_evaluator_says() {
     let mut rng = Rng(0x2545F4914F6CDD1D);
     let (mut compared, mut undefined, mut uncertain, mut settled) = (0usize, 0usize, 0usize, 0usize);
-    for round in 0..500 {
+    for round in 0..900 {
         let depth = 1 + rng.next(4);
         let text = if round % 2 == 0 { number(&mut rng, depth) } else { truth_of(&mut rng, depth) };
         let mut g = with_inputs();
@@ -419,7 +428,7 @@ fn a_distributions_arguments_can_differ_between_worlds_and_be_uncertain() {
 fn a_comparison_is_a_matter_of_chance_unless_it_cant_be() {
     let mut g = N::with(sheet);
     g.formula("x", "normal(0, 1)").formula("spread", "uniform(2, 4)").formula("y", "normal(0, 1)");
-    let questions = [("under", "s < 5"), ("over", "s > 5"), ("neither", "x > 5 && x < 3"), ("either", "x > 1 || x <= 1"), ("maybe", "x > 1"), ("within", "x > -1 && x < 1"), ("later", "max(x, y) > 1"), ("abs", "abs(x) >= 0")];
+    let questions = [("under", "s < 5"), ("over", "s > 5"), ("neither", "x > 5 && x < 3"), ("either", "x > 1 || x <= 1"), ("maybe", "x > 1"), ("within", "x > -1 && x < 1"), ("later", "max(x, y) > 1"), ("product", "x * y > 1"), ("abs", "abs(x) >= 0")];
     for (name, text) in questions {
         g.formula(name, text).input(name, "x", "x").input(name, "spread", "s").input(name, "y", "y");
     }
@@ -437,9 +446,12 @@ fn a_comparison_is_a_matter_of_chance_unless_it_cant_be() {
     assert!(maybe.exact && (maybe.chance - 0.158_655_253_931_457).abs() < 1e-12, "{maybe:?}");
     let within = chance("within");
     assert!(within.exact && (within.chance - 0.682_689_492_137_086).abs() < 1e-12, "{within:?}");
-    // One no law answers is read from draws, and says so: either over, which is one less both under.
+    // The later of two that share nothing is over a point unless both are under it.
     let later = chance("later");
-    assert!(!later.exact && later.draws == chance::DRAWS && (later.chance - 0.292_139).abs() < 3.0 * later.error, "{later:?}");
+    assert!(later.exact && (later.chance - (1.0 - 0.841_344_746_068_543f64.powi(2))).abs() < 1e-12, "{later:?}");
+    // One no law answers is read from draws, and says so.
+    let product = chance("product");
+    assert!(!product.exact && product.draws == chance::DRAWS && product.chance > 0.1 && product.chance < 0.2, "{product:?}");
     // What simplifying doesn't settle is still right in every draw: it just isn't shown to be.
     let abs = chance("abs");
     assert!(abs.chance == 1.0 && abs.hits == chance::DRAWS && !abs.exact, "{abs:?}");
@@ -549,12 +561,16 @@ fn uncertain_estimates_add_up_exactly_and_the_later_of_two_is_drawn() {
     assert_eq!(reader.law(&rand(&only(&g, "effort"))), Some(Law::Normal { mean: 10.0, sd: 3.0 }));
 
     // Side by side, the plan ends when the last of them does, and the later of three uncertain ends is
-    // later, on average, than any one of them: adding averages would say 5.
+    // later, on average, than any one of them: adding averages would say 5. They share nothing, so that
+    // has a law, though no name of its own, and it agrees with drawing it.
     let end = g.g.get::<PlanEnd>(Entity::whole()).unwrap().unwrap().0.0;
     let Some(Num::Rand(end)) = end.cases()[0].1.clone() else { panic!("{end:?}") };
-    assert_eq!(reader.law(&end), None);
+    assert_eq!(reader.law(&end).and_then(|l| l.text()).as_deref(), Some("max(normal(2, 2), normal(3, 1), normal(5, 2), 0)"));
     let s = reader.summary(&[Share { weight: 1.0, value: Term::Rand(end) }]);
-    assert!(!s.exact && s.mean > 5.2 && s.mean < 5.5, "{s:?}");
+    assert!(s.exact && s.mean > 5.2 && s.mean < 5.5, "{s:?}");
+    let drawn = reader.column(&end);
+    let mean = drawn.iter().sum::<f64>() / drawn.len() as f64;
+    assert!((mean - s.mean).abs() < 0.08, "drawn, it's {mean}, and the law says {}", s.mean);
 
     // One after another, the end is their sum, and is held as exactly that. It takes estimates that can't
     // go below nothing to see it: a bell curve can, and a task can't finish before it starts.
