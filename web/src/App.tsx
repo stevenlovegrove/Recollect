@@ -249,7 +249,7 @@ export function App() {
         <section className="view">
           {mapOpened.current && (
             <div className={tab === "map" ? "map-layer" : "map-layer hidden"}>
-              <MapView key={mapKey} ws={ws} selected={selected} onSelect={select} active={tab === "map"} onContext={setCtx} />
+              <MapView key={mapKey} ws={ws} selected={selected} onSelect={select} active={tab === "map"} onContext={setCtx} onShowTable={showTable} />
             </div>
           )}
           {body}

@@ -121,6 +121,17 @@ export function AnyValue({ v, text, wide }: { v: unknown; text: (v: unknown) => 
   return <span className="mono-value">{text(v)}</span>;
 }
 
+/** A small grid, wherever something can be looked at as a table. */
+export function TableIcon() {
+  return (
+    <svg className="table-icon" width="13" height="13" viewBox="0 0 13 13" aria-hidden="true">
+      <rect x="1" y="1.5" width="11" height="10" rx="1.5" fill="none" stroke="currentColor" />
+      <path d="M1 5h11M1 8.25h11M5 5v6.5" fill="none" stroke="currentColor" />
+      <path d="M1.5 2h10v3h-10z" fill="currentColor" opacity="0.35" />
+    </svg>
+  );
+}
+
 /** A plain value, in as few words as it can say it. */
 export function valueText(v: unknown): string {
   if (v === null || v === undefined) return "yes";

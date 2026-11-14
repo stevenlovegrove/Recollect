@@ -3,7 +3,7 @@ import { api, type Cell, type Edge, type EventView, type GraphNode, type Has, ty
 import { edgesOf, labelsOf, type Workspace } from "./workspace";
 import { badgesOf, compColor, isDropped, isNote, label, nodeColor } from "./theme";
 import { DdItemButton, Dropdown } from "./Dropdown";
-import { Brackets, CellValue, CompBadge, NodeChip, RemoveButton, Resolved, RevertButton, TickBox, casesOf, edgeText, shownText } from "./bits";
+import { Brackets, CellValue, CompBadge, NodeChip, RemoveButton, Resolved, RevertButton, TableIcon, TickBox, casesOf, edgeText, shownText } from "./bits";
 import { entryText, parseEntry } from "./cellEntry";
 import { beliefLines } from "./summary";
 import { Key } from "./Shortcuts";
@@ -253,7 +253,7 @@ export function Inspector({
         <code className="muted small">{id}</code>
         {table && (
           <button className="link small table-link" onClick={() => onShowTable(table)} title={`Open the Table tab on ${table}: its rows as a grid, and a chart of a column down them`}>
-            {node.row ? `Row ${String(node.row.key)} of ${table}` : `${table} is a table`}: show it as one →
+            <TableIcon /> {node.row ? `Row ${String(node.row.key)} of ${table}` : `${table} is a table`}: show it as one →
           </button>
         )}
       </div>

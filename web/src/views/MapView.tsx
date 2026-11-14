@@ -20,7 +20,7 @@ import type { GraphNode } from "../api";
 import type { Workspace } from "../workspace";
 import { badgesOf, compColor, dominant, isDropped, isNote, label as labelOf, nodeColor } from "../theme";
 import { renderMarkdown } from "../markdown";
-import { Brackets, CompBadges, beliefText, cellText, edgeKey, edgeText, parseEdgeKey, reading } from "../bits";
+import { Brackets, CompBadges, TableIcon, beliefText, cellText, edgeKey, edgeText, parseEdgeKey, reading } from "../bits";
 import { type SummaryLine, summaryOf } from "../summary";
 import { DdItem, Dropdown } from "../Dropdown";
 import { Key, isTyping } from "../Shortcuts";
@@ -90,7 +90,27 @@ type CardData = {
   holds: string[];
   /** For a note with no links, which is there to be read: what it says, shown in full. */
   note: string | null;
+  /** The table it is, or is a row of, if it can be looked at as one, and how to. */
+  table: string | null;
+  onShowTable?: (name: string) => void;
 };
+
+/** Opens the Table tab on a table, from a card that's one or a row of one. */
+function TableButton({ table, onShow }: { table: string; onShow: (name: string) => void }) {
+  return (
+    <button
+      className="card-table-link nodrag nopan"
+      title={`Show ${table} as a table: its rows as a grid, and a chart of a column down them`}
+      aria-label={`Show ${table} as a table`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onShow(table);
+      }}
+    >
+      <TableIcon />
+    </button>
+  );
+}
 
 function Card({ data }: NodeProps<RFNode<CardData>>) {
   const { node, direction, selected, recent, dim, entering, leaving, linking, out, kinds, options, holds } = data;
@@ -114,6 +134,7 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
           </span>
         ))}
         {isNote(node) && !kinds.length && <span className="muted small">note</span>}
+        {data.table && data.onShowTable && <TableButton table={data.table} onShow={data.onShowTable} />}
         {/* Something true or false is only a value until it's required: then it's a principle, and only the worlds where it holds count. */}
         {truth && (
           <button
@@ -185,6 +206,7 @@ type TableData = {
   groupBy: string | null;
   onGroup: (column: string) => void;
   onPick: (id: string) => void;
+  onShowTable?: (name: string) => void;
   /** The row that's selected, if one of these is. */
   selected: string | null;
 };
@@ -221,13 +243,14 @@ function tableHeight(lines: number) {
 
 /** A table whose rows aren't cards: what they are, and what they say, in as few lines as it takes. */
 function TableCard({ data }: NodeProps<RFNode<TableData>>) {
-  const { name, direction, count, columns, lines, groupBy, onGroup, onPick, selected } = data;
+  const { name, direction, count, columns, lines, groupBy, onGroup, onPick, selected, onShowTable } = data;
   return (
     <div className="card table-card" style={{ width: TABLE_W }}>
       <Handle type="source" position={direction === "down" ? Position.Top : Position.Left} />
       <div className="card-top">
         <span className="cbadge" title="A table: each line is the rows that say the same thing">table</span>
         <span className="muted small">{count} rows</span>
+        {onShowTable && <TableButton table={name} onShow={onShowTable} />}
       </div>
       <table className="card-table nodrag nopan">
         <thead>
@@ -501,7 +524,7 @@ function LinkMenu({ ws, drop, onSwap, onDone }: { ws: Workspace; drop: LinkDrop;
   );
 }
 
-function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { active: boolean; onContext: (t: CtxTarget) => void }) {
+function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: ViewProps & { active: boolean; onContext: (t: CtxTarget) => void; onShowTable?: (name: string) => void }) {
   const view = ws.view!;
   // A row nobody wrote is on the map when something written reads it, and only then.
   const g = useMemo(() => ({ ...view, nodes: [...view.nodes, ...view.unwritten] }), [view]);
@@ -1132,6 +1155,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
                   setLayoutPref({ ...layoutPref, groupBy: was === column ? rest : { ...rest, [table.name]: column } });
                 },
                 onPick: (row: string) => onSelect(row),
+                onShowTable,
                 selected: selected && table.rows.has(selected) ? selected : null,
               },
             };
@@ -1162,6 +1186,8 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
               title: node.row ? String(node.row.key) : node.name,
               options: cardOptions.get(id) ?? [],
               note: freeNote(node),
+              table: node.row?.table ?? (ws.view!.nodes.some((n) => n.row?.table === node.name) ? node.name : null),
+              onShowTable,
               // What a table's card says its rows are part of doesn't need saying again here.
               holds: ws.view!.edges.filter((l) => l.to === id && l.components.includes("part_of") && folded.has(l.from) && !tables.some((t) => t.rows.has(l.from))).map((l) => ws.byId.get(l.from)?.name ?? ""),
               kinds: [
@@ -1475,7 +1501,7 @@ function MapInner({ ws, selected, onSelect, active, onContext }: ViewProps & { a
   );
 }
 
-export function MapView(props: ViewProps & { active: boolean; onContext: (t: CtxTarget) => void }) {
+export function MapView(props: ViewProps & { active: boolean; onContext: (t: CtxTarget) => void; /** Show a table's grid, by its name. */ onShowTable?: (name: string) => void }) {
   return (
     <ReactFlowProvider>
       <MapInner {...props} />

@@ -3164,9 +3164,31 @@ tr.pruned {
   padding-left: 0;
 }
 .table-link {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   padding-left: 0;
   text-align: left;
+}
+.table-icon {
+  flex: none;
+  vertical-align: -2px;
+}
+/* On a card that's a table, or a row of one: opens it as a table. */
+.card-table-link {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 3px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.card-table-link:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
 }
 /* Where an uncertain number falls nine times in ten, behind the line through its middle. */
 .sweep-band {
