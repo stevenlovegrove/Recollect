@@ -172,6 +172,7 @@ export function Inspector({
   onClose,
   onAdd,
   onShowDecisions,
+  onShowTable,
   command,
 }: {
   ws: Workspace;
@@ -180,11 +181,15 @@ export function Inspector({
   onClose: () => void;
   onAdd: (t: Omit<NodeTemplate, "n">) => void;
   onShowDecisions: (id: string) => void;
+  /** Show a table's grid, by its name. */
+  onShowTable: (name: string) => void;
   /** Keyboard requests from the app; `n` changes each time one is made. */
   command?: { kind: "edit" | "link"; n: number } | null;
 }) {
   const node = ws.byId.get(id)!;
   const view = ws.view!;
+  // A node that's a row of a table, or that rows are named for, can be looked at as that table.
+  const table = node.row?.table ?? (view.nodes.some((n) => n.row?.table === node.name) ? node.name : null);
   const [err, setErr] = useState<string | null>(null);
   const [linking, setLinking] = useState(false);
   const [naming, setNaming] = useState(false);
@@ -246,6 +251,11 @@ export function Inspector({
           <AutoText inputRef={nameRef} className="insp-title-input" aria-label="Name" placeholder="Name" {...name} onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()} />
         </div>
         <code className="muted small">{id}</code>
+        {table && (
+          <button className="link small table-link" onClick={() => onShowTable(table)} title={`Open the Table tab on ${table}: its rows as a grid, and a chart of a column down them`}>
+            {node.row ? `Row ${String(node.row.key)} of ${table}` : `${table} is a table`}: show it as one →
+          </button>
+        )}
       </div>
 
       {err && <div className="error">{err}</div>}

@@ -49,6 +49,7 @@ export function App() {
   const [command, setCommand] = useState<{ kind: "edit" | "link"; n: number } | null>(null);
   const holdingMeta = useHoldMeta();
   const [focusDecision, setFocusDecision] = useState<{ id: string; n: number } | null>(null);
+  const [focusTable, setFocusTable] = useState<{ name: string; n: number } | null>(null);
   const view = ws.view;
 
   // What this workspace's systems make worth looking at.
@@ -72,6 +73,10 @@ export function App() {
   const mapOpened = useRef(false);
   if (tab === "map") mapOpened.current = true;
   const showKeys = holdingMeta || sheet;
+  const showTable = (name: string) => {
+    setFocusTable((f) => ({ name, n: (f?.n ?? 0) + 1 }));
+    setTab("table");
+  };
   const showDecisions = (id: string) => {
     setFocusDecision((f) => ({ id, n: (f?.n ?? 0) + 1 }));
     setTab("decisions");
@@ -190,7 +195,7 @@ export function App() {
       case "outline":
         return <OutlineView {...common} onShowDecisions={showDecisions} onContext={setCtx} />;
       case "table":
-        return <TableView {...common} />;
+        return <TableView {...common} focus={focusTable} />;
       case "worlds":
         return <WorldsView {...common} />;
       case "decisions":
@@ -252,7 +257,7 @@ export function App() {
         {creating ? (
           <NewNodePanel key={`new-${creating.n}`} ws={ws} template={creating} onCreated={(id) => select(id)} onClose={() => setCreating(null)} />
         ) : (
-          selected && ws.byId.has(selected) && <Inspector key={selected} ws={ws} id={selected} onSelect={select} onClose={() => select(null)} onAdd={startNew} onShowDecisions={showDecisions} command={command} />
+          selected && ws.byId.has(selected) && <Inspector key={selected} ws={ws} id={selected} onSelect={select} onClose={() => select(null)} onAdd={startNew} onShowDecisions={showDecisions} onShowTable={showTable} command={command} />
         )}
         {selEdge && <EdgeInspector key={selected} ws={ws} edge={selEdge} onSelect={select} onClose={() => select(null)} />}
       </main>

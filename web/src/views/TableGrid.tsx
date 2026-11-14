@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type GraphNode, type RowCells } from "../api";
 import type { ViewProps } from "./MapView";
 import { TableCell } from "./TableView";
-import { LinePlot, numberOf } from "./SweepChart";
+import { LinePlot, bandOf, numberOf } from "./SweepChart";
 import { label } from "../theme";
 import { UNWRITTEN } from "./MapView";
 
@@ -202,6 +202,18 @@ function RowChart({ ws, table, from, to, columns }: { ws: ViewProps["ws"]; table
   const xs = here.map((r) => r.key);
   const down = (rows: RowCells[]) => rows.map((r) => numberOf(r.cells[column], vars));
   const [names, ys] = choice ? [(lines ?? []).map((l) => l.name), lines ? lines.map((l) => down(l.rows)) : null] : [[label(column)], [down(here)]];
+  // Where the column's uncertain, a band behind each line: where each row falls nine times in ten.
+  // A plain number among them is a band of no width, so the band opens out from it rather than starting beside it.
+  const spread = (rows: RowCells[]) => {
+    const found = rows.map((r) => bandOf(r.cells[column], vars));
+    if (!found.some((b) => b)) return found;
+    return found.map((b, i) => {
+      const plain = b ? null : numberOf(rows[i].cells[column], vars);
+      return b ?? (plain === null ? null : { low: plain, high: plain, exact: true });
+    });
+  };
+  const bands = choice ? (lines ? lines.map((l) => spread(l.rows)) : null) : [spread(here)];
+  const banded = (bands ?? []).flat().filter((b) => b !== null);
 
   return (
     <div className="sweep table-chart">
@@ -214,8 +226,13 @@ function RowChart({ ws, table, from, to, columns }: { ws: ViewProps["ws"]; table
           ))}
         </select>
         <span className="muted">down the rows{choice ? `, for each answer to ${choice.name}` : ""}</span>
+        {banded.length > 0 && (
+          <span className="muted">
+            · the line is its mean, and the band where it falls nine times in ten{banded.every((b) => b!.exact) ? "" : banded.some((b) => b!.exact) ? ", paler where that was read from draws" : ", read from draws"}
+          </span>
+        )}
       </div>
-      <LinePlot xs={xs} ys={ys} names={names} xName="Row" label={`${label(column)} down the rows${choice ? ` for each answer to ${choice.name}` : ""}`} />
+      <LinePlot xs={xs} ys={ys} bands={bands} names={names} xName="Row" label={`${label(column)} down the rows${choice ? ` for each answer to ${choice.name}` : ""}`} />
     </div>
   );
 }

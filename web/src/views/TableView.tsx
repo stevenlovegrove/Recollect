@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Cell, GraphNode } from "../api";
 import type { ViewProps } from "./MapView";
 import { Truth, cellText, reading, truthWords } from "../bits";
@@ -12,10 +12,14 @@ import { TableGrid, tablesIn } from "./TableGrid";
  * Rows are nodes and columns are cells, as they really are. Typed-in numbers edit in place. A table a
  * workspace's names make can be shown on its own, as a grid of its rows.
  */
-export function TableView(props: ViewProps) {
+export function TableView(props: ViewProps & { /** A table asked for from elsewhere; `n` changes each time one is. */ focus?: { name: string; n: number } | null }) {
   const g = props.ws.view!;
   const tables = useMemo(() => tablesIn(g.nodes), [g.nodes]);
-  const [showing, setShowing] = useState<string>("");
+  const [showing, setShowing] = useState<string>(props.focus?.name ?? "");
+  useEffect(() => {
+    if (props.focus) setShowing(props.focus.name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.focus?.n]);
   const table = tables.includes(showing) ? showing : "";
   const pick = tables.length > 0 && (
     <select className="small" value={table} onChange={(e) => setShowing(e.target.value)} aria-label="Which table">

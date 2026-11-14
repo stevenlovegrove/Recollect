@@ -3163,6 +3163,19 @@ tr.pruned {
 .formula-expand-link {
   padding-left: 0;
 }
+.table-link {
+  display: block;
+  padding-left: 0;
+  text-align: left;
+}
+/* Where an uncertain number falls nine times in ten, behind the line through its middle. */
+.sweep-band {
+  opacity: 0.18;
+  stroke: none;
+}
+.sweep-band.drawn {
+  opacity: 0.1;
+}
 .formula-input {
   min-height: 4.5em;
   resize: vertical;

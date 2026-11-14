@@ -1,15 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Cell, type CellRef, type VarView } from "../api";
+import { api, type Cell, type CellRef, type Dist, type VarView } from "../api";
 import type { Workspace } from "../workspace";
-import { casesOf, valueText } from "../bits";
+import { casesOf, distOf, valueText } from "../bits";
 
 /** One line: an option, and where to read its value as the input changes. */
 export type Line = { id: string; name: string; read: CellRef; world: Record<string, string> };
 
+/** Where an uncertain number falls nine times in ten, and whether that's exact or was read from draws. */
+export type Band = { low: number; high: number; exact: boolean };
+
+/** What an uncertain cell comes to: itself, or over a matter of chance, all of it taken together. */
+function distIn(cell: Cell): Dist | undefined {
+  const d = distOf(cell.value) ?? distOf(cell.mix);
+  return d && d.undefined < 1 ? d : undefined;
+}
+
+const waitsOnAChoice = (cell: Cell, vars: VarView[]) => (cell.vars ?? []).some((id) => !vars.find((v) => v.id === id)?.uncertain);
+
+/** The band an uncertain cell falls in. Nothing for a plain number, or over a choice still to be made. */
+export function bandOf(cell: Cell | null | undefined, vars: VarView[]): Band | null {
+  if (!cell || cell.error || waitsOnAChoice(cell, vars)) return null;
+  const d = distIn(cell);
+  return d ? { low: d.low, high: d.high, exact: d.exact } : null;
+}
+
 /** A number for a cell, averaged over what's uncertain. Over a choice still to be made there's no one number. */
 export function numberOf(cell: Cell | null | undefined, vars: VarView[]): number | null {
   if (!cell || cell.error) return null;
-  if ((cell.vars ?? []).some((id) => !vars.find((v) => v.id === id)?.uncertain)) return null;
+  if (waitsOnAChoice(cell, vars)) return null;
+  const d = distIn(cell);
+  if (d) return d.mean;
   const s = cell.shown;
   if (s?.kind === "cond") {
     const total = s.cases.reduce((t, c) => t + (typeof c.value === "number" ? c.when.prob : 0), 0);
@@ -88,13 +108,14 @@ const [W, H, LEFT, RIGHT, TOP, BOTTOM] = [640, 240, 64, 112, 12, 30];
 
 /**
  * Lines over a run of numbers, one per name, with each named at its end and a crosshair that reads them
- * all. A null is a gap in a line.
+ * all. A null is a gap in a line. A line through uncertain numbers can have a band behind it: where each
+ * falls nine times in ten.
  */
-export function LinePlot({ xs, ys, names, xName, label }: { xs: number[]; ys: (number | null)[][] | null; names: string[]; xName: string; label: string }) {
+export function LinePlot({ xs, ys, bands, names, xName, label }: { xs: number[]; ys: (number | null)[][] | null; bands?: (Band | null)[][] | null; names: string[]; xName: string; label: string }) {
   const [hover, setHover] = useState<number | null>(null);
   const [from, to] = [xs[0] ?? 0, xs[xs.length - 1] ?? 1];
   const last = xs.length - 1;
-  const all = (ys ?? []).flat().filter((v): v is number => v !== null);
+  const all = [...(ys ?? []).flat().filter((v): v is number => v !== null), ...(bands ?? []).flat().flatMap((b) => (b ? [b.low, b.high] : []))];
   const [ylo, yhi] = all.length ? [Math.min(...all), Math.max(...all)] : [0, 1];
   const ypad = (yhi - ylo || Math.abs(yhi) || 1) * 0.08;
   const [y0, y1] = [ylo - ypad, yhi + ypad];
@@ -144,6 +165,23 @@ export function LinePlot({ xs, ys, names, xName, label }: { xs: number[]; ys: (n
             {valueText(+xs[i].toPrecision(3))}
           </text>
         ))}
+        {bands?.map((row, li) => {
+          // One shape for each unbroken run: along the top, and back along the bottom.
+          const runs: number[][] = [];
+          row.forEach((b, i) => {
+            if (!b) return;
+            if (i > 0 && row[i - 1]) runs[runs.length - 1].push(i);
+            else runs.push([i]);
+          });
+          return runs.map((run) => {
+            // A lone point still shows, as a stroke its own width.
+            const at = run.length > 1 ? run : [run[0], run[0]];
+            const nudge = (k: number) => (run.length > 1 ? 0 : k === 0 ? -3 : 3);
+            const top = at.map((i, k) => `${px(xs[i]) + nudge(k)},${py(row[i]!.high)}`);
+            const bottom = at.map((i, k) => `${px(xs[i]) + nudge(k)},${py(row[i]!.low)}`).reverse();
+            return <path key={`${li}-${run[0]}`} d={`M${[...top, ...bottom].join("L")}Z`} fill={`var(--series-${(li % 8) + 1})`} className={`sweep-band ${run.every((i) => row[i]!.exact) ? "" : "drawn"}`} />;
+          });
+        })}
         {ys?.map((row, li) => {
           const pts = row.map((y, i) => (y === null ? null : `${px(xs[i])},${py(y)}`));
           const d = pts.reduce<string>((acc, p, i) => (p === null ? acc : `${acc}${i === 0 || pts[i - 1] === null ? "M" : "L"}${p}`), "");
@@ -170,6 +208,13 @@ export function LinePlot({ xs, ys, names, xName, label }: { xs: number[]; ys: (n
           {names.map((n, li) => (
             <span key={n + li}>
               <i className="sweep-swatch" style={{ background: `var(--series-${(li % 8) + 1})` }} /> {n} {ys[li]?.[hover] === null || ys[li]?.[hover] === undefined ? "–" : valueText(+ys[li][hover]!.toFixed(2))}
+              {bands?.[li]?.[hover] && (
+                <span className="muted">
+                  {" "}
+                  ({bands[li][hover]!.exact ? "" : "≈ "}
+                  {valueText(+bands[li][hover]!.low.toPrecision(4))} to {valueText(+bands[li][hover]!.high.toPrecision(4))})
+                </span>
+              )}
             </span>
           ))}
         </div>
