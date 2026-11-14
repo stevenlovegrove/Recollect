@@ -418,22 +418,31 @@ fn a_distributions_arguments_can_differ_between_worlds_and_be_uncertain() {
 #[test]
 fn a_comparison_is_a_matter_of_chance_unless_it_cant_be() {
     let mut g = N::with(sheet);
-    g.formula("x", "normal(0, 1)").formula("spread", "uniform(2, 4)");
-    for (name, text) in [("under", "s < 5"), ("over", "s > 5"), ("neither", "x > 5 && x < 3"), ("maybe", "x > 1"), ("either", "x > 1 || x <= 1"), ("abs", "abs(x) >= 0")] {
-        g.formula(name, text).input(name, "x", "x").input(name, "spread", "s");
+    g.formula("x", "normal(0, 1)").formula("spread", "uniform(2, 4)").formula("y", "normal(0, 1)");
+    let questions = [("under", "s < 5"), ("over", "s > 5"), ("neither", "x > 5 && x < 3"), ("either", "x > 1 || x <= 1"), ("maybe", "x > 1"), ("within", "x > -1 && x < 1"), ("later", "max(x, y) > 1"), ("abs", "abs(x) >= 0")];
+    for (name, text) in questions {
+        g.formula(name, text).input(name, "x", "x").input(name, "spread", "s").input(name, "y", "y");
     }
-    assert_eq!((only(&g, "under"), only(&g, "over"), only(&g, "neither")), (Val::Bool(true), Val::Bool(false), Val::Bool(false)));
-    let maybe = rand(&only(&g, "maybe"));
-    assert!(maybe.is_truth());
+    // What can't be otherwise is settled, with nothing to read.
+    assert_eq!((only(&g, "under"), only(&g, "over"), only(&g, "neither"), only(&g, "either")), (Val::Bool(true), Val::Bool(false), Val::Bool(false), Val::Bool(true)));
     let mut reader = Reader::new();
-    let c = reader.chance(&[Share { weight: 1.0, value: Term::Rand(maybe) }]);
-    // A bell curve is over one spread above its middle 15.87% of the time.
-    assert!(!c.exact && (c.chance - 0.158655).abs() < 3.0 * c.error, "{c:?}");
+    let mut chance = |name: &str| {
+        let truth = rand(&only(&g, name));
+        assert!(truth.is_truth());
+        reader.chance(&[Share { weight: 1.0, value: Term::Rand(truth) }])
+    };
+    // A question a law answers is answered exactly: a bell curve is over one spread above its middle
+    // 15.87% of the time, and within one of it 68.27%.
+    let maybe = chance("maybe");
+    assert!(maybe.exact && (maybe.chance - 0.158_655_253_931_457).abs() < 1e-12, "{maybe:?}");
+    let within = chance("within");
+    assert!(within.exact && (within.chance - 0.682_689_492_137_086).abs() < 1e-12, "{within:?}");
+    // One no law answers is read from draws, and says so: either over, which is one less both under.
+    let later = chance("later");
+    assert!(!later.exact && later.draws == chance::DRAWS && (later.chance - 0.292_139).abs() < 3.0 * later.error, "{later:?}");
     // What simplifying doesn't settle is still right in every draw: it just isn't shown to be.
-    for name in ["either", "abs"] {
-        let c = reader.chance(&[Share { weight: 1.0, value: Term::Rand(rand(&only(&g, name))) }]);
-        assert!(c.chance == 1.0 && c.hits == chance::DRAWS && !c.exact, "{name}: {c:?}");
-    }
+    let abs = chance("abs");
+    assert!(abs.chance == 1.0 && abs.hits == chance::DRAWS && !abs.exact, "{abs:?}");
 }
 
 #[test]
@@ -576,7 +585,7 @@ fn a_big_task_is_one_thats_likely_to_be_and_says_how_likely() {
         both.sort();
         both
     });
-    assert!(notices[&big].contains("big in about 69% of 4096 draws"), "{}", notices[&big]);
+    assert!(notices[&big].contains("big 69% of the time"), "a bell curve has a law, so how likely is exact: {}", notices[&big]);
     assert_eq!(notices[&sure], "a big task with no breakdown", "between 6 and 7 is over 5 for certain");
 }
 

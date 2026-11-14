@@ -1254,10 +1254,11 @@ async fn held_out_estimates_that_are_distributions() {
     assert_eq!((late["law"].as_str(), late["exact"].as_bool(), late["draws"].as_u64()), (None, Some(false), Some(4096)), "{late}");
     assert!(late["mean"].as_f64().unwrap() > 5.0 && late["error"].as_f64().unwrap() > 0.0, "{late}");
 
-    // A truth about something uncertain is a chance, here of a bell curve being under 1⅓ spreads above its middle.
+    // A truth about something uncertain is a chance. A bell curve has a law, so this one is exact: under
+    // 1⅓ spreads above its middle. Against the later of two, which has none, it's read from draws.
     let tight = &cell(&v, "Under a fortnight", "value")["value"]["chance"];
-    assert_eq!(tight["exact"], false, "{tight}");
-    assert!((tight["chance"].as_f64().unwrap() - 0.9088).abs() < 3.0 * tight["error"].as_f64().unwrap(), "{tight}");
+    assert_eq!((tight["exact"].as_bool(), tight["draws"].as_u64()), (Some(true), Some(0)), "{tight}");
+    assert!((tight["chance"].as_f64().unwrap() - 0.908_788_780_274_132).abs() < 1e-12, "{tight}");
 
     // A die is a short list, so what's worked out from it is exact, and it's a matter of chance, not a choice.
     let six = cell(&v, "A six", "value");

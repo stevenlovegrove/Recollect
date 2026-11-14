@@ -222,6 +222,38 @@ pub fn probit(p: f64) -> f64 {
     }
 }
 
+/// How much of a standard bell curve is below this. The series near the middle and the continued
+/// fraction further out are each right to about as many figures as a number holds. It's never quite 0
+/// or 1, because nothing's impossible for a bell curve.
+pub fn phi(x: f64) -> f64 {
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    let a = x.abs();
+    let density = (-a * a / 2.0).exp() / (2.0 * std::f64::consts::PI).sqrt();
+    // How much is beyond `a`, on one side.
+    let beyond = if a < 3.0 {
+        let (mut sum, mut term, mut k) = (a, a, 1.0);
+        loop {
+            term *= a * a / (2.0 * k + 1.0);
+            if sum + term == sum {
+                break;
+            }
+            sum += term;
+            k += 1.0;
+        }
+        0.5 - sum * density
+    } else {
+        let mut t = a;
+        for k in (1..=200).rev() {
+            t = a + f64::from(k) / t;
+        }
+        density / t
+    };
+    let below = if x < 0.0 { beyond } else { 1.0 - beyond };
+    below.clamp(f64::MIN_POSITIVE, 1.0 - f64::EPSILON / 2.0)
+}
+
 // ---------- the table ----------
 
 #[derive(Default)]
@@ -429,6 +461,18 @@ impl Arena {
             let (under, over) = if p.below { (p, q) } else { (q, p) };
             if over.at > under.at || (over.at == under.at && (over.strict || under.strict)) {
                 return self.flag(false);
+            }
+        }
+        // Two limits on one number that between them leave nothing out: x > 1 || x <= 1.
+        if op == Op::Or
+            && let (Some(p), Some(q)) = (self.bound(a), self.bound(b))
+            && p.of == q.of
+            && p.below != q.below
+            && self.total(p.of)
+        {
+            let (under, over) = if p.below { (p, q) } else { (q, p) };
+            if over.at < under.at || (over.at == under.at && !(over.strict && under.strict)) {
+                return self.flag(true);
             }
         }
         let truth = op.gives_truth();
@@ -823,6 +867,23 @@ impl Law {
         }
     }
 
+    /// How much of its weight is below this. Each of these is smooth, so that's the same as at or below.
+    pub fn below(&self, x: f64) -> f64 {
+        match *self {
+            Law::Normal { mean, sd } => phi((x - mean) / sd),
+            Law::Uniform { from, to } => ((x - from) / (to - from)).clamp(0.0, 1.0),
+            Law::Exponential { from, .. } if x <= from => 0.0,
+            // A wait is never certainly over, however long it's been.
+            Law::Exponential { from, mean } => (-(-(x - from) / mean).exp_m1()).min(1.0 - f64::EPSILON / 2.0),
+            Law::Lognormal { .. } if x <= 0.0 => 0.0,
+            Law::Lognormal { mu, sigma } => phi((x.ln() - mu) / sigma),
+            Law::Triangular { low, .. } if x <= low => 0.0,
+            Law::Triangular { high, .. } if x >= high => 1.0,
+            Law::Triangular { low, likely, high } if x <= likely => (x - low) * (x - low) / ((high - low) * (likely - low)),
+            Law::Triangular { low, likely, high } => 1.0 - (high - x) * (high - x) / ((high - low) * (high - likely)),
+        }
+    }
+
     /// As it would be written in a formula.
     pub fn text(&self) -> String {
         match *self {
@@ -1113,7 +1174,59 @@ impl Reader {
 
     /// The distribution a number is, if it has a name.
     pub fn law(&mut self, r: &Rand) -> Option<Law> {
-        let node = arena().nodes[r.0 as usize].clone();
+        self.law_at(r.0)
+    }
+
+    /// How likely a truth is, exactly, where it's a question a law answers: one number against another
+    /// where the gap between them has a law, a number with a law against a plain one, two limits on one
+    /// such number, or the opposite of any of those.
+    fn sure(&mut self, x: X) -> Option<f64> {
+        let node = arena().nodes[x as usize].clone();
+        match node {
+            Node::Un(Un::Not, inner) => Some(1.0 - self.sure(inner)?),
+            Node::Bin(Op::Lt | Op::Le, a, b) => {
+                if let (Some(left), Some(right)) = (self.straight(a), self.straight(b))
+                    && let Some(gap) = left.plus(&right.scaled(-1.0))
+                    && let Some(law) = Self::law_of_straight(&gap)
+                {
+                    return Some(law.below(0.0));
+                }
+                let plain = {
+                    let t = arena();
+                    (t.plain(a), t.plain(b))
+                };
+                match plain {
+                    (None, Some(at)) => Some(self.law_at(a)?.below(at)),
+                    (Some(at), None) => Some(1.0 - self.law_at(b)?.below(at)),
+                    _ => None,
+                }
+            }
+            Node::Bin(op @ (Op::And | Op::Or), a, b) => {
+                let (p, q) = {
+                    let t = arena();
+                    (t.bound(a)?, t.bound(b)?)
+                };
+                if p.of != q.of {
+                    return None;
+                }
+                let law = self.law_at(p.of)?;
+                let holds = |b: &Bound| if b.below { law.below(b.at) } else { 1.0 - law.below(b.at) };
+                Some(match (p.below == q.below, op == Op::And) {
+                    // On the same side, the tighter is both and the looser is either.
+                    (true, true) => holds(&p).min(holds(&q)),
+                    (true, false) => holds(&p).max(holds(&q)),
+                    (false, both) => {
+                        let (under, over) = if p.below { (&p, &q) } else { (&q, &p) };
+                        if both { (law.below(under.at) - law.below(over.at)).max(0.0) } else { (law.below(under.at) + 1.0 - law.below(over.at)).min(1.0) }
+                    }
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn law_at(&mut self, x: X) -> Option<Law> {
+        let node = arena().nodes[x as usize].clone();
         match node {
             Node::Un(Un::Exp, inner) => match Self::law_of_straight(&*self.straight(inner)?)? {
                 Law::Normal { mean, sd } => Some(Law::Lognormal { mu: mean, sigma: sd }),
@@ -1127,7 +1240,7 @@ impl Reader {
                     _ => None,
                 }
             }
-            _ => Self::law_of_straight(&*self.straight(r.0)?),
+            _ => Self::law_of_straight(&*self.straight(x)?),
         }
     }
 
@@ -1204,6 +1317,11 @@ impl Reader {
             match &share.value {
                 Term::Flag(true) => yes += w,
                 Term::Rand(r) => {
+                    // A law says how likely exactly, and what has one is never undefined.
+                    if let Some(sure) = self.sure(r.0) {
+                        yes += w * sure;
+                        continue;
+                    }
                     let column = self.column(r);
                     let nan = column.iter().filter(|v| v.is_nan()).count();
                     let here = column.iter().filter(|v| **v == 1.0).count();
@@ -1318,8 +1436,55 @@ mod tests {
         assert!(!s.exact && s.draws == DRAWS && s.error > 0.0);
         // The later of two is later than either, on average: 1/√π.
         assert!((s.mean - 0.5641895835).abs() < 3.0 * s.error, "{s:?}");
-        let c = reader.chance(&one(&bin(Op::Lt, &a, &b)));
-        assert!(!c.exact && (c.chance - 0.5).abs() < 3.0 * c.error, "{c:?}");
+        let c = reader.chance(&one(&bin(Op::Lt, &later, &n(0.5))));
+        // Both under a half: 0.6915 squared.
+        assert!(!c.exact && c.draws == DRAWS && (c.chance - 0.478_15).abs() < 3.0 * c.error, "{c:?}");
+    }
+
+    #[test]
+    fn a_law_is_as_much_below_a_point_as_the_point_it_has_that_much_below() {
+        for (x, below) in [(0.0, 0.5), (1.0, 0.841_344_746_068_542_9), (-2.0, 0.022_750_131_948_179_21), (4.0, 0.999_968_328_758_166_9), (-6.0, 9.865_876_450_376_946e-10)] {
+            assert!((phi(x) / below - 1.0).abs() < 1e-12, "{x}: {} isn't {below}", phi(x));
+        }
+        assert!(phi(-40.0) > 0.0 && phi(40.0) < 1.0, "nothing's impossible for a bell curve");
+        let laws = [
+            Law::Normal { mean: 2.0, sd: 0.5 },
+            Law::Uniform { from: 1.0, to: 4.0 },
+            Law::Exponential { from: 1.0, mean: 2.0 },
+            Law::Lognormal { mu: 0.5, sigma: 0.25 },
+            Law::Triangular { low: 2.0, likely: 3.0, high: 6.0 },
+        ];
+        for law in laws {
+            for p in [0.001, 0.05, 0.3, 0.5, 0.9, 0.999] {
+                assert!((law.below(law.quantile(p)) - p).abs() < 1e-8, "{law:?} at {p}: {}", law.below(law.quantile(p)));
+            }
+        }
+    }
+
+    #[test]
+    fn a_question_a_law_answers_is_answered_exactly() {
+        let (a, b) = (normal("t/sure/a", 3.0, 3.0), normal("t/sure/b", 1.0, 4.0));
+        let mut reader = Reader::new();
+        let mut sure = |t: Term| {
+            let c = reader.chance(&one(&t));
+            assert!(c.exact && c.draws == 0 && c.error == 0.0 && c.undefined == 0.0, "{c:?}");
+            c.chance
+        };
+        let near = |got: f64, want: f64| assert!((got - want).abs() < 1e-12, "{got} isn't {want}");
+        // The gap between two unrelated bell curves is one: 2 give or take 5.
+        near(sure(bin(Op::Lt, &a, &b)), phi(-2.0 / 5.0));
+        near(sure(bin(Op::Lt, &a, &n(6.0))), phi(1.0));
+        near(sure(bin(Op::Lt, &n(6.0), &a)), 1.0 - phi(1.0));
+        near(sure(un(Un::Not, &bin(Op::Le, &a, &n(6.0)))), 1.0 - phi(1.0));
+        // Between two points, and outside them.
+        let (over, under) = (bin(Op::Lt, &n(0.0), &a), bin(Op::Lt, &a, &n(6.0)));
+        near(sure(bin(Op::And, &over, &under)), phi(1.0) - phi(-1.0));
+        near(sure(bin(Op::Or, &bin(Op::Lt, &a, &n(0.0)), &bin(Op::Lt, &n(6.0), &a))), 1.0 - (phi(1.0) - phi(-1.0)));
+        // A law that isn't a straight line of draws answers against a plain number too.
+        let estimate = tri(&Term::Rand(draw(Std::Uniform, "t/sure/t")), &n(2.0), &n(3.0), &n(6.0));
+        near(sure(bin(Op::Lt, &estimate, &n(3.0))), 0.25);
+        // And what covers everything is always, with nothing to read.
+        assert_eq!(bin(Op::Or, &bin(Op::Lt, &n(1.0), &a), &bin(Op::Le, &a, &n(1.0))), Term::Flag(true));
     }
 
     #[test]

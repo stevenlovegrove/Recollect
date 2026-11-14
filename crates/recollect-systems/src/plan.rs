@@ -619,6 +619,7 @@ fn checks(reg: &mut Registry) {
             return Ok(vec![]);
         }
         Ok(vec![match how_often.filter(|_| !big) {
+            Some(c) if c.exact => format!("a task with no breakdown that's big {:.0}% of the time", c.chance * 100.0),
             Some(c) => format!("a task with no breakdown that's big in about {:.0}% of {} draws", c.chance * 100.0, c.draws),
             None => "a big task with no breakdown".to_string(),
         }])

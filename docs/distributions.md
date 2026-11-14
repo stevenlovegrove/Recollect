@@ -1,6 +1,6 @@
 # Distributions
 
-**Status:** the first step is built, and the rest isn't: [Order of building](#order-of-building) says which is which, and [What's built](#whats-built) what the first step leaves out. The engine's part is `crates/recollect-graph/src/chance.rs`, the formula language's is in `expr.rs` and `formulas.rs`, and the tests are `tests/chance.rs` in `recollect-systems`. The "A launch, give or take" sample is a plan written this way. For the worlds this extends, see [components.md](components.md#worlds-on-top), and for formulas, [expressions.md](expressions.md).
+**Status:** the first two steps are built, and the rest isn't: [Order of building](#order-of-building) says which is which, and [What's built](#whats-built) what those leave out. The engine's part is `crates/recollect-graph/src/chance.rs`, the formula language's is in `expr.rs` and `formulas.rs`, and the tests are `tests/chance.rs` in `recollect-systems`. The "A launch, give or take" sample is a plan written this way. For the worlds this extends, see [components.md](components.md#worlds-on-top), and for formulas, [expressions.md](expressions.md).
 
 ## Why
 
@@ -152,7 +152,7 @@ Files don't change: a distribution is a formula, and only its text is saved.
 | Step | What | State |
 |---|---|---|
 | 1 | Trees and drawing: the families, arithmetic, comparisons and `if` over them, short lists as diagram variables, and a histogram wherever a number is shown, saying how it was got. A requirement on something uncertain is refused, with why | Built |
-| 2 | Laws: named ones, and the rules that keep them | The rules below are built. A chance read exactly from a law isn't |
+| 2 | Laws: named ones, the rules that keep them, and a chance read exactly from one | Built: the rules are below, and more can be added one at a time |
 | 3 | `evidence` apart from `requires`, with a level, and conditioning on what's uncertain | Not built |
 | 4 | Pinning a quantity to a value or a range | Not built. A short list, such as a die, can be pinned as any choice can |
 | 5 | `knowing`, and choices worked backward | Not built |
@@ -160,7 +160,7 @@ Files don't change: a distribution is a formula, and only its text is saved.
 
 ## What's built
 
-**Simplifying.** Plain arithmetic is done there and then. Adding nothing, multiplying by one, and a number less itself go. `max` and `min` go where one side can't be the other. A comparison is settled where the two sides' limits don't meet, and two limits on one number with nothing between them are never. Each of these changes nothing in any draw, which the core property checks.
+**Simplifying.** Plain arithmetic is done there and then. Adding nothing, multiplying by one, and a number less itself go. `max` and `min` go where one side can't be the other. A comparison is settled where the two sides' limits don't meet, two limits on one number with nothing between them are never, and two that leave nothing out are always. Each of these changes nothing in any draw, which the core property checks.
 
 **Laws.** A number that's a plain number plus so much of each of some draws is tracked as that, whatever the draws are shared with, so:
 
@@ -168,14 +168,21 @@ Files don't change: a distribution is a formula, and only its text is saved.
 - a `uniform` or an `exponential`, scaled and shifted, is still one;
 - `exp` of a bell curve is a `lognormal`, and a `triangular` with plain ends is itself.
 
+**A chance from a law.** A truth is read exactly where a law answers it:
+
+- one number against another, where the gap between them has a law, as `a < b` for two bell curves does;
+- a number with a law against a plain one, as `estimate < 3` for a `triangular`;
+- two limits on one such number, between them or outside them;
+- and the opposite of any of those.
+
 Anything else is read from 4,096 draws. Each draw's values are spread evenly, one to each 4,096th, in an order that comes from its name.
 
 **What a view sends.** Wherever an uncertain number would be, there's `{"dist": …}`: its mean, spread, the points it's below one time in twenty, half the time and nineteen in twenty, a histogram, its law if it has one, and `exact`, with `draws` and `error` when it isn't. An uncertain truth is `{"chance": …}`, with how many draws it held in. A cell that differs only over what's a matter of chance has a `mix` as well: what it comes to taken together. Over a choice of yours there's no `mix`, because averaging over that means nothing.
 
 **What it leaves out**, beyond the steps above:
 
-- **The level a notice uses is fixed,** where a view should say it. `oversized_task` fires when an estimate is more likely than not to be over five days, and says how likely it found it.
-- **A truth is only ever shown always or never by simplifying.** `x > 1 || x <= 1` is true in every draw and reads "all 4,096 draws", not "always".
+- **The level a notice uses is fixed,** where a view should say it. `oversized_task` fires when an estimate is more likely than not to be over five days, and says how likely, and whether that's exact or from draws.
+- **A truth is only ever shown always or never by simplifying.** `x > 1 || x <= 1` simplifies to always. `abs(x) >= 0` doesn't, so it's true in every draw and reads "all 4,096 draws", not "always".
 - **An uncertain condition can only choose between numbers, or between truths.** Choosing between text or nodes is an error in the cell.
 - **`done`, `dropped` and a weight can't be uncertain.** Each is an error that says so.
 - **A normal estimate can be negative,** and a task can't end before it starts, so dates worked out from one go through `max(…, 0)` and have no law. Estimates that can't go below nothing, such as `triangular`, add up as themselves.
