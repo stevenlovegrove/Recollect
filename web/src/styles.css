@@ -3750,7 +3750,9 @@ button.icon.act.revert:hover {
   top: -5px;
   right: -13px;
   z-index: 45;
-  width: min(760px, calc(100vw - 24px));
+  /* As wide as what's in it, up to a limit; a drawing takes the most it can. */
+  width: max-content;
+  max-width: min(760px, calc(100vw - 24px));
   max-height: calc(100vh - 70px);
   max-height: calc(100dvh - 70px);
   overflow: auto;
@@ -3778,17 +3780,20 @@ button.icon.act.revert:hover {
   background: none;
   overflow: hidden;
 }
+.world-card:has(.drawing-frame) {
+  width: min(760px, calc(100vw - 24px));
+}
+/* No bar across the top: the chip and its tools sit in the corner, and the choices start beside them. */
 .world-panel .worlds-head {
-  position: sticky;
-  top: -4px;
-  z-index: 1;
+  float: right;
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: -4px -12px 8px;
-  padding: 4px 12px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  gap: 6px;
+  margin: 0 -8px 4px 16px;
+}
+.world-panel .world-lists,
+.world-panel .world-grid-wrap {
+  margin-top: 6px;
 }
 .worlds-tools {
   display: flex;
@@ -3814,22 +3819,44 @@ button.icon.act.revert:hover {
   min-width: 0;
   max-width: 160px;
 }
-.worlds-clear,
-.worlds-help {
+.worlds-clear {
   width: 26px;
   height: 26px;
   padding: 0;
   border-radius: 50%;
   color: var(--muted);
 }
+/* Small, in the bottom corner, out of the way of everything else. */
+.world-panel {
+  position: relative;
+  padding-bottom: 14px;
+}
 .worlds-help {
+  position: absolute;
+  right: -4px;
+  bottom: -6px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
   border: 1px solid var(--border);
-  font-size: 12px;
+  color: var(--muted);
+  font-size: 11px;
   font-weight: 600;
+  line-height: 1;
+  opacity: 0.7;
+}
+.worlds-help:hover {
+  opacity: 1;
 }
 .worlds-help.on {
   color: var(--accent);
   border-color: var(--accent);
+}
+.world-help {
+  clear: both;
+  margin-top: 10px;
+  max-width: 60ch;
 }
 .world-help p {
   margin: 0 0 6px;

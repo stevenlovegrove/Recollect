@@ -109,22 +109,9 @@ export function WorldPanel({ ws, onSelect, summary }: { ws: Workspace; onSelect:
               ⟲
             </button>
           )}
-          <button className={`icon worlds-help ${help ? "on" : ""}`} aria-pressed={help} aria-label="What this means" title="What this means" onClick={() => setHelp(!help)}>
-            ?
-          </button>
         </span>
         {summary}
       </div>
-      {help && (
-        <div className="world-help muted small">
-          <p>
-            Every way the open choices could land is a world. Click an option to pin it, and again to let it go: every page then shows what's true if so, and nothing is
-            saved. Solid means pinned, a dot means it's the only one left, and blank means no world lands there.
-          </p>
-          {w.vars.some((v) => v.uncertain) && <p>For what's uncertain, the percentage is the belief in each: how strongly it's believed given the evidence and whatever's pinned, so it changes as you pin things.</p>}
-          {w.constrained && <p>Requirements rule some worlds out, so for a puzzle the worlds left are its solutions, and they can be stepped through.</p>}
-        </div>
-      )}
       {quantities.length > 0 && (
         <div className="world-pins">
           {quantities.map((q) => (
@@ -157,6 +144,20 @@ export function WorldPanel({ ws, onSelect, summary }: { ws: Workspace; onSelect:
       {(!drawing || failed) &&
         (!w.vars.length ? <p className="muted small">Every decision here has been made, so there's only one world.</p> : isBoard ? <Board ws={ws} /> : shared ? <Grid ws={ws} /> : <Lists ws={ws} />)}
       <WorthFindingOut ws={ws} onSelect={onSelect} help={help} />
+      {help && (
+        <div className="world-help muted small">
+          <p>
+            Every way the open choices could land is a world. Click an option to pin it, and again to let it go: every page then shows what's true if so, and nothing is
+            saved. Solid means pinned, a dot means it's the only one left, and blank means no world lands there.
+          </p>
+          {w.vars.some((v) => v.uncertain) && <p>For what's uncertain, the percentage is the belief in each: how strongly it's believed given the evidence and whatever's pinned, so it changes as you pin things.</p>}
+          {w.constrained && <p>Requirements rule some worlds out, so for a puzzle the worlds left are its solutions, and they can be stepped through.</p>}
+        </div>
+      )}
+      {/* Out of the way, in the corner: what it all means, for whoever asks. */}
+      <button className={`icon worlds-help ${help ? "on" : ""}`} aria-pressed={help} aria-label="What this means" title="What this means" onClick={() => setHelp(!help)}>
+        ?
+      </button>
     </div>
   );
 }
