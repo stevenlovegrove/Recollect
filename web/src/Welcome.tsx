@@ -218,9 +218,10 @@ function Examples({ ws, open }: { ws: Workspace; open: Opener }) {
   );
 }
 
-export function Welcome({ ws }: { ws: Workspace }) {
+export function Welcome({ ws, notice }: { ws: Workspace; notice?: React.ReactNode }) {
   return (
     <div className="welcome">
+      {notice}
       <header className="welcome-head">
         <h1>
           <span className="logo">◇</span> Recollect

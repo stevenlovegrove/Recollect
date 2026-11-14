@@ -6,6 +6,7 @@ import type { FileInfo, FileText, Workspaces } from "../api";
 import { ApiError, statusOf, type Backend, type Status } from "../backend";
 import { getKnown, type Files } from "./db";
 import type { FromWorker, Request, ServerEvent, ToWorker } from "./protocol";
+import { targetOfUrl } from "../route";
 
 export class LocalBackend implements Backend {
   readonly kind = "local";
@@ -33,8 +34,8 @@ export class LocalBackend implements Backend {
       }
     };
     this.worker.onerror = (e) => console.error("the engine stopped:", e.message);
-    // Whatever was open last, if it can be opened without asking.
-    this.started = this.ask({ op: "start" }).catch((e) => console.warn("couldn't reopen what was open last:", e));
+    // Whatever was open last, if it can be opened without asking, unless the address names what to open.
+    this.started = targetOfUrl() ? Promise.resolve() : this.ask({ op: "start" }).catch((e) => console.warn("couldn't reopen what was open last:", e));
     const showing = () => {
       this.ask({ op: "visible", visible: !document.hidden });
       if (!document.hidden) this.ask({ op: "sync" }).catch(() => {});

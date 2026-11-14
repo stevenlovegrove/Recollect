@@ -51,6 +51,8 @@ A cell holds a typed value or a formula, and that's the same whether a person wr
 
 ## Views
 
+The address says what's open, so it can be shared or bookmarked: `?example=monty-hall` for an example, which opens for anyone, and `?w=<id>` for one of your own, which only opens in the browser (or on the server) that keeps it. The page is after `#`, as in `?example=monty-hall#table`. Opening another workspace is a new entry in the browser's history, so Back goes back to the one before. A link to a folder this browser needs allowing into again says so, with a button, since that can only come from a click, and one to a workspace that isn't here says that. Copy link in the workspace menu copies it.
+
 | Tab | Shows | When |
 |---|---|---|
 | **Map** | The graph, laid out by the edges that give it shape or say what comes first, reading down or across. The Links menu chooses which edges shape it, each remembered per workspace in that browser. What a world rules out dims, and nothing moves | Always |

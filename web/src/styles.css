@@ -4187,3 +4187,14 @@ button.icon.act.revert:hover {
 .sheet-cell.same {
   opacity: 0.45;
 }
+
+/* A link that couldn't just be opened, said above the welcome page as it is above the app. */
+.welcome > .link-notice {
+  max-width: 920px;
+  margin: 0 auto 20px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.link-notice button.primary {
+  margin-left: 6px;
+}

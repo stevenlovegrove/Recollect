@@ -317,6 +317,8 @@ async function handle(req: Request): Promise<unknown> {
       if (k?.kind === "browser") await removeAllFiles(req.id);
       await forgetKnown(req.id);
       if ((await getMeta<string>("last")) === req.id) await setMeta("last", null);
+      // Whatever lists what's here lists it again, whether or not it was the one open.
+      emit({ type: "resync" });
       return null;
     }
     case "call": {

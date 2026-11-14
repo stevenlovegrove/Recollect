@@ -22,6 +22,7 @@ import { Start, Welcome } from "./Welcome";
 import { isDropped, label } from "./theme";
 import { AskHost, askSure, askWhy } from "./Ask";
 import { BottomNav } from "./ViewNav";
+import { useRoute } from "./route";
 
 type Tab = "map" | "outline" | "table" | "decisions" | "work" | "timeline" | "checks" | "history" | "files";
 
@@ -53,6 +54,7 @@ export function App() {
   const [ctx, setCtx] = useState<CtxTarget | null>(null);
   const [command, setCommand] = useState<{ kind: "edit" | "link"; n: number } | null>(null);
   const holdingMeta = useHoldMeta();
+  const route = useRoute(ws);
   const [focusDecision, setFocusDecision] = useState<{ id: string; n: number } | null>(null);
   const [focusTable, setFocusTable] = useState<{ name: string; n: number } | null>(null);
   const view = ws.view;
@@ -175,7 +177,15 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  if (ws.nothingOpen) return <Welcome ws={ws} />;
+  const notice = <LinkNotice route={route} />;
+  // The welcome page asks too, as before deleting one of your own.
+  if (ws.nothingOpen)
+    return (
+      <>
+        <Welcome ws={ws} notice={notice} />
+        <AskHost />
+      </>
+    );
   if (!view) {
     return <div className="splash">{ws.error ? (ws.backend?.kind === "http" ? `Can't reach the Recollect server: ${ws.error}` : ws.error) : "Loading…"}</div>;
   }
@@ -259,6 +269,7 @@ export function App() {
       </header>
       {ws.status.readOnly && <div className="at-bar">This workspace is open in another tab, so it can only be looked at here. Close it there, and this tab takes over.</div>}
       {ws.status.state === "failed" && <div className="at-bar error">{ws.status.error} It'll be tried again with the next change.</div>}
+      {notice}
       {ws.error && <div className="error about-error">{ws.error}</div>}
       <main className="main">
         <section className="view">
@@ -298,6 +309,7 @@ export function App() {
                 {view.workspace.about && <p className="ws-about">{view.workspace.about}</p>}
               </div>
               <div className="ws-current-actions">
+                <CopyLink own={!view.workspace.sample} />
                 {ws.backend?.exportZip && (
                   <button onClick={() => ws.backend!.exportZip!().catch((e) => alert(String(e)))} title="Save a copy as a zip">
                     Save as zip
@@ -325,6 +337,53 @@ export function App() {
       {ctx && <ContextMenu key={JSON.stringify(ctx)} ws={ws} target={ctx} selected={selected} onSelect={select} onClose={closeCtx} />}
       {showKeys && <ShortcutSheet tab={tab} hasSelection={!!selNode} sticky={sheet} onClose={() => setSheet(false)} />}
       <AskHost />
+    </div>
+  );
+}
+
+/** The address of what's open, to share or keep. One of your own only opens where it's kept. */
+function CopyLink({ own }: { own: boolean }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      title={own ? "A link to this, which opens it in this browser (or on this server), where it's kept" : "A link to this example, which anyone can open"}
+      onClick={() =>
+        navigator.clipboard.writeText(location.href).then(
+          () => {
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1500);
+          },
+          (e) => alert(`Couldn't copy the link: ${e}`),
+        )
+      }
+    >
+      {copied ? "Copied" : "Copy link"}
+    </button>
+  );
+}
+
+/** What a link names that couldn't just be opened, and what can be done about it. */
+function LinkNotice({ route }: { route: ReturnType<typeof useRoute> }) {
+  const w = route.waiting;
+  if (!w) return null;
+  const what = "example" in w.target ? `the example “${w.target.example}”` : w.name ? `“${w.name}”` : "a workspace";
+  return (
+    <div className={`at-bar link-notice ${w.why === "missing" ? "error" : ""}`}>
+      {w.why === "allow" ? (
+        <>
+          This link opens {what}, a folder on this computer, which this browser needs your say-so to open again.{" "}
+          <button className="primary" onClick={route.retry}>
+            Open it
+          </button>
+        </>
+      ) : "example" in w.target ? (
+        <>Couldn't open {what}: {w.message}</>
+      ) : (
+        <>This link is to a workspace that isn't here. A link to one of your own only opens in the browser, or on the server, that keeps it.</>
+      )}{" "}
+      <button className="link" onClick={route.dismiss}>
+        Dismiss
+      </button>
     </div>
   );
 }
