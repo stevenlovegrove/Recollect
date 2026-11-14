@@ -1,4 +1,4 @@
-id: 01a1d3e5-c0a9-72ee-9746-207c11b0a7c5
+id: 01a1d89a-0736-767c-91b7-42d92b3ab4c9
 components:
 - notes
 cells:
@@ -18,4 +18,6 @@ cells:
 
     - Pin your pick and the door Monty opens, and see the probability that the car is behind each door.
     - Open **Decisions** to compare sticking with switching.
+    - Click **require** on **You win the car**, and set its **at least** to 0.6 in the panel on the right. Sticking or switching is made knowing which door Monty opened, so it's judged for each: only switching is left, whichever he opens. At 0.7, nothing is.
+    - Select **Chance of winning**: how likely you are to win for each way your choices go, over where the car is and what Monty does.
   name: About this example

@@ -1,0 +1,13 @@
+id: 01a1d89a-0736-767c-91b7-42e1a546a55c
+components:
+- decision
+- options
+cells:
+  name: Stick or switch?
+  options:
+  - Stick
+  - Switch
+links:
+- to: 01a1d89a-0736-767c-91b7-42df23aaf08c
+  components:
+  - knowing

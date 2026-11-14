@@ -12,7 +12,7 @@
 //! Then it's evaluated.
 
 use std::cell::{Cell as StdCell, RefCell};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use recollect_graph::table::Key;
@@ -21,7 +21,7 @@ use recollect_graph::worlds::{Bool, Cond, Picks, Space, Var, Worldly};
 use recollect_graph::{Advice, Backed, Cell, CellType, Compile, Computed, Cx, Entity, Error, Graph, Registry, Severity, Shown, cell};
 use serde_json::{Value, json};
 
-use crate::expr::{self, BinOp, CORE, Expr, Type, Val};
+use crate::expr::{self, BinOp, CORE, Estimate, Expr, Type, Val};
 use crate::plan::{Done, Dropped, Need};
 use crate::schedule::{Finish, LatestFinish, LatestStart, PlanEnd, Start};
 
@@ -38,6 +38,8 @@ pub const OPTIONS: &str = "options";
 pub const AT: &str = "at";
 pub const REQUIRES: &str = "requires";
 pub const EVIDENCE: &str = "evidence";
+/// What a view has found out by pinning, on a copy of the graph it looks through. Never saved.
+pub const FOUND: &str = "found";
 pub const MACRO: &str = "macro";
 pub const LABEL: &str = "label";
 pub const IS_A: &str = "is_a";
@@ -110,63 +112,238 @@ pub fn known_draws(g: &Graph) -> Option<Rand> {
     }
 }
 
+/// What a view has found out about matters of chance by pinning them: each, and the option it landed on.
+/// It's only ever on a copy of the graph a view looks through, so `chance` and `mean` read it as they read
+/// anything else, and a what-if can't disagree with finding it out.
+#[cell("found")]
+pub struct Found(pub BTreeMap<String, String>);
+
+/// Whether something read from draws comes out within this many standard errors of what it's held against
+/// is too close to call.
+const CLOSE: f64 = 3.0;
+
+/// For each way the choices could go, how likely `what` is to be true, or what it comes to on average,
+/// over every matter of chance, given what's known. Where nothing known is possible, or what it comes
+/// to is undefined some of the time, it's nothing.
+struct Over {
+    value: Cond<Option<f64>>,
+    /// How far out that could be, as a standard error, where it was read from draws.
+    error: Cond<Option<f64>>,
+    /// How many draws the most read was read from, if any were.
+    draws: usize,
+}
+
+fn over_chance(what: &Cond<Val>, known: &Bool, reader: &mut Reader, chancy: &dyn Fn(&str) -> bool, mean: bool) -> Result<Over, Error> {
+    let too_many = || Error::Failed("this differs with too many different chances, over the ways the choices could go, to work out".to_string());
+    let space = Space::global();
+    // Summed over the cases: the value, how far out it could be, and where it's undefined, each weighted
+    // by how likely that case is for each way the choices could go.
+    let (mut sum, mut err, mut lost) = (space.pure(0.0), space.pure(Some(0.0)), space.pure(0.0));
+    let mut draws = 0;
+    for (when, v) in what.cases() {
+        // What this case comes to, how far out that could be, and how much of it is undefined.
+        let (value, error, undefined): (f64, Option<f64>, f64) = match (v, mean) {
+            (Val::Undefined, _) => (0.0, Some(0.0), 1.0),
+            (Val::Bool(b), false) => (f64::from(u8::from(*b)), Some(0.0), 0.0),
+            (Val::Num(n), true) => (*n, Some(0.0), 0.0),
+            (Val::Rand(r), false) if r.is_truth() => {
+                let c = reader.chance(&[Share { weight: 1.0, value: Term::Rand(*r) }]);
+                draws = draws.max(c.draws);
+                // Undefined isn't true.
+                (c.chance * (1.0 - c.undefined), Some(c.error), 0.0)
+            }
+            (Val::Rand(r), true) if !r.is_truth() => {
+                let s = reader.summary(&[Share { weight: 1.0, value: Term::Rand(*r) }]);
+                draws = draws.max(s.draws);
+                (s.mean, Some(s.error), s.undefined)
+            }
+            (Val::Estimate(e), true) => {
+                draws = draws.max(e.draws);
+                (e.value, e.error, 0.0)
+            }
+            (other, false) => return failed(format!("chance needs true or false, not {}", Type::of(other).word())),
+            (other, true) => return failed(format!("mean needs a number, not {}", Type::of(other).word())),
+        };
+        let here = (&when & known).weigh(chancy).ok_or_else(too_many)?;
+        sum = sum.zip(&here, |so_far, p| so_far + value * p);
+        err = err.zip(&here, |so_far, p| so_far.zip(error).map(|(s, e)| s + e * p));
+        lost = lost.zip(&here, |so_far, p| so_far + undefined * p);
+    }
+    let possible = known.weigh(chancy).ok_or_else(too_many)?;
+    // What isn't true isn't undefined, so for a chance only the mean can be lost.
+    let value = sum.zip(&lost, |s, l| (*s, *l)).zip(&possible, |(s, l), p| if *p <= 0.0 || (mean && *l > 1e-12) { None } else { Some(s / p) });
+    let error = err.zip(&possible, |e, p| if *p > 0.0 { e.map(|e| e / p) } else { Some(0.0) });
+    Ok(Over { value, error, draws })
+}
+
+/// A value from `Over`: a number where it's exact, an estimate where it was read from draws, and undefined
+/// where there's nothing to say.
+fn over_values(over: &Over) -> Cond<Val> {
+    over.value.zip(&over.error, |v, e| match (v, e) {
+        (None, _) => Val::Undefined,
+        (Some(v), Some(e)) if *e == 0.0 => Val::num(*v),
+        (Some(v), e) => Val::Estimate(Estimate { value: *v, error: *e, draws: over.draws }),
+    })
+}
+
+/// What's known, as anything a cell reads: the worlds evidence leaves, what it says about draws, and what's
+/// been found out by pinning, which only a view's copy of the graph has.
+fn known_by(cx: &Cx) -> Result<(Bool, Option<Term>, Picks), Error> {
+    let mut known = Space::global().always();
+    let mut draws: Option<Term> = None;
+    for e in cx.scan(EVIDENCE) {
+        let Some(v) = cx.get::<ValueCell>(e)? else { continue };
+        known = &known & &evidence_worlds(&v);
+        if let [(_, Val::Rand(r))] = v.0.0.cases().as_slice()
+            && r.is_truth()
+        {
+            draws = Some(match draws {
+                None => Term::Rand(*r),
+                Some(so_far) => chance::bin(chance::Op::And, &so_far, &Term::Rand(*r)),
+            });
+        }
+    }
+    let mut found = BTreeMap::new();
+    for e in cx.scan(FOUND) {
+        if let Some(Found(f)) = cx.get::<Found>(e)? {
+            found.extend(f);
+        }
+    }
+    Ok((known, draws, Space::global().picks(&found)))
+}
+
+/// `chance(x)` or `mean(x)`: over every matter of chance, given what's known, for each way the choices
+/// that are someone's to make could go. Never over one of those.
+fn expect(cx: &Cx, mean: bool, of: &Ev) -> Result<Cond<Val>, Error> {
+    let (known, draws, picks) = known_by(cx)?;
+    let reader_known = match &draws {
+        Some(Term::Rand(r)) => Some(*r),
+        // What's known can't all be true, so nothing can be said given it.
+        Some(_) => return Ok(pure(Val::Undefined)),
+        None => None,
+    };
+    let what = of.data().given(&picks);
+    let known = known.given(&picks);
+    let chancy = |name: &str| crate::is_draw(name) || name.parse::<Entity>().is_ok_and(|e| cx.has(e, crate::plan::UNCERTAIN));
+    let mut reader = Reader::given(reader_known);
+    if reader_known.is_some() && reader.draws_kept() == 0 {
+        return Ok(pure(Val::Undefined));
+    }
+    Ok(over_values(&over_chance(&what, &known, &mut reader, &chancy, mean)?))
+}
+
 /// What a requirement leaves, and how that was judged.
 pub struct Judged {
     /// The ways the choices could go that meet it as surely as it says.
     pub allowed: Bool,
-    /// The matters of chance it depends on. It's judged as if every choice is made before any is known.
+    /// The matters of chance it depends on that no choice knows. It's judged as if every choice is made
+    /// before those are known.
     pub before: Vec<String>,
+    /// The choices made knowing how something turns out, each with what it knows.
+    pub knowing: Vec<(String, Vec<String>)>,
     /// It depends on how uncertain numbers fall, which is also not known when the choices are made.
     pub uncertain: bool,
     /// How likely it's met was read from draws for some way the choices could go.
     pub drawn: bool,
     /// And for some way they could go, that's too close to how sure it has to be to call.
     pub close: bool,
+    /// Why it couldn't be judged, if it couldn't. Then it rules nothing out.
+    pub unjudged: Option<String>,
 }
 
-/// Which ways the choices could go meet a requirement: for each, how likely its value is to be true over
-/// everything that's a matter of chance, given what's known, against how sure it has to be. `known` is
-/// the worlds the evidence leaves, and `reader` is given whatever's known about draws.
+/// The ways something a choice knows could turn out: the worlds where it lands on each.
+fn outcomes(g: &Graph, known: Entity, picks: &Picks) -> Result<Vec<Bool>, String> {
+    let name = || crate::label_of(g, known);
+    let value = if g.has(known, CHOICE) {
+        g.get::<Chosen>(known).map_err(|e| format!("what {} lands on can't be worked out: {e:?}", name()))?.map(|c| c.0.0)
+    } else {
+        g.get::<ValueCell>(known).map_err(|e| format!("{} can't be worked out: {e:?}", name()))?.map(|v| v.0.0)
+    };
+    let Some(value) = value else { return Err(format!("{} has nothing to know", name())) };
+    if any_rand(&value) {
+        return Err(format!("a choice knows {}, which is an uncertain number, and what's best to do for each way that could fall isn't worked out yet", name()));
+    }
+    let value = value.given(picks);
+    let mut seen: Vec<&Val> = Vec::new();
+    let cases = value.cases();
+    for (_, v) in &cases {
+        if !seen.contains(v) {
+            seen.push(v);
+        }
+    }
+    Ok(seen.into_iter().map(|v| value.holds(|x| x == v)).filter(|b| !b.is_never()).collect())
+}
+
+/// The most ways the things choices know could turn out, together, that a requirement is judged for.
+const MOST_KNOWN: usize = 256;
+
+/// Which ways the choices could go meet a requirement. For each, how likely its value is to be true over
+/// everything that's a matter of chance, given what's known, is held against how sure it has to be. A
+/// choice made knowing how something turns out is judged for each way it could: an option is allowed where
+/// its chance of meeting it, given that, is enough. An earlier choice is allowed only where, however that
+/// turns out, a later choice is. `known` is the worlds the evidence leaves, and `reader` is given whatever's
+/// known about draws.
 pub fn judge(g: &Graph, e: Entity, picks: &Picks, known: &Bool, reader: &mut Reader) -> Result<Option<Judged>, Error> {
     let Some(value) = g.get::<ValueCell>(e)? else { return Ok(None) };
     let at_least = g.get::<AtLeast>(e)?.map_or(1.0, |a| a.0);
     let value = value.0.0.given(picks);
     let chancy = |name: &str| is_chance(g, name);
-    let too_many = || Error::Failed("this is met with too many different chances, over the ways the choices could go, to judge".to_string());
-    let mut drawn = false;
     let uncertain = any_rand(&value);
-    // How far out that could be, where it was read from draws, for each way the choices could go.
-    let mut slack = Space::global().pure(0.0);
-    // How likely it's true and what's known holds, for each way the choices could go.
-    let mut met = Space::global().pure(0.0);
-    for (when, v) in value.cases() {
-        let (how_likely, margin) = match v {
-            Val::Bool(true) => (1.0, 0.0),
-            // Undefined isn't true.
-            Val::Bool(false) | Val::Undefined => (0.0, 0.0),
-            Val::Rand(r) if r.is_truth() => {
-                let c = reader.chance(&[Share { weight: 1.0, value: Term::Rand(*r) }]);
-                drawn |= !c.exact;
-                (c.chance * (1.0 - c.undefined), 3.0 * c.error)
+    let vars = value.vars();
+    // The choices in it that are someone's to make, and what each knows when it's made.
+    let own: Vec<&Var> = vars.iter().filter(|v| !chancy(&v.name())).collect();
+    let mut knowing: BTreeMap<String, BTreeSet<Entity>> = BTreeMap::new();
+    for v in &own {
+        if let Ok(d) = v.name().parse::<Entity>() {
+            let knows: BTreeSet<Entity> = g.targets_of(d, crate::plan::KNOWING).into_iter().collect();
+            if !knows.is_empty() {
+                knowing.insert(v.name(), knows);
             }
-            other => return failed(format!("what's required is true or false, not {}", Type::of(other).word())),
-        };
-        if how_likely > 0.0 || margin > 0.0 {
-            let here = (&when & known).weigh(&chancy).ok_or_else(too_many)?;
-            met = met.zip(&here, |so_far, p| so_far + how_likely * p);
-            slack = slack.zip(&here, |so_far, p| so_far + margin * p);
         }
     }
-    let possible = known.weigh(&chancy).ok_or_else(too_many)?;
-    // Where what's known can't be, there's nothing to judge, and the evidence has ruled it out already.
-    let ratio = met.zip(&possible, |m, p| if *p > 0.0 { Some(m / p) } else { None });
-    let allowed = ratio.holds(|r| r.is_none_or(|r| r >= at_least - 1e-9));
-    let close = met.zip(&slack, |m, s| (*m, *s)).zip(&possible, |(m, s), p| *p > 0.0 && *s > 0.0 && (m / p - at_least).abs() < s / p).holds(|close| *close);
-    let close = !close.is_never();
-    let mut before: Vec<String> = value.vars().iter().map(Var::name).filter(|n| chancy(n)).collect();
+    let label = |e: &Entity| crate::label_of(g, *e);
+    let knowing_view: Vec<(String, Vec<String>)> = knowing.iter().map(|(d, k)| (crate::label_of(g, d.parse().expect("a decision")), k.iter().map(label).collect())).collect();
+    let known_names: BTreeSet<String> = knowing.values().flatten().map(|e| e.to_string()).collect();
+    let mut before: Vec<String> = vars.iter().map(Var::name).filter(|n| chancy(n) && !known_names.contains(n) && !crate::draw_site(n).is_some_and(|(node, _, _)| known_names.contains(node))).collect();
     before.sort();
     before.dedup();
-    Ok(Some(Judged { allowed, before, uncertain, drawn, close }))
+    let unjudged = |why: String| Ok(Some(Judged { allowed: Space::global().always(), before: before.clone(), knowing: knowing_view.clone(), uncertain, drawn: false, close: false, unjudged: Some(why) }));
+
+    let sets: BTreeSet<&BTreeSet<Entity>> = knowing.values().collect();
+    if sets.len() > 1 {
+        return unjudged("choices here know different things, and working out several in a row like that isn't built yet".to_string());
+    }
+    // Every way what's known when the later choices are made could turn out, together.
+    let mut events = vec![Space::global().always()];
+    if let Some(knows) = sets.into_iter().next() {
+        for k in knows {
+            let each = match outcomes(g, *k, picks) {
+                Ok(each) => each,
+                Err(why) => return unjudged(why),
+            };
+            events = events.iter().flat_map(|e| each.iter().map(move |o| e & o)).filter(|b| !b.is_never()).collect();
+            if events.len() > MOST_KNOWN {
+                return unjudged(format!("what the choices know could turn out more than {MOST_KNOWN} ways"));
+            }
+        }
+    }
+    let later: Vec<Var> = own.iter().filter(|v| knowing.contains_key(&v.name())).map(|v| (*v).clone()).collect();
+    let (mut per_state, mut each_later, mut drawn, mut close) = (Space::global().never(), Space::global().always(), false, false);
+    for event in &events {
+        let here = known & event;
+        let over = over_chance(&value, &here, reader, &chancy, false)?;
+        drawn |= over.draws > 0;
+        let allowed = over.value.holds(|r| r.is_none_or(|r| r >= at_least - 1e-9));
+        per_state = &per_state | &(event & &allowed);
+        let near = over.value.zip(&over.error, |r, e| r.zip(*e).is_some_and(|(r, e)| e > 0.0 && (r - at_least).abs() < CLOSE * e));
+        close |= !near.holds(|n| *n).is_never();
+        if !later.is_empty() {
+            // However this turns out, among the ways it can, a later choice has to have something allowed.
+            let possible = here.weigh(&chancy).ok_or_else(|| Error::Failed("this is met with too many different chances to judge".to_string()))?.holds(|p| *p > 0.0);
+            each_later = &each_later & &(&!&possible | &allowed.exists(&later));
+        }
+    }
+    Ok(Some(Judged { allowed: &per_state & &each_later, before, knowing: knowing_view, uncertain, drawn, close, unjudged: None }))
 }
 
 /// The worlds left once everything known has ruled out what it does, and every requirement has ruled out
@@ -209,7 +386,7 @@ fn judging(g: &Graph) -> Vec<Advice> {
     let picks = Space::global().picks(&BTreeMap::new());
     for e in g.having(REQUIRES) {
         let Ok(Some(judged)) = judge(g, e, &picks, &known, &mut reader) else { continue };
-        if !judged.before.is_empty() || judged.uncertain {
+        if (!judged.before.is_empty() || judged.uncertain) && judged.unjudged.is_none() {
             // A draw is called by where it's written, so it reads as that node.
             let mut names: Vec<String> = judged.before.iter().map(|n| crate::draw_site(n).map_or(n.clone(), |(node, _, _)| node.to_string())).collect();
             names.dedup();
@@ -218,6 +395,12 @@ fn judging(g: &Graph) -> Vec<Advice> {
             }
             let nothing = if judged.allowed.is_never() { ". No choice makes it sure enough: if it's something that's known, rather than demanded, it's evidence" } else { "" };
             out.push(Advice { rule: "requirement_judged_before".to_string(), on: e, detail: format!("it's judged as if every choice is made before these are known: {}{nothing}", names.join(", ")) });
+        }
+        for (choice, knows) in &judged.knowing {
+            out.push(Advice { rule: "requirement_judged_knowing".to_string(), on: e, detail: format!("it's judged with {choice} made knowing {}, for each way that could turn out, and each choice before it allowed only where {choice} can then meet it", knows.join(" and ")) });
+        }
+        if let Some(why) = &judged.unjudged {
+            out.push(Advice { rule: "requirement_not_judged".to_string(), on: e, detail: format!("it rules nothing out, because it can't be judged: {why}") });
         }
         if judged.close {
             out.push(Advice { rule: "requirement_too_close_to_call".to_string(), on: e, detail: format!("how likely it's met was read from {} draws, and for some choice that's too close to how sure it has to be to call", chance::DRAWS) });
@@ -353,6 +536,8 @@ enum Part {
     Integers(Id, Id, u32),
     /// True this often.
     Bernoulli(Id, u32),
+    /// `chance(x)`, or `mean(x)`: over what's a matter of chance, given what's known.
+    Expect { mean: bool, of: Id },
 }
 
 impl Part {
@@ -371,6 +556,7 @@ impl Part {
             Part::Tri(u, a, b, c) => Part::Tri(to[u], to[a], to[b], to[c]),
             Part::Integers(a, b, site) => Part::Integers(to[a], to[b], site),
             Part::Bernoulli(p, site) => Part::Bernoulli(to[p], site),
+            Part::Expect { mean, of } => Part::Expect { mean, of: to[of] },
             other => other,
         }
     }
@@ -378,7 +564,7 @@ impl Part {
     fn parts(&self) -> Vec<Id> {
         match self {
             Part::Lit(_) | Part::Read { .. } | Part::Has(..) | Part::Chose(..) | Part::Draw(..) => vec![],
-            Part::Field(a, _) | Part::Not(a) | Part::Neg(a) | Part::Defined(a) | Part::Floor(a) | Part::Ceil(a) | Part::Math(_, a) | Part::Bernoulli(a, _) => vec![*a],
+            Part::Field(a, _) | Part::Not(a) | Part::Neg(a) | Part::Defined(a) | Part::Floor(a) | Part::Ceil(a) | Part::Math(_, a) | Part::Bernoulli(a, _) | Part::Expect { of: a, .. } => vec![*a],
             Part::Bin(_, a, b) | Part::Round(a, b) | Part::Integers(a, b, _) => vec![*a, *b],
             Part::If(a, b, c) => vec![*a, *b, *c],
             Part::Tri(u, a, b, c) => vec![*u, *a, *b, *c],
@@ -879,6 +1065,12 @@ impl<'c, 'a> Expander<'c, 'a> {
                 let a = self.expand(&args[0], scope)?;
                 Ok(self.add(Part::Ceil(a)))
             }
+            // What's a matter of chance taken together, given what's known. Never over a choice of yours.
+            "chance" | "mean" => {
+                wants(1)?;
+                let of = self.expand(&args[0], scope)?;
+                Ok(self.add(Part::Expect { mean: name == "mean", of }))
+            }
             "exp" | "ln" | "sqrt" => {
                 wants(1)?;
                 let a = self.expand(&args[0], scope)?;
@@ -1024,6 +1216,14 @@ fn type_of(cx: &Cx, part: &Part, types: &[Type]) -> Result<Type, Error> {
             None => Ok(Type::Number),
             Some(x) => failed(format!("integers needs numbers, not {}", types[*x].word())),
         },
+        Part::Expect { mean: false, of } => {
+            let of = &types[*of];
+            if boolish(of) { Ok(Type::Number) } else { failed(format!("chance needs true or false, not {}", of.word())) }
+        }
+        Part::Expect { mean: true, of } => {
+            let of = &types[*of];
+            if numberish(of) { Ok(Type::Number) } else { failed(format!("mean needs a number, not {}", of.word())) }
+        }
         Part::Bernoulli(p, _) => {
             let p = &types[*p];
             if numberish(p) { Ok(Type::Bool) } else { failed(format!("bernoulli needs a chance, not {}", p.word())) }
@@ -1170,12 +1370,55 @@ fn pairs(a: &Cond<Val>, b: &Cond<Val>) -> Result<Cond<(Val, Val)>, Error> {
     Ok(a.zip(b, |x, y| (x.clone(), y.clone())))
 }
 
+/// A number, if it's a plain one or an estimate of one, with how far out it could be and from how many draws.
+fn estimated(v: &Val) -> Option<(f64, Option<f64>, usize)> {
+    match v {
+        Val::Num(n) => Some((*n, Some(0.0), 0)),
+        Val::Estimate(e) => Some((e.value, e.error, e.draws)),
+        _ => None,
+    }
+}
+
+/// `op` on two numbers where one or both were read from draws. Adding and taking away add how far out
+/// each could be, which is never less than it is, and so does scaling by a plain number. Anything else
+/// still says it's an estimate, and no longer how far out. A comparison is only true or false where the
+/// two are further apart than they could be out by, and otherwise undefined, since it can't be called.
+fn estimate_op(a: &Val, b: &Val, op: chance::Op, f: &dyn Fn(f64, f64) -> Val) -> Val {
+    let (Some((x, ex, dx)), Some((y, ey, dy))) = (estimated(a), estimated(b)) else { return Val::Undefined };
+    let draws = dx.max(dy);
+    let error = match op {
+        chance::Op::Add | chance::Op::Sub => ex.zip(ey).map(|(p, q)| p + q),
+        chance::Op::Mul if ey == Some(0.0) => ex.map(|e| e * y.abs()),
+        chance::Op::Mul if ex == Some(0.0) => ey.map(|e| e * x.abs()),
+        chance::Op::Div if ey == Some(0.0) && y != 0.0 => ex.map(|e| e / y.abs()),
+        chance::Op::Lt | chance::Op::Le | chance::Op::Eq | chance::Op::Ne => {
+            let apart = ex.zip(ey).map(|(p, q)| p + q);
+            return match apart {
+                Some(e) if (x - y).abs() > CLOSE * e => f(x, y),
+                _ => Val::Undefined,
+            };
+        }
+        _ => None,
+    };
+    match f(x, y) {
+        Val::Num(v) => Val::Estimate(Estimate { value: v, error, draws }),
+        other => other,
+    }
+}
+
 /// `f` on two numbers, undefined if either is, and `wrong` set if anything else turns up, which only
 /// a value of unknown type can get as far as here. If either is uncertain, it's `op` on them as
-/// expressions, which means the same in every draw.
+/// expressions, which means the same in every draw. If either was read from draws, so is what comes out.
 fn numbers(a: &Val, b: &Val, op: chance::Op, f: impl Fn(f64, f64) -> Val, wrong: &StdCell<bool>) -> Val {
     match (a, b) {
         (Val::Num(x), Val::Num(y)) => f(*x, *y),
+        (Val::Estimate(_), Val::Num(_) | Val::Estimate(_)) | (Val::Num(_), Val::Estimate(_)) => estimate_op(a, b, op, &f),
+        (Val::Estimate(_), Val::Undefined) | (Val::Undefined, Val::Estimate(_)) => Val::Undefined,
+        (Val::Estimate(_), _) | (_, Val::Estimate(_)) => {
+            // Something read from draws together with something uncertain would need the same draws.
+            wrong.set(true);
+            Val::Undefined
+        }
         _ if !number_like(a) || !number_like(b) => {
             wrong.set(true);
             Val::Undefined
@@ -1191,6 +1434,10 @@ fn number(a: &Val, op: chance::Un, f: impl Fn(f64) -> f64, wrong: &StdCell<bool>
         Val::Num(x) => Val::num(f(*x)),
         Val::Undefined => Val::Undefined,
         Val::Rand(r) if !r.is_truth() => val(chance::un(op, &Term::Rand(*r))),
+        Val::Estimate(e) => match Val::num(f(e.value)) {
+            Val::Num(v) => Val::Estimate(Estimate { value: v, error: if op == chance::Un::Neg { e.error } else { None }, draws: e.draws }),
+            other => other,
+        },
         _ => {
             wrong.set(true);
             Val::Undefined
@@ -1478,6 +1725,7 @@ fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
         }
         Part::Integers(low, high, site) => Ev::Data(integers(cx, &values[*low].data(), &values[*high].data(), *site)?),
         Part::Bernoulli(p, site) => Ev::Data(bernoulli(cx, &values[*p].data(), *site)?),
+        Part::Expect { mean, of } => Ev::Data(expect(cx, *mean, &values[*of])?),
         Part::Bin(op, a, b) => binary(*op, &values[*a], &values[*b])?,
     })
 }
@@ -1528,6 +1776,7 @@ fn binary(op: BinOp, a: &Ev, b: &Ev) -> Result<Ev, Error> {
                 // Two numbers, or two truths, are the same in some draws and not in others. Anything else
                 // is never the same as something uncertain.
                 (Val::Rand(_), _) | (_, Val::Rand(_)) if (number_like(x) && number_like(y)) || (truth_like(x) && truth_like(y)) => val(chance::bin(cop, &term(x).expect("checked"), &term(y).expect("checked"))),
+                (Val::Estimate(_), _) | (_, Val::Estimate(_)) => estimate_op(x, y, cop, &|p, q| Val::Bool((p == q) == (op == BinOp::Eq))),
                 _ => Val::Bool((x == y) == (op == BinOp::Eq)),
             })?;
             if any_rand(&same) {
@@ -1681,6 +1930,9 @@ pub fn flag_cases(c: Cond<Val>, what: &str) -> Result<Worldly<Option<bool>>, Err
 
 /// What a formula gives a cell that holds a number, which may be uncertain. Undefined is `None`.
 pub fn number_cases(c: Cond<Val>, what: &str) -> Result<Worldly<Option<Num>>, Error> {
+    if c.cases().iter().any(|(_, v)| matches!(v, Val::Estimate(_))) {
+        return failed(format!("{what} can't be something read from draws yet, such as a mean with no law: it has to be a number, or uncertain"));
+    }
     if let Some((_, bad)) = c.cases().iter().find(|(_, v)| !number_like(v)) {
         return failed(format!("{what} is a number, not {}", Type::of(bad).word()));
     }
@@ -1753,6 +2005,7 @@ fn render(closed: &Closed) -> String {
             Part::Tri(_, a, b, c) => format!("triangular({}, {}, {})", out[*a], out[*b], out[*c]),
             Part::Integers(a, b, _) => format!("integers({}, {})", out[*a], out[*b]),
             Part::Bernoulli(p, _) => format!("bernoulli({})", out[*p]),
+            Part::Expect { mean, of } => format!("{}({})", if *mean { "mean" } else { "chance" }, out[*of]),
         };
         out.push(if text.len() > LONGEST { "…".to_string() } else { text });
     }
@@ -1925,6 +2178,8 @@ pub fn install(reg: &mut Registry) {
         Ok(if mixed { vec!["what's known is an uncertain truth in some worlds and not in others, which isn't worked out yet: see docs/distributions.md".to_string()] } else { vec![] })
     });
     reg.advice(judging);
+    reg.component(FOUND, "What a view has found out by pinning: never saved, and only on the copy of the graph it looks through.");
+    reg.cell::<Found>(FOUND, "Each matter of chance found out, and how it landed.").internal().initial(json!({}));
 
     reg.component(MACRO, "A function of your own, which formulas call by labelling this node.").icon("ƒ");
     reg.cell::<Macro>(MACRO, "Its parameters, and the formula it stands for.").initial(json!({ "params": [], "body": "0" }));

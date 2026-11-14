@@ -1,6 +1,6 @@
 # Distributions
 
-**Status:** the first three steps are built, and the rest isn't: [Order of building](#order-of-building) says which is which, and [What's built](#whats-built) what those leave out. The engine's part is `crates/recollect-graph/src/chance.rs`, the formula language's is in `expr.rs` and `formulas.rs`, and the tests are `tests/chance.rs` in `recollect-systems`. Five samples are written this way: see [The samples](#the-samples). For the worlds this extends, see [components.md](components.md#worlds-on-top), and for formulas, [expressions.md](expressions.md).
+**Status:** all six steps are built, each with what it leaves out: [Order of building](#order-of-building) says which is which, and [What's built](#whats-built) what those leave out. The engine's part is `crates/recollect-graph/src/chance.rs`, the formula language's is in `expr.rs` and `formulas.rs`, and the tests are `tests/chance.rs` in `recollect-systems`. Five samples are written this way: see [The samples](#the-samples). For the worlds this extends, see [components.md](components.md#worlds-on-top), and for formulas, [expressions.md](expressions.md).
 
 ## Why
 
@@ -154,9 +154,9 @@ Files don't change: a distribution is a formula, and only its text is saved.
 | 1 | Trees and drawing: the families, arithmetic, comparisons and `if` over them, short lists as diagram variables, and a histogram wherever a number is shown, saying how it was got. A requirement on something uncertain is refused, with why | Built |
 | 2 | Laws: named ones, the rules that keep them, and a chance read exactly from one | Built: the rules are below, and more can be added one at a time |
 | 3 | `evidence` apart from `requires`, with a level, and conditioning on what's uncertain | Built, but for evidence that's a matter of draws in some worlds and not others, which is refused |
-| 4 | Pinning a quantity to a value or a range | Not built. A short list, such as a die, can be pinned as any choice can |
-| 5 | `knowing`, and choices worked backward | Not built |
-| 6 | `chance` and `mean` in a cell | Not built |
+| 4 | Pinning a quantity to a value or a range | Built |
+| 5 | `knowing`, and choices worked backward | Built, for choices that all know the same things, and things with short lists of outcomes |
+| 6 | `chance` and `mean` in a cell | Built |
 
 ## What's built
 
@@ -203,7 +203,25 @@ Anything else is read from 4,096 draws. Each draw's values are spread evenly, on
 - **Pinning something that's a matter of chance is finding it out,** so a requirement is judged again knowing it.
 - **How it was judged is a notice.** A requirement that depends on chance says what it's judged as chosen before. One that no choice can make sure enough says so, and that it may be evidence. One whose chance was read from draws and came too close to its level to call says that.
 
+**Pinning.** A view looks through a copy of the graph with what's pinned written into it, so a what-if is doing it for real, on a copy:
+
+- **A quantity pinned to a value** is typed in. It's in a world as `=node/cell` with the number.
+- **A quantity pinned to a range,** `3..10`, `..10` or `3..`, is a piece of evidence that it's in that range. One that's uncertain in some worlds and not in others, or that no draw fits, is refused and says why.
+- **A matter of chance pinned to an answer** is found out: `chance` and `mean` read it, as they'd read it settled.
+- What the view adds to look through is never shown, and never saved.
+
+**`chance(x)` and `mean(x)`** average over every matter of chance, given what's known and what's been found out, and never over a choice of yours: there's one for each way your choices could go. A `requires` can then say `chance(cost < 4000) >= 0.9`.
+
+**What's read from draws says so wherever it goes.** Where `mean` or `chance` has no law, the cell holds an estimate: what it came to, from how many draws, and how far out it could be. Adding, taking away and scaling by a plain number keep how far out, which is never less than it is. Anything else keeps that it's an estimate, and no longer how far out. A comparison is true or false only where the two are further apart than three times that, and otherwise undefined, since it can't be called. A cell that has to hold a number, such as a task's estimate, can't hold one.
+
+**`knowing`** is an edge from a decision to something it's made knowing the outcome of. A requirement is then judged for each way that could turn out: an option is allowed where its chance, given that, is enough. A choice made before is allowed only where, however that turns out among the ways it can, the later choice has something allowed. In Monty Hall, requiring a win at least 0.6 of the time leaves only switching, whichever door he opens.
+
 **What it leaves out**, beyond the steps above:
+
+- **Choices that know different things,** in a row, aren't worked out. A requirement like that rules nothing out, and a notice says why.
+- **A choice that knows an uncertain number** isn't worked out either, in the same way.
+- **`chance` and `mean` don't condition on what a choice knows.** They're over everything that's a matter of chance.
+- **An estimate can't be combined with something uncertain,** which would need the same draws: that's an error in the cell.
 
 - **The level a notice uses is fixed,** where a view should say it. `oversized_task` fires when an estimate is more likely than not to be over five days, and says how likely, and whether that's exact or from draws.
 - **A truth is only ever shown always or never by simplifying.** `x > 1 || x <= 1` simplifies to always. `abs(x) >= 0` doesn't, so it's true in every draw and reads "all 4,096 draws", not "always".

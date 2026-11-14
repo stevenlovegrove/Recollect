@@ -1,4 +1,4 @@
-id: 01a1d83e-3773-711f-b6af-beb6ef54a26c
+id: 01a1d89a-06ec-7245-b25d-342a0ee59ba6
 components:
 - notes
 cells:
@@ -17,4 +17,5 @@ cells:
     - Select **Within budget**: certain for one, and a chance for the others.
     - Click **require** on Within budget's card. It's demanded of your choice, and always unless it says, so only the fixed price is left. Then set its **at least** to 0.8 in the panel on the right: all three are sure enough.
     - Pin a supplier in the bar at the top to see only that one.
+    - Select **Shipping** and pin it to a value in the panel on the right: that's the same as typing it in. Pin it to a range, such as `250..`, and it's the same as knowing it's in that range.
   name: About this example

@@ -335,3 +335,23 @@ fn two_dice_have_their_known_chances() {
     assert!((truth(&o.get::<ValueCell>("A seven")).given(&picks).prob() - 1.0 / 6.0).abs() < 1e-12);
     assert_eq!(total.given(&picks).len(), 6);
 }
+
+#[test]
+fn monty_hall_is_judged_knowing_which_door_he_opened() {
+    use recollect_graph::Op;
+    use recollect_systems::formulas::{AtLeast, Chosen, known_draws, worlds_left};
+    let mut o = open("monty-hall");
+    // How likely you are to win, for each way your choices go: never averaged over those.
+    let odds = o.get::<ValueCell>("Chance of winning").0.0;
+    for (_, v) in odds.cases() {
+        let Val::Num(p) = v else { panic!("{v:?}") };
+        assert!((p - 1.0 / 3.0).abs() < 1e-12 || (p - 2.0 / 3.0).abs() < 1e-12, "{p}");
+    }
+    let win = o.id("You win the car");
+    let switch = |o: &Opened| o.get::<Chosen>("Stick or switch?").0.0.holds(|v| matches!(v, Val::Ref(e) if recollect_systems::label_of(o.g(), *e) == "Switch"));
+    let left = |o: &Opened| worlds_left(o.g(), &Space::global().picks(&BTreeMap::new()), &Space::global().always(), &mut recollect_graph::chance::Reader::given(known_draws(o.g())));
+    o.log.commit("t", "require winning", vec![Op::add(win, REQUIRES), Op::set(win, AtLeast(0.6))]).unwrap();
+    assert!(left(&o) == switch(&o), "only switching, whichever door he opens");
+    o.log.commit("t", "surer", vec![Op::set(win, AtLeast(0.7))]).unwrap();
+    assert!(left(&o).is_never());
+}

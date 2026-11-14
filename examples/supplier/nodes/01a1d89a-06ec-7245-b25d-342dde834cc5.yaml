@@ -1,4 +1,4 @@
-id: 01a1d83e-3773-711f-b6af-beb9379c874c
+id: 01a1d89a-06ec-7245-b25d-342dde834cc5
 components:
 - notes
 cells:
@@ -7,6 +7,6 @@ cells:
 formulas:
   quote: triangular(3000, 3800, 6000)
 links:
-- to: 01a1d83e-3773-711f-b6af-beb71ff1749e
+- to: 01a1d89a-06ec-7245-b25d-342be4e2592b
   components:
   - alternative

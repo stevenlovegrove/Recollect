@@ -1,21 +1,21 @@
-id: 01a1d3e5-c0a9-72ee-9746-20802cb59718
+id: 01a1d89a-0736-767c-91b7-42dd212a3401
 cells:
   name: Door[2]
 links:
-- to: 01a1d3e5-c0a9-72ee-9746-207d0d162b5c
+- to: 01a1d89a-0736-767c-91b7-42da6424561c
   components:
   - alternative
   cells:
     weight: 1.0
-- to: 01a1d3e5-c0a9-72ee-9746-207e7221d567
+- to: 01a1d89a-0736-767c-91b7-42dbb84a6383
   components:
   - alternative
-- to: 01a1d3e5-c0a9-72ee-9746-208250b3f4f6
+- to: 01a1d89a-0736-767c-91b7-42df23aaf08c
   components:
   - alternative
   cells:
     weight: 1.0
-- to: 01a1d3e5-c0a9-72ee-9746-208323948762
+- to: 01a1d89a-0736-767c-91b7-42e055e20158
   components:
   - alternative
   cells:

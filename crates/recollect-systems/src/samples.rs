@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::formulas::{AT, At, Called, EVIDENCE, IS_A, LABEL, OPTIONS, Options, REQUIRES, VALUE, ValueCell};
 use crate::notes::{Body, DRAWING, Drawing, NOTES};
-use crate::plan::{ALTERNATIVE, DECISION, DEPENDS_ON, EXCLUDES, Done, Estimate, GOAL, PART_OF, RISK, TASK, UNCERTAIN, UNKNOWN, WITHIN, Weight};
+use crate::plan::{ALTERNATIVE, DECISION, DEPENDS_ON, EXCLUDES, KNOWING, Done, Estimate, GOAL, PART_OF, RISK, TASK, UNCERTAIN, UNKNOWN, WITHIN, Weight};
 
 pub struct Sample {
     pub name: &'static str,
@@ -50,7 +50,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "29";
+pub const FORMAT: &str = "30";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -295,7 +295,8 @@ Which to take is yours to choose, so nothing averages over it: **Cost** shows wh
 - Select **Cost** to see the three side by side. The fixed price with shipping is exact. The other two are a sum of unlike things, which has no law, so they're read from draws and say so.
 - Select **Within budget**: certain for one, and a chance for the others.
 - Click **require** on Within budget's card. It's demanded of your choice, and always unless it says, so only the fixed price is left. Then set its **at least** to 0.8 in the panel on the right: all three are sure enough.
-- Pin a supplier in the bar at the top to see only that one."#);
+- Pin a supplier in the bar at the top to see only that one.
+- Select **Shipping** and pin it to a value in the panel on the right: that's the same as typing it in. Pin it to a range, such as `250..`, and it's the same as knowing it's in that range."#);
     let which = "Which supplier?";
     b.add(which, DECISION).note(which, "Yours to choose, so what depends on it shows one answer for each, and never an average over them.");
     b.put("Fixed price", "quote", json!(4200.0)).option("Fixed price", which, None).note("Fixed price", "A number: no more to say.");
@@ -303,6 +304,8 @@ Which to take is yours to choose, so nothing averages over it: **Cost** shows wh
     b.formula_on("Fixed with extras", "quote", "3600 + exponential(400)").option("Fixed with extras", which, None).note("Fixed with extras", "Never below 3,600, usually a few hundred over, and now and then a lot.");
     b.formula("Shipping", "uniform(100, 300)").note("Shipping", "Anywhere from 100 to 300, and the same whoever supplies.");
     b.formula("Cost", "supplier.chosen.quote + shipping").label("Cost", which, "supplier").label("Cost", "Shipping", "shipping");
+    b.formula("Expected cost", "mean(cost)").label("Expected cost", "Cost", "cost");
+    b.note("Expected cost", "The cost on average over what's uncertain, for each supplier. Exact for the fixed price, and read from draws for the others, which it says.");
     b.note("Cost", "The quote of whichever is chosen, plus shipping. Each answer is held as what it is.");
     b.value("Budget", 4500.0);
     b.formula("Within budget", "cost <= budget").label("Within budget", "Cost", "cost").label("Within budget", "Budget", "budget");
@@ -724,7 +727,9 @@ Here it's four questions, asked in order:
 **Things to try**
 
 - Pin your pick and the door Monty opens, and see the probability that the car is behind each door.
-- Open **Decisions** to compare sticking with switching."#);
+- Open **Decisions** to compare sticking with switching.
+- Click **require** on **You win the car**, and set its **at least** to 0.6 in the panel on the right. Sticking or switching is made knowing which door Monty opened, so it's judged for each: only switching is left, whichever he opens. At 0.7, nothing is.
+- Select **Chance of winning**: how likely you are to win for each way your choices go, over where the car is and what Monty does."#);
     // Four questions, each landing on a door, and each after the ones it leaves out. The doors are the
     // same three nodes every time, so "you win" is two questions landing on one.
     let doors: Vec<String> = (1..=3).map(|d| format!("Door[{d}]")).collect();
@@ -752,6 +757,11 @@ Here it's four questions, asked in order:
     b.formula(ends, r#"if(choice.chosen.value = "Switch", left.chosen, pick.chosen)"#);
     b.label(ends, choice, "choice").label(ends, left, "left").label(ends, pick, "pick");
     b.formula("You win the car", "ends = car.chosen").label("You win the car", ends, "ends").label("You win the car", car, "car");
+    // You decide after he's opened a door, knowing which: so it's judged for each door he could open.
+    b.link(choice, monty, KNOWING);
+    let odds = "Chance of winning";
+    b.formula(odds, "chance(win)").label(odds, "You win the car", "win");
+    b.note(odds, "Over where the car is and what Monty does, which are matters of chance, and never over your own choices: so there's one for each way those go. A third for sticking and two thirds for switching, whichever door you pick.");
 }
 
 fn medical_test(b: &mut Build) {

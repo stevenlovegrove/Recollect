@@ -1314,3 +1314,48 @@ async fn held_out_estimates_that_are_distributions() {
     assert!(die.get("error").is_none());
     assert_eq!(cell(&v, "Trip", "value")["mix"]["dist"]["exact"], true, "{}", cell(&v, "Trip", "value"));
 }
+
+/// A quantity pinned to a value reads as typing it in, and to a range as knowing it's in that range. A
+/// matter of chance pinned to an answer is found out, and what's averaged over chance reads it.
+#[tokio::test]
+async fn a_pinned_quantity_reads_as_typing_it_in_or_knowing_it() {
+    let c = Client::new();
+    c.open("shelf").await;
+    let v = c.view(json!({})).await;
+    let (alcove, clearance) = (id(&v, "Alcove"), id(&v, "Clearance"));
+    let dist = |v: &Value, name: &str| cell(v, name, "value")["value"]["dist"].clone();
+    let nodes = v["nodes"].as_array().unwrap().len();
+
+    // To a range: only the draws where it's in it are read, and it says how many.
+    let range = c.view(json!({ format!("={clearance}/value"): "0.." })).await;
+    let d = dist(&range, "Clearance");
+    assert_eq!(d["exact"], false, "{d}");
+    let kept = d["draws"].as_u64().unwrap();
+    assert!(kept > 3600 && kept < 4000 && d["low"].as_f64().unwrap() >= 0.0, "{d}");
+    assert_eq!(range["nodes"].as_array().unwrap().len(), nodes, "what the view adds to look through isn't shown");
+    assert_eq!(range["worlds"]["quantities"][0]["refused"], Value::Null);
+    // The same as knowing it, for real.
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "add", "id": id(&v, "It fits"), "component": "evidence" }] })).await;
+    assert_eq!(dist(&c.view(json!({})).await, "Clearance")["draws"], kept);
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "remove", "id": id(&v, "It fits"), "component": "evidence" }] })).await;
+
+    // What can't be pinned says why, and is as if it weren't.
+    let bad = c.view(json!({ format!("={clearance}/value"): "lots" })).await;
+    assert!(bad["worlds"]["quantities"][0]["refused"].as_str().unwrap().contains("isn't a number"), "{}", bad["worlds"]);
+    assert!(bad["checks"].as_array().unwrap().iter().any(|k| k["rule"] == "pin_not_applied"));
+    assert_eq!(dist(&bad, "Clearance")["exact"], true);
+
+    // To a value: the same as typing it in.
+    let pinned = c.view(json!({ format!("={alcove}/value"): "1210" })).await;
+    assert_eq!(dist(&pinned, "Clearance")["law"], "normal(9, 1.824)", "{}", dist(&pinned, "Clearance"));
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": alcove, "cell": "value", "value": 1210 }] })).await;
+    assert_eq!(dist(&c.view(json!({})).await, "Clearance"), dist(&pinned, "Clearance"));
+
+    // A die found out by pinning it: what's averaged over chance is averaged over what's left.
+    c.open("two-dice").await;
+    let v = c.view(json!({})).await;
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "add_node", "id": "new:mean", "name": "Expected total", "cells": { "value": { "formula": "mean(t)", "labels": { "t": id(&v, "Total") } } } }] })).await;
+    let die = v["worlds"]["vars"].as_array().unwrap().iter().find(|x| x["name"] == "First die").unwrap()["id"].as_str().unwrap().to_string();
+    assert_eq!(cell(&c.view(json!({})).await, "Expected total", "value")["value"], 7.0);
+    assert_eq!(cell(&c.view(json!({ die.as_str(): "6" })).await, "Expected total", "value")["value"], 9.5);
+}

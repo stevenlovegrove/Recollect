@@ -26,7 +26,37 @@ pub enum Val {
     /// A number, or a truth, that's uncertain: an expression over draws. See `docs/distributions.md`.
     /// It's written `{"rand": …}`.
     Rand(Rand),
+    /// A number read from draws, as `mean(x)` is where x has no law, rather than worked out exactly. It
+    /// says so wherever it goes. It's written `{"estimate": …}`.
+    #[serde(serialize_with = "estimate_out", deserialize_with = "estimate_in")]
+    Estimate(Estimate),
     Record(BTreeMap<String, Val>),
+}
+
+/// What a number read from draws came to, and how good that is.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Estimate {
+    pub value: f64,
+    /// How far out it could reasonably be: its standard error. Nothing, where it's come through something
+    /// that doesn't say how far out what comes out could be.
+    pub error: Option<f64>,
+    /// How many draws it was read from.
+    pub draws: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EstimateJson {
+    estimate: Estimate,
+}
+
+fn estimate_out<S: Serializer>(e: &Estimate, s: S) -> Result<S::Ok, S::Error> {
+    EstimateJson { estimate: e.clone() }.serialize(s)
+}
+
+fn estimate_in<'de, D: Deserializer<'de>>(d: D) -> Result<Estimate, D::Error> {
+    Ok(EstimateJson::deserialize(d)?.estimate)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -85,7 +115,7 @@ impl Type {
             Val::Ref(_) => Type::Ref,
             // Whether something's uncertain isn't part of its type, as whether it differs between worlds isn't.
             Val::Rand(r) if r.is_truth() => Type::Bool,
-            Val::Rand(_) => Type::Number,
+            Val::Rand(_) | Val::Estimate(_) => Type::Number,
             Val::Record(fields) => Type::Record(fields.iter().map(|(k, v)| (k.clone(), Type::of(v))).collect()),
         }
     }
@@ -174,7 +204,7 @@ pub enum Expr {
 }
 
 /// What's evaluated as itself, rather than being expanded into something else.
-pub const CORE: &[&str] = &["if", "defined", "has", "chose", "round", "floor", "ceil", "max", "min", "distinct", "exp", "ln", "sqrt", "normal", "lognormal", "uniform", "triangular", "exponential", "between", "integers", "bernoulli"];
+pub const CORE: &[&str] = &["if", "defined", "has", "chose", "round", "floor", "ceil", "max", "min", "distinct", "exp", "ln", "sqrt", "chance", "mean", "normal", "lognormal", "uniform", "triangular", "exponential", "between", "integers", "bernoulli"];
 
 /// The functions that are something uncertain: each place one is written is a draw of its own. See
 /// `docs/distributions.md`.

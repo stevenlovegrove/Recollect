@@ -8,8 +8,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use recollect_graph::chance::{Rand, Reader, Share, Term};
 use recollect_graph::worlds::{Bool, Picks, Var};
-use recollect_graph::{Backed, CellDef, ComponentDef, ComponentType, Entity, Error, Event, Graph, Log, Named, On, Op, Origin, Shown, Source, Stored, Violation};
-use recollect_systems::formulas::{CHOICE, LABEL, known_draws, narrows, shown_free, worlds_left};
+use recollect_graph::{Backed, CellDef, CellType, ComponentDef, ComponentType, Entity, Error, Event, Graph, Log, Named, On, Op, Origin, Shown, Source, Stored, Violation};
+use recollect_systems::formulas::{CHOICE, Called, EVIDENCE, FOUND, Found, LABEL, VALUE, ValueCell, is_chance, known_draws, narrows, shown_free, worlds_left};
+use recollect_systems::expr::Val;
 use recollect_systems::notes::Body;
 use recollect_systems::plan::{self, Matrix, UNCERTAIN, WorkItem};
 use serde::{Deserialize, Serialize};
@@ -199,6 +200,126 @@ pub struct WorldsView {
     pub constrained: bool,
     /// The worlds in play, if that's what the workspace is about. Limited to the first few hundred.
     pub solutions: Vec<World>,
+    /// Quantities pinned to a value or a range, and whether each could be.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub quantities: Vec<QuantityPin>,
+}
+
+/// A quantity pinned to a value, which is the same as typing it in, or to a range, which is the same as
+/// knowing it's in that range. It's in a world as `=<node>/<cell>`, with `6`, `3..10`, `..10` or `3..`.
+#[derive(Debug, Clone, Serialize)]
+pub struct QuantityPin {
+    pub key: String,
+    pub node: Entity,
+    pub cell: String,
+    /// As it was given.
+    pub text: String,
+    /// Why it couldn't be pinned, if it couldn't. Then it's as if it weren't.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refused: Option<String>,
+}
+
+enum Pinned {
+    At(f64),
+    Within(Option<f64>, Option<f64>),
+}
+
+fn pinned_to(text: &str) -> Result<Pinned, String> {
+    let number = |t: &str| t.trim().parse::<f64>().ok().filter(|n| n.is_finite()).ok_or_else(|| format!("{t:?} isn't a number"));
+    match text.split_once("..") {
+        None => number(text).map(Pinned::At),
+        Some((from, to)) => {
+            let from = if from.trim().is_empty() { None } else { Some(number(from)?) };
+            let to = if to.trim().is_empty() { None } else { Some(number(to)?) };
+            match (from, to) {
+                (None, None) => Err("a range needs at least one end".to_string()),
+                (Some(a), Some(b)) if a > b => Err(format!("{a} is above {b}")),
+                _ => Ok(Pinned::Within(from, to)),
+            }
+        }
+    }
+}
+
+/// What a view looks through: the graph as it is, or, where something's pinned that a copy has to say, a
+/// copy with it said. A quantity pinned to a value is typed in. One pinned to a range is a piece of
+/// evidence. A matter of chance pinned to an answer is something found out, which `chance` and `mean` read.
+/// So a what-if can't disagree with doing it for real.
+fn looked_at(g: &Graph, world: &World) -> (Option<Graph>, Vec<QuantityPin>) {
+    let mut pins: Vec<QuantityPin> = Vec::new();
+    let mut said: Vec<(usize, Pinned)> = Vec::new();
+    for (key, text) in world.iter().filter(|(k, _)| k.starts_with('=')) {
+        let refuse = |why: String| QuantityPin { key: key.clone(), node: Entity::whole(), cell: String::new(), text: text.clone(), refused: Some(why) };
+        let Some((node, cell)) = key[1..].split_once('/') else {
+            pins.push(refuse("a quantity is pinned as =node/cell".to_string()));
+            continue;
+        };
+        let Ok(node) = node.parse::<Entity>() else {
+            pins.push(refuse(format!("{node} isn't a node")));
+            continue;
+        };
+        let mut pin = QuantityPin { key: key.clone(), node, cell: cell.to_string(), text: text.clone(), refused: None };
+        if !g.contains(node) || !matches!(g.get_value(node, cell), Ok(Some(_))) {
+            pin.refused = Some(format!("there's no {cell} there to pin"));
+        } else {
+            match pinned_to(text) {
+                Ok(p) => said.push((pins.len(), p)),
+                Err(why) => pin.refused = Some(why),
+            }
+        }
+        pins.push(pin);
+    }
+    let found: BTreeMap<String, String> = world.iter().filter(|(k, _)| !k.starts_with('=') && is_chance(g, k)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    if said.is_empty() && found.is_empty() {
+        return (None, pins);
+    }
+    let mut copy = g.fork();
+    let mut ranges = Vec::new();
+    for (i, how) in said {
+        let (node, cell) = (pins[i].node, pins[i].cell.clone());
+        match how {
+            Pinned::At(at) => {
+                copy.set_value(node, &cell, json!(at));
+            }
+            Pinned::Within(from, to) => {
+                let read = if cell == ValueCell::NAME { "t".to_string() } else { format!("t.{cell}") };
+                let ends: Vec<String> = [from.map(|a| format!("{read} >= {a}")), to.map(|b| format!("{read} <= {b}"))].into_iter().flatten().collect();
+                let known = copy.spawn();
+                copy.add(known, VALUE).add(known, EVIDENCE).add(known, FOUND);
+                let edge = copy.link(known, node, LABEL);
+                copy.set(edge, Called("t".to_string()));
+                copy.set_formula(known, ValueCell::NAME, &ends.join(" && "));
+                ranges.push((i, known));
+            }
+        }
+    }
+    if !found.is_empty() {
+        let f = copy.spawn();
+        copy.add(f, FOUND).set(f, Found(found));
+    }
+    // A range that's a matter of draws in some worlds and not in others isn't worked out, and one no draw
+    // fits leaves nothing to read: either is said, and taken back.
+    for (i, known) in ranges {
+        let refused = match copy.get::<ValueCell>(known) {
+            Err(e) => Some(format!("it can't be worked out: {e:?}")),
+            Ok(Some(v)) if v.0.0.len() > 1 && v.0.0.cases().iter().any(|(_, x)| matches!(x, Val::Rand(_))) => Some("it's uncertain in some worlds and not in others, which isn't worked out for a range yet".to_string()),
+            _ => None,
+        };
+        if refused.is_some() {
+            copy.remove(known, EVIDENCE);
+            pins[i].refused = refused;
+        }
+    }
+    if known_draws(&copy).is_some() && Reader::given(known_draws(&copy)).draws_kept() == 0 {
+        for pin in pins.iter_mut().filter(|p| p.refused.is_none() && p.text.contains("..")) {
+            pin.refused = Some(format!("together with what else is known, none of {} draws is in that range", recollect_graph::chance::DRAWS));
+        }
+    }
+    (Some(copy), pins)
+}
+
+/// What only a view's copy of the graph has, which isn't anything a person wrote.
+fn is_lens(g: &Graph, e: Entity) -> bool {
+    g.has(e, FOUND)
 }
 
 #[derive(Debug, Serialize)]
@@ -601,7 +722,7 @@ struct Asked {
     lands: Vec<(String, Bool)>,
 }
 
-fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap<String, Var>) -> WorldsView {
+fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap<String, Var>, quantities: Vec<QuantityPin>) -> WorldsView {
     let constrained = narrows(g);
     let in_play = &lens.in_play;
     // A decision whose options depend on other choices is several variables with its name, one for each
@@ -696,7 +817,7 @@ fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap
         let found = if constrained { ways(&asked, in_play, &applied, 300) } else { vec![] };
         (n.to_string(), found)
     };
-    WorldsView { picks: applied, vars: views, count, constrained, solutions }
+    WorldsView { picks: applied, vars: views, count, constrained, solutions, quantities }
 }
 
 /// The ways everything open could land, among the worlds in play, up to `limit`.
@@ -790,7 +911,8 @@ fn relabel(text: &str, labels: &Labels) -> String {
 
 /// The whole graph, narrowed to `world`.
 pub fn view(o: &Workspace, world: &World) -> View {
-    let g: &Graph = o.log.graph();
+    let (copy, quantities) = looked_at(o.log.graph(), world);
+    let g: &Graph = copy.as_ref().unwrap_or_else(|| o.log.graph());
     let labels = Labels::gather(g);
     let lens = Lens::new(g, world);
     let mut vars = BTreeMap::new();
@@ -798,7 +920,7 @@ pub fn view(o: &Workspace, world: &World) -> View {
         let cells = cells(g, e, &lens, &labels, &mut vars);
         node_view(g, e, name, cells)
     };
-    let nodes: Vec<NodeView> = g.entities().map(|e| node(e, recollect_systems::label_of(g, e))).collect();
+    let nodes: Vec<NodeView> = g.entities().filter(|e| !is_lens(g, *e)).map(|e| node(e, recollect_systems::label_of(g, e))).collect();
     // Only what something written reads: a row nobody wrote that reads another doesn't bring that one too.
     let mut unwritten: Vec<(recollect_graph::table::Row, Entity)> = nodes.iter().flat_map(|n| n.reads.iter().copied()).filter(|e| !g.contains(*e)).filter_map(|e| Some((g.row_of(e)?, e))).collect();
     unwritten.sort_by(|a, b| (&a.0.table, &a.0.key).cmp(&(&b.0.table, &b.0.key)));
@@ -813,8 +935,9 @@ pub fn view(o: &Workspace, world: &World) -> View {
         .collect();
     // These are made as choices are worked out, so only now are they all there.
     let constants = g.constants().into_iter().map(|(e, _)| node(e, recollect_systems::label_of(g, e))).collect();
-    let edges = g.edges().map(|(e, from, to)| EdgeView { id: e, from, to, components: g.given(e).into_iter().collect(), cells: cells(g, e, &lens, &labels, &mut vars) }).collect();
-    let worlds = worlds(g, world, &lens, &labels, vars);
+    let edges = g.edges().filter(|(_, from, _)| !is_lens(g, *from)).map(|(e, from, to)| EdgeView { id: e, from, to, components: g.given(e).into_iter().collect(), cells: cells(g, e, &lens, &labels, &mut vars) }).collect();
+    let refused: Vec<CheckView> = quantities.iter().filter_map(|q| Some(CheckView { severity: "notice", rule: "pin_not_applied".to_string(), on: if q.node == Entity::whole() { vec![] } else { vec![q.node] }, detail: format!("{} {} couldn't be pinned to {}: {}", labels.of(&q.node.to_string()), q.cell, q.text, q.refused.as_ref()?) })).collect();
+    let worlds = worlds(g, world, &lens, &labels, vars, quantities);
     let ran = g.take_ran().into_iter().filter(|(_, c)| !internal(g, c)).map(|(node, cell)| RanView { node, cell }).collect();
     View {
         workspace: WorkspaceView { name: o.config.name.clone(), about: o.config.about.clone(), id: o.id.clone(), location: o.location.clone(), systems: o.built.names.clone(), sample: o.sample.clone(), direct_writes: o.config.llm_direct_writes },
@@ -828,7 +951,7 @@ pub fn view(o: &Workspace, world: &World) -> View {
         components: g.registry().components().cloned().collect(),
         cells: g.registry().cells().filter(|c| !c.internal).map(cell_info).collect(),
         worlds,
-        checks: checks(&o.log, &labels),
+        checks: checks(&o.log, &labels).into_iter().chain(refused).collect(),
         ran,
         proposals: o.proposals.len(),
     }
@@ -843,7 +966,8 @@ pub struct Tried {
 }
 
 pub fn try_formula(o: &Workspace, e: Entity, text: &str, world: &World) -> Tried {
-    let g = o.log.graph();
+    let (copy, _) = looked_at(o.log.graph(), world);
+    let g: &Graph = copy.as_ref().unwrap_or_else(|| o.log.graph());
     let labels = Labels::gather(g);
     match recollect_systems::formulas::try_formula(g, e, text) {
         Ok((value, expansion)) => {
@@ -873,7 +997,8 @@ pub struct Swept {
 /// It's the same as typing each one in: a copy of the graph is changed, and it keeps the memos, so each
 /// value only reruns what it reaches.
 pub fn sweep(o: &Workspace, set: &CellRef, values: &[f64], read: &[CellRef], world: &World) -> Result<Vec<Swept>, String> {
-    let g = o.log.graph();
+    let (looked, _) = looked_at(o.log.graph(), world);
+    let g: &Graph = looked.as_ref().unwrap_or_else(|| o.log.graph());
     if !g.entities().any(|e| e == set.node) {
         return Err(format!("there's no node {}", set.node));
     }
@@ -904,7 +1029,8 @@ pub struct RowCells {
 /// A numbered table's rows from one key to another, narrowed to `world`. Rows nobody wrote are there too,
 /// as far as the table goes on: see `Graph::row_at`.
 pub fn rows(o: &Workspace, table: &str, from: i64, to: i64, world: &World) -> Vec<RowCells> {
-    let g = o.log.graph();
+    let (copy, _) = looked_at(o.log.graph(), world);
+    let g: &Graph = copy.as_ref().unwrap_or_else(|| o.log.graph());
     let labels = Labels::gather(g);
     let lens = Lens::new(g, world);
     let mut vars = BTreeMap::new();
@@ -928,7 +1054,8 @@ pub fn planning(o: &Workspace, world: &World) -> Result<PlanView, String> {
     if !o.built.names.iter().any(|n| n == "plan") {
         return Ok(PlanView { work: vec![], decisions: vec![] });
     }
-    let g = o.log.graph();
+    let (copy, _) = looked_at(o.log.graph(), world);
+    let g: &Graph = copy.as_ref().unwrap_or_else(|| o.log.graph());
     let labels = Labels::gather(g);
     let work = plan::work(g, world).map_err(|e| describe_error(&e, &labels))?;
     let decisions = plan::matrices(g, world).map_err(|e| describe_error(&e, &labels))?;
@@ -1068,7 +1195,8 @@ pub struct EdgeBrief {
 }
 
 pub fn node(o: &Workspace, e: Entity, world: &World) -> NodeDetail {
-    let g = o.log.graph();
+    let (copy, _) = looked_at(o.log.graph(), world);
+    let g: &Graph = copy.as_ref().unwrap_or_else(|| o.log.graph());
     let labels = Labels::gather(g);
     let lens = Lens::new(g, world);
     let mut vars = BTreeMap::new();

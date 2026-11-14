@@ -44,6 +44,14 @@ export interface Dist {
   error: number;
 }
 
+/** A number read from draws, such as a mean with no law, sent as `{"estimate": …}` wherever the number would be. */
+export interface Estimate {
+  value: number;
+  /** How far out it could be: its standard error. Missing where it's come through something that doesn't say. */
+  error?: number | null;
+  draws: number;
+}
+
 /** How likely an uncertain truth is, sent as `{"chance": …}` wherever the truth would be. */
 export interface Chance {
   chance: number;
@@ -202,6 +210,8 @@ export interface WorldsView {
   count: string;
   constrained: boolean;
   solutions: World[];
+  /** Quantities pinned to a value or a range, keyed `=node/cell`, and why any couldn't be. */
+  quantities?: { key: string; node: string; cell: string; text: string; refused?: string }[];
 }
 
 export interface Check {

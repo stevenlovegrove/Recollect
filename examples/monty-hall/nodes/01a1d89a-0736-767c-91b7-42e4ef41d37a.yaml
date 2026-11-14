@@ -1,0 +1,15 @@
+id: 01a1d89a-0736-767c-91b7-42e4ef41d37a
+components:
+- notes
+- value
+cells:
+  body: 'Over where the car is and what Monty does, which are matters of chance, and never over your own choices: so there''s one for each way those go. A third for sticking and two thirds for switching, whichever door you pick.'
+  name: Chance of winning
+formulas:
+  value: chance(win)
+links:
+- to: 01a1d89a-0736-767c-91b7-42e3c09264d9
+  components:
+  - label
+  cells:
+    called: win

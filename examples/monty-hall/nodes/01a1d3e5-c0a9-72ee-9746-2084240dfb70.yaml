@@ -1,9 +1,0 @@
-id: 01a1d3e5-c0a9-72ee-9746-2084240dfb70
-components:
-- decision
-- options
-cells:
-  name: Stick or switch?
-  options:
-  - Stick
-  - Switch

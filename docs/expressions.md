@@ -47,7 +47,7 @@ The evaluator runs on world values, where `Cond::zip` and `Bool` make that exact
 - **Authors don't think about worlds.** `a + b` works whether or not either varies.
 - **There's an independent test.** See [How it's checked](#how-its-checked).
 
-**World-collapsing functions stay out of cells**, such as `expected(x)` or `possible(x > 5)`. `expected(total)` is one number, and narrowing can't narrow one number, so pinning a choice would show the old answer while really deciding would show a new one. Making it a macro doesn't change this, because the expansion would still collapse. Views read a finished value and can work these out after narrowing, which `Cond::expected`, `min` and `max` do.
+**World-collapsing functions stay out of cells**, such as `expected(x)` or `possible(x > 5)`, except `chance` and `mean`, which collapse only what's a matter of chance and read what's been found out: see [distributions.md](distributions.md). `expected(total)` is one number, and narrowing can't narrow one number, so pinning a choice would show the old answer while really deciding would show a new one. Making it a macro doesn't change this, because the expansion would still collapse. Views read a finished value and can work these out after narrowing, which `Cond::expected`, `min` and `max` do.
 
 ### 2. Written as text, and the text is the only copy
 
@@ -480,4 +480,4 @@ Decision 1 keeps world-collapsing functions out of cells, so comparing options i
 - **Choices and chances.** A decision marked `uncertain` isn't anyone's to choose, like how far you'll drive, so its weights are how likely each option is. A view says which open choices each cell differs over. What's expected averages over uncertain ones only: averaging over a choice still to be made means nothing, so there it's a range, naming the choice it waits on.
 - **How it changes.** `/api/sweep` gives some cells with another typed in as each of a list of values, on a copy of the graph that keeps its memos. The comparison charts a column against any number that isn't a choice, one line per option, so where one option overtakes another can be read off.
 
-What this leaves out: an expected value can't be a cell, so "expected cost under £4,000" can't be a `requires`. "Under £4,000 at least nine times in ten" can: a `requires` says how surely it has to be met.
+An expected value can be a cell where it averages only over what's a matter of chance, given what's known: `mean(cost)`, and `chance(cost < 4000)`. A view that finds something out by pinning it reads them as they'd read it settled, so a what-if still can't disagree with the real thing. See [distributions.md](distributions.md).

@@ -37,6 +37,8 @@ pub const OPTION: &str = "option";
 pub const PART_OF: &str = "part_of";
 pub const ALTERNATIVE: &str = "alternative";
 pub const EXCLUDES: &str = "excludes";
+/// A choice made knowing how something turns out: see `formulas::judge`.
+pub const KNOWING: &str = "knowing";
 pub const WITHIN: &str = "within";
 pub const NARROWED: &str = "narrowed";
 pub const DEPENDS_ON: &str = "depends_on";
@@ -482,6 +484,7 @@ pub fn install(reg: &mut Registry) {
     reg.edge(WITHIN, "Only the options that are part of whatever that choice lands on are options here, so this comes after it.").arranges().reversed().source_has(NARROWED).target_has(CHOICE);
     reg.edge(EXCLUDES, "Whatever that choice lands on isn't an option here, so this comes after it.").arranges().reversed().source_has(NARROWED).target_has(CHOICE);
     reg.edge(DEPENDS_ON, "Waits for that.").orders().source_has(PART).target_has(PART);
+    reg.edge(KNOWING, "This choice is made knowing how that turns out, so what's required of it is judged for each way that could.").arranges().reversed().source_has(DECISION);
     reg.cell::<WaitFor>(DEPENDS_ON, "What it waits for: that to be done, or decided.").default_value(WaitFor::Done);
 
     checks(reg);

@@ -1,4 +1,4 @@
-id: 01a1d83e-3773-711f-b6af-bebe206504f9
+id: 01a1d89a-06ed-7757-823a-191d5267ce8f
 components:
 - notes
 - value
@@ -8,12 +8,12 @@ cells:
 formulas:
   value: cost <= budget
 links:
-- to: 01a1d83e-3773-711f-b6af-bebc7e910f26
+- to: 01a1d89a-06ec-7245-b25d-34308087df72
   components:
   - label
   cells:
     called: cost
-- to: 01a1d83e-3773-711f-b6af-bebd5790c579
+- to: 01a1d89a-06ed-7757-823a-191c9e2389ae
   components:
   - label
   cells:

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { Cell, Chance, Dist, Edge, GraphNode, Op, Reading, Shown } from "./api";
+import type { Cell, Chance, Dist, Edge, Estimate, GraphNode, Op, Reading, Shown } from "./api";
 import { bracketRuns, partText } from "./brackets";
 import type { Workspace } from "./workspace";
 import { badgesOf, compColor, isDropped, isNote, label, nodeColor } from "./theme";
@@ -40,15 +40,37 @@ const only = (v: unknown, key: string): unknown => (v && typeof v === "object" &
 /** What an uncertain number comes to, if that's what this is: `{"dist": …}`. */
 export const distOf = (v: unknown): Dist | undefined => only(v, "dist") as Dist | undefined;
 
+/** A number read from draws, if that's what this is: `{"estimate": …}`. */
+export const estimateOf = (v: unknown): Estimate | undefined => only(v, "estimate") as Estimate | undefined;
+
+/** An estimate in a few words. It always says it's about that. */
+export function estimateText(e: Estimate): string {
+  return e.error ? `≈ ${toWithin(e.value, e.error)} ± ${figures(e.error)}` : `≈ ${figures(e.value)}`;
+}
+
+export function estimateHow(e: Estimate): string {
+  return `Read from ${e.draws.toLocaleString()} draws, not worked out exactly. ${e.error ? `It could be out by about ${figures(e.error)}.` : "It's come through something that doesn't say how far out it could be."}`;
+}
+
 /** How likely an uncertain truth is, if that's what this is: `{"chance": …}`. */
 export const chanceOf = (v: unknown): Chance | undefined => only(v, "chance") as Chance | undefined;
 
 const figures = (n: number) => valueText(+n.toPrecision(3));
 
+/**
+ * A number that could be out by about `error`, written to as many places as that leaves meaningful, so
+ * rounding it never moves it further than it could be out anyway.
+ */
+function toWithin(n: number, error: number): string {
+  if (!(error > 0)) return figures(n);
+  const places = Math.max(0, 1 - Math.floor(Math.log10(error)));
+  return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: Math.min(places, 12) });
+}
+
 /** An uncertain number in a few words: its middle and its spread. What was read from draws says it's about that. */
 export function distText(d: Dist): string {
   if (d.undefined >= 1) return "undefined";
-  return `${d.exact ? "" : "≈ "}${figures(d.mean)} ± ${figures(d.sd)}`;
+  return `${d.exact ? `${figures(d.mean)}` : `≈ ${toWithin(d.mean, d.error)}`} ± ${figures(d.sd)}`;
 }
 
 /** How an uncertain number was got, for a tooltip: its name if it has one, or how many draws and how far out. */
@@ -118,6 +140,13 @@ export function AnyValue({ v, text, wide }: { v: unknown; text: (v: unknown) => 
   if (d) return <DistValue d={d} wide={wide} />;
   const c = chanceOf(v);
   if (c) return <ChanceValue c={c} />;
+  const e = estimateOf(v);
+  if (e)
+    return (
+      <span className="mono-value estimate" title={estimateHow(e)}>
+        {estimateText(e)}
+      </span>
+    );
   return <span className="mono-value">{text(v)}</span>;
 }
 
@@ -139,6 +168,8 @@ export function valueText(v: unknown): string {
   if (d) return distText(d);
   const c = chanceOf(v);
   if (c) return `true ${chanceText(c)}`;
+  const e = estimateOf(v);
+  if (e) return estimateText(e);
   if (typeof v === "number") return Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 2 });
   if (typeof v === "string") return v;
   if (typeof v === "boolean") return v ? "yes" : "no";

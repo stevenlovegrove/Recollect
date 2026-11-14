@@ -3,7 +3,7 @@ import { api, type Cell, type Edge, type EventView, type GraphNode, type Has, ty
 import { edgesOf, labelsOf, type Workspace } from "./workspace";
 import { badgesOf, compColor, isDropped, isNote, label, nodeColor } from "./theme";
 import { DdItemButton, Dropdown } from "./Dropdown";
-import { Brackets, CellValue, CompBadge, NodeChip, RemoveButton, Resolved, RevertButton, TableIcon, TickBox, casesOf, edgeText, shownText } from "./bits";
+import { Brackets, CellValue, CompBadge, NodeChip, RemoveButton, Resolved, RevertButton, TableIcon, TickBox, casesOf, distOf, edgeText, shownText } from "./bits";
 import { entryText, parseEntry } from "./cellEntry";
 import { beliefLines } from "./summary";
 import { Key } from "./Shortcuts";
@@ -493,7 +493,41 @@ function CellsCard({ ws, id, home, cells, onSelect }: { ws: Workspace; id: strin
  * What's written on this node has a bar down its side, and what it inherits says where from. A formula
  * written here or on a kind takes the whole width, with what it comes to set apart beneath it.
  */
+/** Whether a cell is uncertain anywhere: as itself, in any case, or taken together. */
+function uncertainIn(cell: Cell): boolean {
+  return !!distOf(cell.value) || !!distOf(cell.mix) || (cell.shown?.kind === "cond" && cell.shown.cases.some((k) => distOf(k.value)));
+}
+
+/**
+ * What if an uncertain quantity were something in particular. A value is the same as typing it in, and a
+ * range the same as knowing it's in that range. Either is only a what-if, and saves nothing.
+ */
+function PinRow({ ws, id, c }: { ws: Workspace; id: string; c: string }) {
+  const key = `=${id}/${c}`;
+  const current = ws.world[key];
+  const refused = ws.view?.worlds.quantities?.find((q) => q.key === key)?.refused;
+  const [text, setText] = useState(current ?? "");
+  useEffect(() => setText(current ?? ""), [current]);
+  const pin = () => ws.pin(key, text.trim() || null);
+  return (
+    <div className="pin-row small">
+      <span className="muted" title="Pin it to a value, which is the same as typing it in, or to a range, which is the same as knowing it's in it. Nothing is saved.">
+        What if it's
+      </span>
+      <input aria-label={`What if ${c} is`} placeholder="6, or a range: 3..10, ..10, 3.." value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && pin()} onBlur={() => text.trim() !== (current ?? "") && pin()} />
+      {current !== undefined && (
+        <button className="link" onClick={() => ws.pin(key, null)}>
+          unpin
+        </button>
+      )}
+      {refused && <span className="cell-error">{refused}</span>}
+    </div>
+  );
+}
+
 function CellRow({ ws, target, c, cell, onSelect, own }: { ws: Workspace; target: Target; c: string; cell: Cell; onSelect: (id: string) => void; own?: boolean }) {
+  const pinnable = "id" in target && (uncertainIn(cell) || ws.world[`=${(target as { id: string }).id}/${c}`] !== undefined);
+  const pinRow = pinnable && <PinRow ws={ws} id={(target as { id: string }).id} c={c} />;
   const [editing, setEditing] = useState(false);
   const info = ws.cellInfo(c);
   const settable = !info || info.settable;
@@ -548,6 +582,7 @@ function CellRow({ ws, target, c, cell, onSelect, own }: { ws: Workspace; target
         ) : (
           <CellEditor key={cell.formula} ws={ws} target={target} c={c} cell={cell} onSelect={onSelect} />
         )}
+        {pinRow}
       </div>
     );
   }
@@ -564,6 +599,7 @@ function CellRow({ ws, target, c, cell, onSelect, own }: { ws: Workspace; target
             </button>
           )}
         </span>
+        {pinRow}
       </span>
       {undo ?? <span />}
     </div>

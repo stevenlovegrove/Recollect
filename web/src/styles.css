@@ -2148,6 +2148,36 @@ input.sheet-input {
 .hist.drawn rect {
   fill: color-mix(in srgb, var(--accent) 55%, transparent);
 }
+.pin-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.pin-row input {
+  width: 13em;
+  font-size: 12px;
+}
+.world-pin {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 2px 1px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  font-size: 12px;
+}
+.world-pin.refused {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.world-pin .icon {
+  padding: 0 4px;
+}
+.mono-value.estimate {
+  font-style: italic;
+}
 .case.mix {
   border-top: 1px dashed var(--border);
   padding-top: 3px;

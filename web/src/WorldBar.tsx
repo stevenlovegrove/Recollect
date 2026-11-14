@@ -7,8 +7,10 @@ const FEW = 5;
 /** Which world everything on screen is narrowed to. It's the app's one what-if, and saves nothing. */
 export function WorldBar({ ws, onShowWorlds }: { ws: Workspace; onShowWorlds: () => void }) {
   const w = ws.view!.worlds;
-  if (!w.vars.length) return null;
-  const pinned = Object.keys(w.picks).length;
+  const quantities = w.quantities ?? [];
+  if (!w.vars.length && !quantities.length) return null;
+  const pinned = Object.keys(w.picks).length + quantities.length;
+  const nameOf = (id: string) => ws.byId.get(id)?.name ?? "something";
   return (
     <div className={`world-bar ${pinned ? "narrowed" : ""}`}>
       <button className="world-bar-count" onClick={onShowWorlds} title="See every choice">
@@ -41,8 +43,18 @@ export function WorldBar({ ws, onShowWorlds }: { ws: Workspace; onShowWorlds: ()
           );
         })
       ) : (
-        <span className="muted small">{pinned ? `${pinned} of ${w.vars.length} choices pinned` : `${w.vars.length} open choices`}</span>
+        <span className="muted small">{Object.keys(w.picks).length ? `${Object.keys(w.picks).length} of ${w.vars.length} choices pinned` : `${w.vars.length} open choices`}</span>
       )}
+      {quantities.map((q) => (
+        <span key={q.key} className={`world-pin ${q.refused ? "refused" : ""}`} title={q.refused ? `Couldn't be pinned: ${q.refused}` : q.text.includes("..") ? "Known to be in this range: only the draws where it is count" : "Pinned to this value: the same as typing it in"}>
+          {nameOf(q.node)}
+          {q.cell !== "value" ? ` ${q.cell}` : ""}: <b>{q.text.includes("..") ? `in ${q.text}` : q.text}</b>
+          {q.refused && " ⚠"}
+          <button className="icon" aria-label="Unpin" onClick={() => ws.pin(q.key, null)}>
+            ×
+          </button>
+        </span>
+      ))}
       {pinned > 0 && (
         <button className="link" onClick={() => ws.setWorld({})}>
           clear

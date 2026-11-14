@@ -220,6 +220,21 @@ impl Mdd {
         Some(out)
     }
 
+    /// `f` where some option of each of these variables makes it hold: they're no longer in it.
+    fn exists(&mut self, f: F, vars: &BTreeSet<u32>, memo: &mut HashMap<F, F>) -> F {
+        if f <= TRUE {
+            return f;
+        }
+        if let Some(&known) = memo.get(&f) {
+            return known;
+        }
+        let (var, kids) = self.nodes[f as usize].clone();
+        let kids: Vec<F> = kids.into_iter().map(|k| self.exists(k, vars, memo)).collect();
+        let out = if vars.contains(&var) { kids.into_iter().fold(FALSE, |acc, k| self.apply(acc, k, false)) } else { self.mk(var, kids) };
+        memo.insert(f, out);
+        out
+    }
+
     /// The ways a function holds, as "and"s of choices, up to `most` of them. There can be very many,
     /// so they're listed only as far as asked.
     fn terms(&self, f: F, label: &dyn Fn(&str) -> String, most: usize) -> Vec<String> {
@@ -565,6 +580,12 @@ impl Bool {
         Some(Cond { space: self.space.clone(), cases: cases.into_iter().filter(|(g, _)| *g != FALSE).collect() })
     }
 
+    /// The worlds where some way these choices could go makes this hold. They no longer appear in it.
+    pub fn exists(&self, vars: &[Var]) -> Bool {
+        let set: BTreeSet<u32> = vars.iter().map(|v| v.idx).collect();
+        Bool { space: self.space.clone(), f: self.space.lock().exists(self.f, &set, &mut HashMap::new()) }
+    }
+
     /// The worlds where this holds, among those consistent with `picks`. The picked choices no longer
     /// appear in it.
     pub fn given(&self, picks: &Picks) -> Bool {
@@ -728,6 +749,15 @@ impl<T: fmt::Debug> fmt::Debug for Cond<T> {
 }
 
 impl<T> Cond<T> {
+    /// What it comes to where `guard` holds, case by case: a case that holds nowhere there is gone. Unlike
+    /// `among`, the guards then cover only those worlds.
+    pub fn within(&self, guard: &Bool) -> Vec<(Bool, &T)> {
+        self.cases.iter().filter_map(|(g, v)| {
+            let f = self.space.and(*g, guard.f);
+            (f != FALSE).then(|| (Bool { space: self.space.clone(), f }, v))
+        }).collect()
+    }
+
     /// How many different values it has across worlds.
     pub fn len(&self) -> usize {
         self.cases.len()

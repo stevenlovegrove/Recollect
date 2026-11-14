@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Cell, type CellRef, type Dist, type VarView } from "../api";
 import type { Workspace } from "../workspace";
-import { casesOf, distOf, valueText } from "../bits";
+import { casesOf, distOf, estimateOf, valueText } from "../bits";
 
 /** One line: an option, and where to read its value as the input changes. */
 export type Line = { id: string; name: string; read: CellRef; world: Record<string, string> };
@@ -30,6 +30,8 @@ export function numberOf(cell: Cell | null | undefined, vars: VarView[]): number
   if (waitsOnAChoice(cell, vars)) return null;
   const d = distIn(cell);
   if (d) return d.mean;
+  const est = estimateOf(cell.value);
+  if (est) return est.value;
   const s = cell.shown;
   if (s?.kind === "cond") {
     const total = s.cases.reduce((t, c) => t + (typeof c.value === "number" ? c.when.prob : 0), 0);
