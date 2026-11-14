@@ -51,7 +51,7 @@ Connect Claude Code:
 claude mcp add --transport http recollect http://127.0.0.1:7878/mcp
 ```
 
-Then ask Claude to call `get_overview` and build or critique the graph. Its changes arrive in the **Inbox** tab as proposals, which you accept in full, accept in part, or reject. The same folder can be open in the static site at the same time: each sees the other's changes.
+Then ask Claude to call `get_overview` and build or critique the graph. Its changes arrive as proposals in the workspace's `proposals/` folder. ⚠ The app no longer has an Inbox to review them in, so for now set `llm_direct_writes = true` and let Claude use `apply`; each change can still be taken back from History. The same folder can be open in the static site at the same time: each sees the other's changes.
 
 UI development against the server: `RECOLLECT_BACKEND=http://127.0.0.1:7878 npm run dev` in `web/`. Vite serves on :5173 and proxies `/api` and `/mcp` to it.
 

@@ -12,18 +12,21 @@ import { WorkView } from "./views/WorkView";
 import { TimelineView } from "./views/TimelineView";
 import { ChecksView } from "./views/ChecksView";
 import { HistoryView } from "./views/HistoryView";
-import { InboxView } from "./views/InboxView";
 import { FilesView } from "./views/FilesView";
 import { EdgeInspector, Inspector, NewNodePanel, type NodeTemplate } from "./Inspector";
 import { parseEdgeKey, tickOp } from "./bits";
 import { ContextMenu, type CtxTarget } from "./ContextMenu";
 import { WorldBar } from "./WorldBar";
+import { ViewIcon } from "./ViewNav";
 import { SamplePicker, Welcome } from "./Welcome";
 import { isDropped, label } from "./theme";
 import { AskHost, askSure, askWhy } from "./Ask";
 import { BottomNav } from "./ViewNav";
 
-type Tab = "map" | "outline" | "table" | "worlds" | "decisions" | "work" | "timeline" | "checks" | "history" | "inbox" | "files";
+type Tab = "map" | "outline" | "table" | "worlds" | "decisions" | "work" | "timeline" | "checks" | "history" | "files";
+
+/** Views for looking after a workspace rather than working in it: reached from its menu, not the tabs. */
+const MENU_TABS: Tab[] = ["files", "history", "checks"];
 
 function hashTab(): Tab {
   return (location.hash.replace("#", "") || "map") as Tab;
@@ -61,12 +64,8 @@ export function App() {
     ...(view?.worlds.vars.length ? (["worlds"] as Tab[]) : []),
     ...(systems.includes("plan") ? (["decisions", "work"] as Tab[]) : []),
     ...(systems.includes("schedule") ? (["timeline"] as Tab[]) : []),
-    "checks",
-    "history",
-    "inbox",
-    "files",
   ];
-  const tab: Tab = tabs.includes(wanted) ? wanted : "map";
+  const tab: Tab = tabs.includes(wanted) || MENU_TABS.includes(wanted) ? wanted : "map";
   const setTab = useCallback((t: Tab) => setWanted(t), []);
 
   // The map stays mounted once opened, so its view, filters and search survive tab changes.
@@ -183,9 +182,13 @@ export function App() {
     decisions: blocking || open.length,
     checks: view.checks.length,
     work: ws.plan.work.filter((w) => w.standing === "now").length,
-    inbox: ws.proposals.length,
   };
-  const hot = (t: Tab) => t === "inbox" || (t === "decisions" && blocking > 0) || (t === "checks" && broken > 0);
+  const hot = (t: Tab) => (t === "decisions" && blocking > 0) || (t === "checks" && broken > 0);
+  const openMenuTab = (t: Tab) => {
+    setPicking(false);
+    setTab(t);
+    select(null);
+  };
 
   const body = (() => {
     const common = { ws, selected, onSelect: select };
@@ -208,8 +211,6 @@ export function App() {
         return <ChecksView {...common} />;
       case "history":
         return <HistoryView {...common} />;
-      case "inbox":
-        return <InboxView {...common} />;
       case "files":
         return <FilesView key={wsId} {...common} />;
     }
@@ -222,7 +223,10 @@ export function App() {
           <span className="logo">◇</span> <span className="brand-name">Recollect</span>{" "}
           <button className="ws-name" onClick={() => setPicking(!picking)} title={view.workspace.location}>
             <span className="brand-slash">/ </span>
-            <span className="ws-name-text">{view.workspace.name}</span> ▾
+            <span className="ws-name-text">{view.workspace.name}</span>
+            {MENU_TABS.includes(tab) && <span className="ws-name-view"> · {label(tab)}</span>} ▾
+            {/* Something broken can only come from a hand edit, and shouldn't go unseen behind a menu. */}
+            {broken > 0 && <span className="badge hot" title={`${broken} broken: see Checks`}>{broken}</span>}
           </button>
         </div>
         <nav className="tabs">
@@ -243,13 +247,14 @@ export function App() {
       </header>
       {ws.status.readOnly && <div className="at-bar">This workspace is open in another tab, so it can only be looked at here. Close it there, and this tab takes over.</div>}
       {ws.status.state === "failed" && <div className="at-bar error">{ws.status.error} It'll be tried again with the next change.</div>}
-      <WorldBar ws={ws} onShowWorlds={() => setTab("worlds")} />
+      {/* On the map the worlds are a chip over it instead. */}
+      {tab !== "map" && <WorldBar ws={ws} onShowWorlds={() => setTab("worlds")} />}
       {ws.error && <div className="error about-error">{ws.error}</div>}
       <main className="main">
         <section className="view">
           {mapOpened.current && (
             <div className={tab === "map" ? "map-layer" : "map-layer hidden"}>
-              <MapView key={mapKey} ws={ws} selected={selected} onSelect={select} active={tab === "map"} onContext={setCtx} onShowTable={showTable} />
+              <MapView key={mapKey} ws={ws} selected={selected} onSelect={select} active={tab === "map"} onContext={setCtx} onShowTable={showTable} onShowWorlds={() => setTab("worlds")} />
             </div>
           )}
           {body}
@@ -306,6 +311,15 @@ export function App() {
                 </button>
               </p>
             )}
+            <div className="ws-views">
+              {MENU_TABS.map((t) => (
+                <button key={t} className={t === tab ? "ws-view active" : "ws-view"} onClick={() => openMenuTab(t)}>
+                  <ViewIcon name={t} />
+                  {label(t)}
+                  {counts[t] ? <span className={hot(t) ? "badge hot" : "badge"}>{counts[t]}</span> : null}
+                </button>
+              ))}
+            </div>
             <hr className="menu-divider" />
             <SamplePicker ws={ws} onOpened={() => setPicking(false)} ownFirst />
           </div>

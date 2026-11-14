@@ -1,21 +1,31 @@
 import type { Workspace } from "./workspace";
 import { DdItemButton, Dropdown } from "./Dropdown";
 import { BELIEF_MEANS, beliefText } from "./bits";
+import { ViewIcon } from "./ViewNav";
 
 const FEW = 5;
 
-/** Which world everything on screen is narrowed to. It's the app's one what-if, and saves nothing. */
-export function WorldBar({ ws, onShowWorlds }: { ws: Workspace; onShowWorlds: () => void }) {
+function worldsOf(ws: Workspace) {
   const w = ws.view!.worlds;
   const quantities = w.quantities ?? [];
-  if (!w.vars.length && !quantities.length) return null;
   const pinned = Object.keys(w.picks).length + quantities.length;
+  return { w, quantities, pinned, any: w.vars.length > 0 || quantities.length > 0 };
+}
+
+function countText(count: string) {
+  return (
+    <>
+      <b>{count === "0" ? "No worlds" : Number(count).toLocaleString()}</b> {count === "1" ? "world" : count === "0" ? "fit" : "worlds"}
+    </>
+  );
+}
+
+/** The choices and pins themselves: what the bar and the chip both hold. */
+function WorldChoices({ ws }: { ws: Workspace }) {
+  const { w, quantities, pinned } = worldsOf(ws);
   const nameOf = (id: string) => ws.byId.get(id)?.name ?? "something";
   return (
-    <div className={`world-bar ${pinned ? "narrowed" : ""}`}>
-      <button className="world-bar-count" onClick={onShowWorlds} title="See every choice">
-        <b>{w.count === "0" ? "No worlds" : Number(w.count).toLocaleString()}</b> {w.count === "1" ? "world" : w.count === "0" ? "fit" : "worlds"}
-      </button>
+    <>
       {w.vars.length <= FEW ? (
         w.vars.map((v) => {
           const picked = v.options.find((o) => o.picked);
@@ -61,6 +71,45 @@ export function WorldBar({ ws, onShowWorlds }: { ws: Workspace; onShowWorlds: ()
         </button>
       )}
       {pinned > 0 && <span className="muted small world-bar-note">Showing what's true if so. Nothing is saved.</span>}
+    </>
+  );
+}
+
+/** Which world everything on screen is narrowed to. It's the app's one what-if, and saves nothing. */
+export function WorldBar({ ws, onShowWorlds }: { ws: Workspace; onShowWorlds: () => void }) {
+  const { w, pinned, any } = worldsOf(ws);
+  if (!any) return null;
+  return (
+    <div className={`world-bar ${pinned ? "narrowed" : ""}`}>
+      <button className="world-bar-count" onClick={onShowWorlds} title="See every choice">
+        {countText(w.count)}
+      </button>
+      <WorldChoices ws={ws} />
     </div>
+  );
+}
+
+/** The same, folded into a chip over the map, across from its view options. A dot says the map is
+ *  narrowed to some worlds even while the chip is folded, so it never looks like all of them. */
+export function WorldChip({ ws, open, onToggle, onShowWorlds }: { ws: Workspace; open: boolean; onToggle: () => void; onShowWorlds: () => void }) {
+  const { w, pinned, any } = worldsOf(ws);
+  if (!any) return null;
+  return (
+    <>
+      <button className={`world-chip ${open ? "open" : ""} ${pinned ? "narrowed" : ""}`} onClick={onToggle} aria-expanded={open} title={open ? "Hide the worlds" : "Narrow to some worlds"}>
+        <ViewIcon name="worlds" />
+        <span className="world-chip-count">{countText(w.count)}</span>
+      </button>
+      {open && (
+        <div className={`world-pop ${pinned ? "narrowed" : ""}`}>
+          <WorldChoices ws={ws} />
+          {w.vars.length > 0 && (
+            <button className="link world-pop-all" onClick={onShowWorlds}>
+              See every choice →
+            </button>
+          )}
+        </div>
+      )}
+    </>
   );
 }

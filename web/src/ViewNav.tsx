@@ -48,7 +48,6 @@ const ICONS: Record<string, ReactNode> = {
       <path d="M4 4.5v4.9h4.9M12 8v4.5l3 2" {...P} />
     </>
   ),
-  inbox: <path d="M3.5 13.5 6 5h12l2.5 8.5v5h-17zM3.5 13.5H9l1 2h4l1-2h5.5" {...P} />,
   files: (
     <>
       <path d="M6 3.5h8l4.5 4.5v12.5H6z" {...P} />
@@ -84,7 +83,7 @@ type Props<T extends string> = {
  *  systems make most worth reaching. */
 function pinned<T extends string>(tabs: T[]): T[] {
   const first = (["map", "outline", "table"] as string[]).filter((t) => tabs.includes(t as T)) as T[];
-  const fourth = (["decisions", "worlds", "timeline", "checks"] as string[]).find((t) => tabs.includes(t as T)) as T | undefined;
+  const fourth = (["decisions", "worlds", "timeline"] as string[]).find((t) => tabs.includes(t as T)) as T | undefined;
   return fourth ? [...first, fourth] : first;
 }
 

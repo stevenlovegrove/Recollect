@@ -25,6 +25,7 @@ import { type SummaryLine, summaryOf } from "../summary";
 import { DdItem, Dropdown } from "../Dropdown";
 import { Key, isTyping } from "../Shortcuts";
 import type { CtxTarget } from "../ContextMenu";
+import { WorldChip } from "../WorldBar";
 
 export interface ViewProps {
   ws: Workspace;
@@ -535,7 +536,9 @@ function LinkMenu({ ws, drop, onSwap, onDone }: { ws: Workspace; drop: LinkDrop;
   );
 }
 
-function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: ViewProps & { active: boolean; onContext: (t: CtxTarget) => void; onShowTable?: (name: string) => void }) {
+type MapProps = ViewProps & { active: boolean; onContext: (t: CtxTarget) => void; /** Show a table's grid, by its name. */ onShowTable?: (name: string) => void; onShowWorlds: () => void };
+
+function MapInner({ ws, selected, onSelect, active, onContext, onShowTable, onShowWorlds }: MapProps) {
   const view = ws.view!;
   // A row nobody wrote is on the map when something written reads it, and only then.
   const g = useMemo(() => ({ ...view, nodes: [...view.nodes, ...view.unwritten] }), [view]);
@@ -646,8 +649,10 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Vi
   const [showDead, setShowDead] = useState(false);
   const [focus, setFocus] = useState(0);
   const [query, setQuery] = useState("");
-  // On a phone the toolbar is a bubble over the map, shown when wanted.
-  const [opts, setOpts] = useState(false);
+  // The view options and the worlds are each a chip over the map, opened when wanted, one at a time.
+  const [panel, setPanel] = useState<"opts" | "worlds" | null>(null);
+  const opts = panel === "opts";
+  const togglePanel = (p: "opts" | "worlds") => setPanel((cur) => (cur === p ? null : p));
   // Laid-out node list (ids + sizes) and the positions currently on screen (animated).
   const [layout, setLayout] = useState<{ ids: string[]; target: Map<string, XY> }>({ ids: [], target: new Map() });
   const [pos, setPos] = useState<Map<string, XY>>(new Map());
@@ -876,7 +881,12 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Vi
       else if (e.key === "ArrowRight") moveSelection(1, 0);
       else if (e.key === "ArrowUp") moveSelection(0, -1);
       else if (e.key === "ArrowDown") moveSelection(0, 1);
-      else if (e.key === "/") searchRef.current?.focus();
+      else if (e.key === "/") {
+        e.preventDefault();
+        setPanel("opts");
+        // Once the options are on screen.
+        requestAnimationFrame(() => searchRef.current?.focus());
+      }
       else if (e.key === "m") setMini({ ...loadMini(), open: !loadMini().open });
       else if (e.key === "z") {
         if (!selectedNode) return;
@@ -1255,7 +1265,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Vi
     <div className="map">
       <button
         className={`opts-toggle ${opts ? "open" : ""} ${query || hiddenFacts.size || hiddenRels.size || focus ? "narrowed" : ""}`}
-        onClick={() => setOpts(!opts)}
+        onClick={() => togglePanel("opts")}
         aria-expanded={opts}
         aria-label={opts ? "Hide view options" : "View options"}
         title="View options"
@@ -1266,6 +1276,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Vi
           <circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
         </svg>
       </button>
+      <WorldChip ws={ws} open={panel === "worlds"} onToggle={() => togglePanel("worlds")} onShowWorlds={onShowWorlds} />
       <div className={`map-toolbar nowrap ${opts ? "opts-open" : ""}`}>
         <span className="key-host search-host">
           <Key k="/" />
@@ -1512,7 +1523,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Vi
   );
 }
 
-export function MapView(props: ViewProps & { active: boolean; onContext: (t: CtxTarget) => void; /** Show a table's grid, by its name. */ onShowTable?: (name: string) => void }) {
+export function MapView(props: MapProps) {
   return (
     <ReactFlowProvider>
       <MapInner {...props} />

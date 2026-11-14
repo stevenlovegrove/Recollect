@@ -61,18 +61,22 @@ A cell holds a typed value or a formula, and that's the same whether a person wr
 | **Decisions** | Each decision, what each option needs, and whether it's holding work up. Deciding shows what it would change first | `plan` |
 | **Work** | Tasks by where they stand: can start, depends on a decision, waiting, finished, not needed | `plan` |
 | **Timeline** | Dates as a chart, with hatching for how far a date could move | `schedule` |
-| **Checks** | Invariants that are broken, and notices worth a look | Always |
-| **History** | Every change since the workspace was opened, with undo and redo (⌘Z, ⇧⌘Z), and any one change can be taken back on its own | Always |
-| **Inbox** | Changes proposed for review, accepted whole or in part | Always |
-| **Files** | The workspace's files as they are, read-only, for debugging | Always |
 
-The world bar above them all says what everything's narrowed to.
+Three more look after the workspace rather than work in it, so they're reached from its menu (its name, top left) rather than the tabs:
+
+| View | Shows |
+|---|---|
+| **Files** | The workspace's files as they are, read-only, for debugging |
+| **History** | Every change since the workspace was opened, with undo and redo (⌘Z, ⇧⌘Z), and any one change can be taken back on its own |
+| **Checks** | Invariants that are broken, and notices worth a look. Anything broken also shows as a count on the workspace's name, so it isn't hidden by the menu |
+
+The world bar above the views says what everything's narrowed to. On the map it folds into a chip at the top left, across from the chip for the map's own view options (search, which nodes and links, focus) at the top right; each has a dot when it's narrowing what's shown.
 
 ## Claude, over MCP
 
 `recollect serve` serves the web UI and an MCP server at `/mcp`, so the UI updates live as Claude works. A browser with the same folder open sees Claude's changes too, as changes to the files. Claude reads with `get_overview`, `get_node`, `get_tree`, `get_work`, `get_decisions`, `read_world`, `find_checks`, `get_history` and search, most of which take a world, so it can answer a what-if the same way the app does.
 
-It writes with `propose`, whose change-set is checked as if committed, and lands in the inbox with its rationale. A formula with a type error or an unknown input is refused there, with the reason. `apply` writes directly, only if the workspace sets `llm_direct_writes = true`. Ops are the log's seven (`spawn`, `despawn`, `add`, `remove`, `link`, `unlink` and `set`), plus a little to make them easier to write: names for handles, `new:x` for a node that doesn't exist yet, `add_node`, `delete_node`, `table`, and `formula` with `labels` to set a formula and say what its names mean as one change. Writing in a cell of a component a node doesn't have gives it that component. See `crates/recollect-core/src/ops.rs`.
+It writes with `propose`, whose change-set is checked as if committed, and lands in `proposals/` with its rationale (⚠ the app has no view to review these since the Inbox was removed). A formula with a type error or an unknown input is refused there, with the reason. `apply` writes directly, only if the workspace sets `llm_direct_writes = true`. Ops are the log's seven (`spawn`, `despawn`, `add`, `remove`, `link`, `unlink` and `set`), plus a little to make them easier to write: names for handles, `new:x` for a node that doesn't exist yet, `add_node`, `delete_node`, `table`, and `formula` with `labels` to set a formula and say what its names mean as one change. Writing in a cell of a component a node doesn't have gives it that component. See `crates/recollect-core/src/ops.rs`.
 
 Whichever way a change arrives, the rules are the same: it's all or nothing, and only what it newly breaks is refused, so a hand edit that broke something doesn't block other work.
 

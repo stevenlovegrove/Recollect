@@ -776,42 +776,7 @@ pre {
   margin-top: 5px;
 }
 
-/* inbox */
-.proposal {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px 16px;
-  margin-bottom: 16px;
-  max-width: 900px;
-}
-.proposal header {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.proposal h3 {
-  margin: 0;
-}
-.rationale {
-  color: var(--muted);
-}
-.ops {
-  padding-left: 0;
-  list-style: none;
-}
-.ops li {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border);
-}
-.ops input {
-  margin-top: 3px;
-}
+/* a change, as history lists it */
 .op {
   display: flex;
   gap: 6px;
@@ -3572,6 +3537,34 @@ button.icon.act.revert:hover {
   margin: 4px 0 8px;
   line-height: 1.45;
 }
+/* Its own views: files, history and checks. */
+.ws-views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.ws-view {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ws-view .view-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+}
+.ws-view.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.ws-name-view {
+  color: var(--muted);
+  font-weight: normal;
+}
+.ws-name .badge {
+  margin-left: 4px;
+}
 .menu-divider {
   border: none;
   border-top: 1px solid var(--border);
@@ -3588,60 +3581,115 @@ button.icon.act.revert:hover {
   margin-bottom: -10px;
 }
 
-/* ---------- the map's view options ---------- */
+/* ---------- the map's chips: view options on the right, worlds on the left ---------- */
+.map {
+  position: relative;
+}
+/* Round buttons over the map, each with a dot when it narrows what's shown, so a narrowed map
+   never looks like the whole of it. */
+.opts-toggle,
+.world-chip {
+  position: absolute;
+  top: 10px;
+  z-index: 12;
+  height: 40px;
+  color: var(--muted);
+  background: var(--panel);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
 .opts-toggle {
+  display: grid;
+  place-items: center;
+  right: 10px;
+  width: 40px;
+  padding: 0;
+  border-radius: 50%;
+}
+.world-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  left: 10px;
+  max-width: calc(50% - 20px);
+  padding: 0 14px 0 9px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.world-chip .view-icon {
+  flex: none;
+}
+.world-chip-count {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.opts-toggle.open,
+.world-chip.open {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+/* The tint is see-through, so it's laid over the panel rather than the map. */
+.world-chip.narrowed,
+.world-pop.narrowed {
+  background: linear-gradient(var(--hl), var(--hl)), var(--panel);
+}
+.opts-toggle.narrowed::after,
+.world-chip.narrowed::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--panel);
+}
+.map > .map-toolbar,
+.world-pop {
+  position: absolute;
+  top: 58px;
+  z-index: 12;
+  width: min(560px, calc(100% - 20px));
+  flex-wrap: wrap;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--panel);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  animation: opts-in 0.15s ease;
+}
+.map > .map-toolbar {
   display: none;
+  right: 10px;
+}
+.map > .map-toolbar.opts-open {
+  display: flex;
+}
+.map > .map-toolbar .map-hint {
+  flex-basis: 100%;
+  margin-left: 0;
+}
+.world-pop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  left: 10px;
+}
+.world-pop .world-bar-note {
+  flex-basis: 100%;
+  margin-left: 0;
+}
+.world-pop-all {
+  flex-basis: 100%;
+  text-align: left;
 }
 @media (max-width: 760px) {
-  .map {
-    position: relative;
-  }
-  /* A round button over the map, with a dot when something is filtered out, so a narrowed map
-     never looks like the whole of it. */
-  .opts-toggle {
-    display: grid;
-    place-items: center;
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    z-index: 12;
-    width: 40px;
-    height: 40px;
-    padding: 0;
-    border-radius: 50%;
-    color: var(--muted);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  }
-  .opts-toggle.open {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-  .opts-toggle.narrowed::after {
-    content: "";
-    position: absolute;
-    top: 3px;
-    right: 3px;
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: var(--accent);
-    border: 2px solid var(--panel);
-  }
-  .map > .map-toolbar {
-    display: none;
-    position: absolute;
-    top: 58px;
+  .map > .map-toolbar,
+  .world-pop {
     left: 10px;
     right: 10px;
-    z-index: 12;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 10px;
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
-    animation: opts-in 0.15s ease;
-  }
-  .map > .map-toolbar.opts-open {
-    display: flex;
+    width: auto;
   }
 }
 @keyframes opts-in {
