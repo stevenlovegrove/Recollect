@@ -1,0 +1,18 @@
+id: 01a1d8b0-29e0-702f-9843-0667efe06afa
+components:
+- notes
+cells:
+  body: |-
+    Two bus routes, each with a bus every ten minutes on average. One runs to a timetable. The other's buses come whenever they come.
+
+    - **On a timetable**, you turn up at a random moment and wait anywhere from nothing to ten minutes, equally: `uniform(0, 10)`. That's what a uniform is for: something known to be within a range, and no likelier anywhere in it.
+    - **At random**, the wait is `exponential(10)`. That's what an exponential is for: the time until something that's as likely to happen in any minute as in any other, such as a bus, a phone call, or a part failing.
+
+    The surprise is the average. On a timetable it's five minutes. At random it's ten: you're more likely to turn up in one of the long gaps than one of the short ones.
+
+    **Things to try**
+
+    - Compare the two **Average wait** cards: 5 and 10, both exact.
+    - Look at **Over a quarter of an hour**: never on a timetable, and 22% of the time at random.
+    - Select **Random buses** and pin it to `10..`, to say you've already waited ten minutes. Its average wait becomes about 20: the ten you've waited, and ten more. Waiting longer doesn't bring a random bus any closer.
+  name: About this example

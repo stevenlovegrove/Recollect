@@ -1,0 +1,25 @@
+id: 01a1d8b0-29ed-740c-939b-870eb9f79d24
+components:
+- notes
+- value
+cells:
+  body: All three. A sum of triangulars has no name, so it's read from draws, and says so.
+  name: Total
+formulas:
+  value: sum(job)
+links:
+- to: 01a1d8b0-29ed-740c-939b-870d997f72f1
+  components:
+  - label
+  cells:
+    called: job
+- to: 01a1d8b0-29ed-740c-939b-870fe7190c59
+  components:
+  - label
+  cells:
+    called: job
+- to: 01a1d8b0-29ed-740c-939b-87100354166d
+  components:
+  - label
+  cells:
+    called: job

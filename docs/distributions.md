@@ -254,5 +254,10 @@ Anything else is read from 4,096 draws. Each draw's values are spread evenly, on
 | **Choosing a supplier** | A choice over quotes held three ways: a plain number, a three-point guess, and a price with extras. One is exact and two are read from draws |
 | **Will the shelf fit?** | Two measurements subtracted, which is a bell curve, and questions a law answers. A cell less itself is exactly nothing |
 | **Two dice** | Short lists: eleven totals with exact chances, and what finding out one die says about the rest |
+| **Waiting for a bus** | `uniform` for a known range and `exponential` for a wait: buses at random keep you waiting twice as long on average |
+| **Filling bottles** | `normal` for a measurement: how often one is short, and why six added are hardly ever, where one counted six times is |
+| **First-year sales** | `lognormal` for what grows by multiplying: an average above its middle, halving as likely as doubling, and a loss that's still exact |
+| **Making the connection** | `bernoulli` for what happens or doesn't: three likely legs, a much less likely journey, and `chance` for each choice of train |
+| **Painting a room** | `triangular` for a three-point guess: adding the likeliest of each underestimates the total |
 
 `tests/samples.rs` checks each says what it claims.

@@ -1,0 +1,15 @@
+id: 01a1d8b0-29ed-740c-939b-8712898dd458
+components:
+- notes
+- value
+cells:
+  body: Eight hours or less. Less likely than not, though the likeliest of each adds up to seven.
+  name: Done in a working day
+formulas:
+  value: t <= 8
+links:
+- to: 01a1d8b0-29ed-740c-939b-870eb9f79d24
+  components:
+  - label
+  cells:
+    called: t

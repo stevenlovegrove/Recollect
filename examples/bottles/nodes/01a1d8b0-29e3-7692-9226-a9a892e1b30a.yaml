@@ -1,0 +1,15 @@
+id: 01a1d8b0-29e3-7692-9226-a9a892e1b30a
+components:
+- notes
+- value
+cells:
+  body: 'How often a bottle is under what its label says: 9% of the time. A normal answers it exactly.'
+  name: Short of 500 ml
+formulas:
+  value: b < 500
+links:
+- to: 01a1d8b0-29e3-7692-9226-a9a7a687003b
+  components:
+  - label
+  cells:
+    called: b

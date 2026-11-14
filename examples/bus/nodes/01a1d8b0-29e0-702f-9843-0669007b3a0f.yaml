@@ -1,0 +1,9 @@
+id: 01a1d8b0-29e0-702f-9843-0669007b3a0f
+components:
+- notes
+- value
+cells:
+  body: Minutes until the next bus, when buses come as likely in any minute as any other, ten minutes apart on average. Usually short, and now and then very long.
+  name: Random buses
+formulas:
+  value: exponential(10)

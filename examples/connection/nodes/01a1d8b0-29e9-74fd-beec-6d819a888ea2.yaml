@@ -1,0 +1,28 @@
+id: 01a1d8b0-29e9-74fd-beec-6d819a888ea2
+components:
+- value
+cells:
+  name: You make it
+formulas:
+  value: a && b && (later.chosen.value = "Yes" || c)
+links:
+- to: 01a1d8b0-29e8-753c-939e-4f11f978643e
+  components:
+  - label
+  cells:
+    called: a
+- to: 01a1d8b0-29e9-74fd-beec-6d7d6a02fdfd
+  components:
+  - label
+  cells:
+    called: b
+- to: 01a1d8b0-29e9-74fd-beec-6d7e2edd092e
+  components:
+  - label
+  cells:
+    called: c
+- to: 01a1d8b0-29e9-74fd-beec-6d8051662a1b
+  components:
+  - label
+  cells:
+    called: later

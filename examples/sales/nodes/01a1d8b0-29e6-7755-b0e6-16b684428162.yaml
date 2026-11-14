@@ -1,0 +1,15 @@
+id: 01a1d8b0-29e6-7755-b0e6-16b684428162
+components:
+- notes
+cells:
+  body: |-
+    A new product's first-year sales: most likely about £50,000, and could easily be half that or double it.
+
+    A lognormal is for something that grows by multiplying: sales, prices, populations, the size of files. It can't go below nothing, and it has a long tail upwards. Here it's `lognormal(ln(50000), 0.7)`: its middle is £50,000, and halving it is exactly as likely as doubling it.
+
+    **Things to try**
+
+    - Compare **Average sales** with the middle, £50,000. The average is £64,000, because the long tail pulls it up.
+    - Compare **Under half** with **Over double**: the same, 16% each.
+    - Select **Profit**: 30% of sales, less £10,000 of costs. It's a lognormal moved along, so how likely a loss is, is still exact.
+  name: About this example

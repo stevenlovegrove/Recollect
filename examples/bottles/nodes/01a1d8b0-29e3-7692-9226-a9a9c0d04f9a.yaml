@@ -1,0 +1,9 @@
+id: 01a1d8b0-29e3-7692-9226-a9a9c0d04f9a
+components:
+- notes
+- value
+cells:
+  body: 'Six bottles, each written as its own draw. The total is a normal too: 3,012 ml give or take 3.7, not give or take 9.'
+  name: A six-pack
+formulas:
+  value: normal(502, 1.5) + normal(502, 1.5) + normal(502, 1.5) + normal(502, 1.5) + normal(502, 1.5) + normal(502, 1.5)

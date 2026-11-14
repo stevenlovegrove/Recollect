@@ -105,7 +105,7 @@ export function Hist({ d, wide }: { d: Dist; wide?: boolean }) {
   return (
     <svg className={`hist ${d.exact ? "" : "drawn"}`} width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={`From ${figures(from)} to ${figures(to)}${zero !== null ? ", either side of nothing" : ""}`}>
       {d.hist.bars.map((b, i) => (
-        <rect key={i} x={i * each} y={h - (b / top) * h} width={Math.max(each - 0.5, 0.5)} height={(b / top) * h} className={zero !== null && (i + 1) * each <= zero ? "below-zero" : undefined} />
+        <rect key={i} x={i * each} y={h - (b / top) * h} width={Math.max(each - 0.5, 0.5)} height={(b / top) * h} />
       ))}
       {zero !== null && (
         <line x1={zero} x2={zero} y1={0} y2={h} className="hist-zero">

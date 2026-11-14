@@ -1,0 +1,3 @@
+name = "Waiting for a bus"
+about = "Exponential and uniform: buses that come at random against buses on a timetable, every ten minutes either way. One keeps you waiting twice as long on average."
+systems = []

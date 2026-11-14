@@ -1,0 +1,15 @@
+id: 01a1d8b0-29e6-7755-b0e6-16bbc88f9c3d
+components:
+- notes
+- value
+cells:
+  body: 30% of sales, less £10,000. It can go below nothing, though sales can't.
+  name: Profit
+formulas:
+  value: s * 0.3 - 10000
+links:
+- to: 01a1d8b0-29e6-7755-b0e6-16b76e02ac18
+  components:
+  - label
+  cells:
+    called: s

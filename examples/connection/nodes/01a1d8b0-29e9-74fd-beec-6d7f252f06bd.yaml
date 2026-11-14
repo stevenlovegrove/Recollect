@@ -1,0 +1,25 @@
+id: 01a1d8b0-29e9-74fd-beec-6d7f252f06bd
+components:
+- notes
+- value
+cells:
+  body: '85%, 90% and 95%, all together: 73%, exactly. A chain is weaker than any of its links.'
+  name: Everything on time
+formulas:
+  value: a && b && c
+links:
+- to: 01a1d8b0-29e8-753c-939e-4f11f978643e
+  components:
+  - label
+  cells:
+    called: a
+- to: 01a1d8b0-29e9-74fd-beec-6d7d6a02fdfd
+  components:
+  - label
+  cells:
+    called: b
+- to: 01a1d8b0-29e9-74fd-beec-6d7e2edd092e
+  components:
+  - label
+  cells:
+    called: c

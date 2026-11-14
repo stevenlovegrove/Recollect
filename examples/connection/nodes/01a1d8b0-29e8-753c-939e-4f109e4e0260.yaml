@@ -1,0 +1,15 @@
+id: 01a1d8b0-29e8-753c-939e-4f109e4e0260
+components:
+- notes
+cells:
+  body: |-
+    A journey in three legs: a flight, a second flight, and a train. Each is on time or it isn't, so each is a `bernoulli`: true this often.
+
+    A bernoulli is for anything that happens or doesn't: a flight on time, a test passing, rain on the day. Each one here is a short list of two outcomes, so everything worked out from them is exact.
+
+    **Things to try**
+
+    - Select **Everything on time**: 73%. Each leg is likely, and all three together much less so.
+    - Pin **Book the later train?** in the bar at the top. With the later train, the train leg can't be missed, and **Chance of making it** goes up from 73% to 77%.
+    - Pin **First flight on time** to false in the bar at the top: that's finding it out, and it's the end of the journey.
+  name: About this example

@@ -1,0 +1,9 @@
+id: 01a1d8b0-29e6-7755-b0e6-16b76e02ac18
+components:
+- notes
+- value
+cells:
+  body: 'Pounds in the first year. Its middle is £50,000: as likely to be under that as over.'
+  name: Sales
+formulas:
+  value: lognormal(ln(50000), 0.7)

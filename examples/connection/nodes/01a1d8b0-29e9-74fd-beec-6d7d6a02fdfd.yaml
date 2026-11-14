@@ -1,0 +1,9 @@
+id: 01a1d8b0-29e9-74fd-beec-6d7d6a02fdfd
+components:
+- notes
+- value
+cells:
+  body: 90% of the time.
+  name: Second flight on time
+formulas:
+  value: bernoulli(0.9)

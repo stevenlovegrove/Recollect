@@ -1,0 +1,15 @@
+id: 01a1d8b0-29e3-7692-9226-a9a69a97612d
+components:
+- notes
+cells:
+  body: |-
+    A machine fills bottles labelled 500 ml. No machine fills every one the same, so it's set to 502 ml, and each bottle comes out a little over or under: `normal(502, 1.5)`.
+
+    A normal is for something that's the sum of many small things pulling either way, such as a measurement, a machine's wobble, or how tall people are. It's symmetrical, and two of them added are a normal again.
+
+    **Things to try**
+
+    - Select **Short of 500 ml**: 9% of bottles, exactly.
+    - Compare **A six-pack** with **One bottle, six times**. A six-pack is six bottles, each its own draw, so their wobbles partly cancel and it's hardly ever short. One bottle six times is the same draw six times, so nothing cancels.
+    - Change the 1.5 in **One bottle** and see how fast the short ones go.
+  name: About this example

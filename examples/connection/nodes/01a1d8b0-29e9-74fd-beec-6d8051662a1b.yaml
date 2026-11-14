@@ -1,0 +1,11 @@
+id: 01a1d8b0-29e9-74fd-beec-6d8051662a1b
+components:
+- decision
+- notes
+- options
+cells:
+  body: Yours to choose. The later train costs an evening, and can't be missed.
+  name: Book the later train?
+  options:
+  - No
+  - Yes

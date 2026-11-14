@@ -1,0 +1,9 @@
+id: 01a1d8b0-29ed-740c-939b-870fe7190c59
+components:
+- notes
+- value
+cells:
+  body: Probably three hours.
+  name: First coat
+formulas:
+  value: triangular(2, 3, 5)

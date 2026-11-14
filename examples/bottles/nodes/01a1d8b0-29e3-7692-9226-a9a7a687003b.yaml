@@ -1,0 +1,9 @@
+id: 01a1d8b0-29e3-7692-9226-a9a7a687003b
+components:
+- notes
+- value
+cells:
+  body: How much goes in, in millilitres. Set to 502 to stay over 500, give or take 1.5.
+  name: One bottle
+formulas:
+  value: normal(502, 1.5)

@@ -24,9 +24,14 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "handbook", title: "Publishing a handbook", about: "A first plan to read: a team publishing a handbook, with one decision held open.", group: "plan", systems: &["plan", "schedule"], build: handbook },
     Sample { name: "critical-path", title: "Critical path", about: "A plain schedule with no decisions: dates go forward over the dependencies, and slack comes from following them backward.", group: "plan", systems: &["plan", "schedule"], build: critical_path },
     Sample { name: "launch", title: "A launch, give or take", about: "A plan whose estimates are guesses with a least, a likeliest and a most: what they add up to, when it's likely to end, and how likely that is to be within a fortnight.", group: "plan", systems: &["plan", "schedule"], build: launch },
-    Sample { name: "savings", title: "Savings, give or take", about: "A table of years that grow by an uncertain amount. Growth drawn afresh each year averages out, and one rate drawn once compounds, so the same formula ends up far wider. Both are exact.", group: "sheet", systems: &[], build: savings },
+    Sample { name: "bus", title: "Waiting for a bus", about: "Exponential and uniform: buses that come at random against buses on a timetable, every ten minutes either way. One keeps you waiting twice as long on average.", group: "chance", systems: &[], build: bus },
+    Sample { name: "bottles", title: "Filling bottles", about: "Normal: a machine that fills each bottle a little differently. How often one is short, and why a six-pack hardly ever is.", group: "chance", systems: &[], build: bottles },
+    Sample { name: "sales", title: "First-year sales", about: "Lognormal: a number that grows by multiplying, so it can't go below nothing and has a long tail. Its average is above its middle, and halving is as likely as doubling.", group: "chance", systems: &[], build: sales },
+    Sample { name: "connection", title: "Making the connection", about: "Bernoulli: three legs of a journey, each on time or not. How likely all three are, and how much a later train buys you.", group: "chance", systems: &["plan"], build: connection },
+    Sample { name: "painting", title: "Painting a room", about: "Triangular: three-point guesses at each job. Adding up the likeliest of each says seven hours, which is less than it'll usually take.", group: "chance", systems: &[], build: painting },
+    Sample { name: "savings", title: "Savings, give or take", about: "A table of years that grow by an uncertain amount. Growth drawn afresh each year averages out, and one rate drawn once compounds, so the same formula ends up far wider. Both are exact.", group: "chance", systems: &[], build: savings },
     Sample { name: "supplier", title: "Choosing a supplier", about: "Three quotes held three ways: a plain number, a three-point guess, and a price with extras. What each comes to with shipping, and how likely it is to be within budget.", group: "sheet", systems: &["plan"], build: supplier },
-    Sample { name: "shelf", title: "Will the shelf fit?", about: "Two measurements, each a little uncertain: how much clearance there is, and how likely there is to be any.", group: "sheet", systems: &[], build: shelf },
+    Sample { name: "shelf", title: "Will the shelf fit?", about: "Two measurements, each a little uncertain: how much clearance there is, and how likely there is to be any.", group: "chance", systems: &[], build: shelf },
     Sample { name: "invoice", title: "Invoice", about: "Two lines, a subtotal, tax and a total. Edit a number and only what it reaches reruns.", group: "sheet", systems: &[], build: invoice },
     Sample { name: "trip-budget", title: "Trip budget", about: "A budget with decisions left open: the total is exact in every world, and so is what would put it over.", group: "sheet", systems: &["plan"], build: trip_budget },
     Sample { name: "choosing-a-car", title: "Choosing a car", about: "Petrol and electric cars as tables: what every car has, and what only petrol or electric cars have. What each costs a year over mileage you can only guess at, and which can get to Edinburgh without stopping.", group: "sheet", systems: &["plan"], build: choosing_a_car },
@@ -37,7 +42,7 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "sudoku", title: "4×4 sudoku", about: "A table of sixteen cells, each choosing a number, and a clue for each row, column and box: distinct(Cell[A1].chosen, Cell[A2].chosen, …). There are 288 grids.", group: "puzzle", systems: &[], build: sudoku },
     Sample { name: "knights-and-knaves", title: "Knights and knaves", about: "A says “we are both knaves”. Knights always tell the truth, and knaves always lie.", group: "puzzle", systems: &[], build: knights_and_knaves },
     Sample { name: "case-file", title: "The Vane watch", about: "A watch has gone missing: three suspects, conflicting accounts, and what's most worth finding out.", group: "reasoning", systems: &["plan"], build: case_file },
-    Sample { name: "two-dice", title: "Two dice", about: "A die is a short list, so everything worked out from two of them is exact: eleven totals, each with its chance, and what finding out one die says about the rest.", group: "reasoning", systems: &[], build: two_dice },
+    Sample { name: "two-dice", title: "Two dice", about: "A die is a short list, so everything worked out from two of them is exact: eleven totals, each with its chance, and what finding out one die says about the rest.", group: "chance", systems: &[], build: two_dice },
     Sample { name: "monty-hall", title: "Monty Hall", about: "Three doors and one car: should you switch after Monty opens a door?", group: "reasoning", systems: &["plan"], build: monty_hall },
     Sample { name: "medical-test", title: "The positive test", about: "A positive result from a test that's 90% accurate: how likely is it that you have the condition?", group: "reasoning", systems: &["plan"], build: medical_test },
     Sample { name: "bertrands-box", title: "Bertrand's box", about: "You draw a gold coin from one of three boxes: how likely is the other coin in it to be gold?", group: "reasoning", systems: &["plan"], build: bertrands_box },
@@ -50,7 +55,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "30";
+pub const FORMAT: &str = "31";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -250,6 +255,122 @@ A histogram that's solid is exact. A paler one was read from 4,096 draws, and ho
     b.formula(end, "goal.finish").label(end, goal, "goal").note(end, "When the goal is finished, which is when the last of its parts is. The build waits for the design, and the review for the build and the copy, so this is the later of two chains.");
     let soon = "Done within a fortnight";
     b.formula(soon, "end <= 14").label(soon, end, "end").note(soon, "True in some draws and false in others, so what it says is how likely. It was read from draws, and says so.");
+}
+
+fn bus(b: &mut Build) {
+    about(b, r#"Two bus routes, each with a bus every ten minutes on average. One runs to a timetable. The other's buses come whenever they come.
+
+- **On a timetable**, you turn up at a random moment and wait anywhere from nothing to ten minutes, equally: `uniform(0, 10)`. That's what a uniform is for: something known to be within a range, and no likelier anywhere in it.
+- **At random**, the wait is `exponential(10)`. That's what an exponential is for: the time until something that's as likely to happen in any minute as in any other, such as a bus, a phone call, or a part failing.
+
+The surprise is the average. On a timetable it's five minutes. At random it's ten: you're more likely to turn up in one of the long gaps than one of the short ones.
+
+**Things to try**
+
+- Compare the two **Average wait** cards: 5 and 10, both exact.
+- Look at **Over a quarter of an hour**: never on a timetable, and 22% of the time at random.
+- Select **Random buses** and pin it to `10..`, to say you've already waited ten minutes. Its average wait becomes about 20: the ten you've waited, and ten more. Waiting longer doesn't bring a random bus any closer."#);
+    b.formula("On a timetable", "uniform(0, 10)").note("On a timetable", "Minutes until the next bus, turning up at a random moment. Anywhere from nothing to ten, equally.");
+    b.formula("Random buses", "exponential(10)").note("Random buses", "Minutes until the next bus, when buses come as likely in any minute as any other, ten minutes apart on average. Usually short, and now and then very long.");
+    for (route, short) in [("On a timetable", "timetable"), ("Random buses", "random")] {
+        let average = format!("Average wait, {short}");
+        b.formula(&average, "mean(w)").label(&average, route, "w");
+        let long = format!("Over a quarter of an hour, {short}");
+        b.formula(&long, "w > 15").label(&long, route, "w");
+    }
+    b.note("Average wait, timetable", "Five minutes: half of ten.");
+    b.note("Average wait, random", "Ten minutes, twice the timetable's, though the buses come just as often.");
+    b.note("Over a quarter of an hour, timetable", "Never: the next bus is never more than ten minutes away, and that's shown, not guessed.");
+    b.note("Over a quarter of an hour, random", "22% of the time, exactly: it's a question an exponential answers.");
+}
+
+fn bottles(b: &mut Build) {
+    about(b, r#"A machine fills bottles labelled 500 ml. No machine fills every one the same, so it's set to 502 ml, and each bottle comes out a little over or under: `normal(502, 1.5)`.
+
+A normal is for something that's the sum of many small things pulling either way, such as a measurement, a machine's wobble, or how tall people are. It's symmetrical, and two of them added are a normal again.
+
+**Things to try**
+
+- Select **Short of 500 ml**: 9% of bottles, exactly.
+- Compare **A six-pack** with **One bottle, six times**. A six-pack is six bottles, each its own draw, so their wobbles partly cancel and it's hardly ever short. One bottle six times is the same draw six times, so nothing cancels.
+- Change the 1.5 in **One bottle** and see how fast the short ones go."#);
+    b.formula("One bottle", "normal(502, 1.5)").note("One bottle", "How much goes in, in millilitres. Set to 502 to stay over 500, give or take 1.5.");
+    b.formula("Short of 500 ml", "b < 500").label("Short of 500 ml", "One bottle", "b").note("Short of 500 ml", "How often a bottle is under what its label says: 9% of the time. A normal answers it exactly.");
+    let pack = "A six-pack";
+    b.formula(pack, "normal(502, 1.5) + normal(502, 1.5) + normal(502, 1.5) + normal(502, 1.5) + normal(502, 1.5) + normal(502, 1.5)");
+    b.note(pack, "Six bottles, each written as its own draw. The total is a normal too: 3,012 ml give or take 3.7, not give or take 9.");
+    b.formula("A six-pack short of 3 litres", "p < 3000").label("A six-pack short of 3 litres", pack, "p").note("A six-pack short of 3 litres", "Hardly ever: about one pack in two thousand.");
+    let same = "One bottle, six times";
+    b.formula(same, "6 * b").label(same, "One bottle", "b").note(same, "The same bottle counted six times, so its wobble is six times as big. It's what you'd get if every bottle in a pack were off in the same way.");
+    b.formula("Short of 3 litres, six times over", "p < 3000").label("Short of 3 litres, six times over", same, "p").note("Short of 3 litres, six times over", "9%, the same as one bottle: nothing cancels.");
+}
+
+fn sales(b: &mut Build) {
+    about(b, r#"A new product's first-year sales: most likely about £50,000, and could easily be half that or double it.
+
+A lognormal is for something that grows by multiplying: sales, prices, populations, the size of files. It can't go below nothing, and it has a long tail upwards. Here it's `lognormal(ln(50000), 0.7)`: its middle is £50,000, and halving it is exactly as likely as doubling it.
+
+**Things to try**
+
+- Compare **Average sales** with the middle, £50,000. The average is £64,000, because the long tail pulls it up.
+- Compare **Under half** with **Over double**: the same, 16% each.
+- Select **Profit**: 30% of sales, less £10,000 of costs. It's a lognormal moved along, so how likely a loss is, is still exact."#);
+    b.formula("Sales", "lognormal(ln(50000), 0.7)").note("Sales", "Pounds in the first year. Its middle is £50,000: as likely to be under that as over.");
+    b.formula("Average sales", "mean(s)").label("Average sales", "Sales", "s").note("Average sales", "Above the middle. A lognormal's long tail upwards pulls its average up.");
+    b.formula("Under half", "s < 25000").label("Under half", "Sales", "s").note("Under half", "16% of the time.");
+    b.formula("Over double", "s > 100000").label("Over double", "Sales", "s").note("Over double", "16% of the time too: halving and doubling are as likely as each other.");
+    b.formula("Profit", "s * 0.3 - 10000").label("Profit", "Sales", "s").note("Profit", "30% of sales, less £10,000. It can go below nothing, though sales can't.");
+    b.formula("Makes a loss", "p < 0").label("Makes a loss", "Profit", "p").note("Makes a loss", "When sales are under £33,333: 28% of the time, exactly.");
+}
+
+fn connection(b: &mut Build) {
+    about(b, r#"A journey in three legs: a flight, a second flight, and a train. Each is on time or it isn't, so each is a `bernoulli`: true this often.
+
+A bernoulli is for anything that happens or doesn't: a flight on time, a test passing, rain on the day. Each one here is a short list of two outcomes, so everything worked out from them is exact.
+
+**Things to try**
+
+- Select **Everything on time**: 73%. Each leg is likely, and all three together much less so.
+- Pin **Book the later train?** in the bar at the top. With the later train, the train leg can't be missed, and **Chance of making it** goes up from 73% to 77%.
+- Pin **First flight on time** to false in the bar at the top: that's finding it out, and it's the end of the journey."#);
+    b.formula("First flight on time", "bernoulli(0.85)").note("First flight on time", "On time 85% of the time.");
+    b.formula("Second flight on time", "bernoulli(0.9)").note("Second flight on time", "90% of the time.");
+    b.formula("Train on time", "bernoulli(0.95)").note("Train on time", "95% of the time.");
+    let all = "Everything on time";
+    b.formula(all, "a && b && c").label(all, "First flight on time", "a").label(all, "Second flight on time", "b").label(all, "Train on time", "c");
+    b.note(all, "85%, 90% and 95%, all together: 73%, exactly. A chain is weaker than any of its links.");
+    let later = "Book the later train?";
+    b.add(later, DECISION).set(later, OPTIONS, Options(vec!["No".to_string(), "Yes".to_string()]));
+    b.note(later, "Yours to choose. The later train costs an evening, and can't be missed.");
+    let made = "You make it";
+    b.formula(made, r#"a && b && (later.chosen.value = "Yes" || c)"#).label(made, "First flight on time", "a").label(made, "Second flight on time", "b").label(made, "Train on time", "c").label(made, later, "later");
+    b.formula("Chance of making it", "chance(m)").label("Chance of making it", made, "m");
+    b.note("Chance of making it", "One for each answer to the later train, never averaged over your own choice: 73% without it and 77% with it.");
+}
+
+fn painting(b: &mut Build) {
+    about(b, r#"Painting a room, in three jobs. Nobody knows exactly how long each takes, so each is a three-point guess: at least, most likely, and at most.
+
+A triangular is for exactly that: a guess with a floor, a likeliest, and a ceiling, such as an estimate for work. Jobs usually overrun more than they underrun, so the most is further from the likeliest than the least is.
+
+Adding the likeliest of each says seven hours. That's the planning mistake: because each job leans towards overrunning, the total is usually more.
+
+**Things to try**
+
+- Compare **Likeliest of each, added** with **Total**: seven hours, against eight and a half on average.
+- Select **Done in a working day**: how likely it all fits in eight hours. Under half.
+- Make the second coat's most 3 rather than 4, and see what that buys."#);
+    for (job, guess, about) in [
+        ("Prepare the walls", "triangular(1, 2, 5)", "Filling and sanding: probably two hours, and five if the walls are worse than they look."),
+        ("First coat", "triangular(2, 3, 5)", "Probably three hours."),
+        ("Second coat", "triangular(1.5, 2, 4)", "Quicker than the first, unless the first shows through."),
+    ] {
+        b.formula(job, guess).note(job, about);
+        b.label("Total", job, "job");
+    }
+    b.formula("Total", "sum(job)").note("Total", "All three. A sum of triangulars has no name, so it's read from draws, and says so.");
+    b.value("Likeliest of each, added", 7.0).note("Likeliest of each, added", "2 + 3 + 2. What a plan made of single numbers would say.");
+    b.formula("Done in a working day", "t <= 8").label("Done in a working day", "Total", "t").note("Done in a working day", "Eight hours or less. Less likely than not, though the likeliest of each adds up to seven.");
 }
 
 fn savings(b: &mut Build) {

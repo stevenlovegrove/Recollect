@@ -1,0 +1,9 @@
+id: 01a1d8b0-29e0-702f-9843-0668b229ea38
+components:
+- notes
+- value
+cells:
+  body: Minutes until the next bus, turning up at a random moment. Anywhere from nothing to ten, equally.
+  name: On a timetable
+formulas:
+  value: uniform(0, 10)

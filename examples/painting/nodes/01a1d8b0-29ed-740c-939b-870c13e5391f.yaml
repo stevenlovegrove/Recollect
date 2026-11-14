@@ -1,0 +1,17 @@
+id: 01a1d8b0-29ed-740c-939b-870c13e5391f
+components:
+- notes
+cells:
+  body: |-
+    Painting a room, in three jobs. Nobody knows exactly how long each takes, so each is a three-point guess: at least, most likely, and at most.
+
+    A triangular is for exactly that: a guess with a floor, a likeliest, and a ceiling, such as an estimate for work. Jobs usually overrun more than they underrun, so the most is further from the likeliest than the least is.
+
+    Adding the likeliest of each says seven hours. That's the planning mistake: because each job leans towards overrunning, the total is usually more.
+
+    **Things to try**
+
+    - Compare **Likeliest of each, added** with **Total**: seven hours, against eight and a half on average.
+    - Select **Done in a working day**: how likely it all fits in eight hours. Under half.
+    - Make the second coat's most 3 rather than 4, and see what that buys.
+  name: About this example

@@ -1,0 +1,15 @@
+id: 01a1d8b0-29e6-7755-b0e6-16b9e16a67e9
+components:
+- notes
+- value
+cells:
+  body: 16% of the time.
+  name: Under half
+formulas:
+  value: s < 25000
+links:
+- to: 01a1d8b0-29e6-7755-b0e6-16b76e02ac18
+  components:
+  - label
+  cells:
+    called: s

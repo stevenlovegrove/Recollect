@@ -1,0 +1,15 @@
+id: 01a1d8b0-29e9-74fd-beec-6d8246bde692
+components:
+- notes
+- value
+cells:
+  body: 'One for each answer to the later train, never averaged over your own choice: 73% without it and 77% with it.'
+  name: Chance of making it
+formulas:
+  value: chance(m)
+links:
+- to: 01a1d8b0-29e9-74fd-beec-6d819a888ea2
+  components:
+  - label
+  cells:
+    called: m

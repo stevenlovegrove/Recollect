@@ -355,3 +355,66 @@ fn monty_hall_is_judged_knowing_which_door_he_opened() {
     o.log.commit("t", "surer", vec![Op::set(win, AtLeast(0.7))]).unwrap();
     assert!(left(&o).is_never());
 }
+
+/// How likely a sample's truth is, where that's a matter of draws.
+fn chance_of(o: &Opened, name: &str) -> recollect_graph::chance::Chance {
+    use recollect_graph::chance::{Reader, Share, Term};
+    Reader::new().chance(&[Share { weight: 1.0, value: Term::Rand(uncertain(o, name)) }])
+}
+
+#[test]
+fn the_examples_of_each_kind_of_uncertain_number_say_what_they_claim() {
+    use recollect_graph::chance::{Law, Reader, Share, Term, phi};
+    let near = |got: f64, want: f64, what: &str| assert!((got - want).abs() < 1e-9, "{what}: {got} isn't {want}");
+
+    // A bus at random keeps you waiting twice as long as one on a timetable, every ten minutes either way.
+    let o = open("bus");
+    near(o.number("Average wait, timetable"), 5.0, "timetable");
+    near(o.number("Average wait, random"), 10.0, "random");
+    assert_eq!(o.get::<ValueCell>("Over a quarter of an hour, timetable").0.0.cases()[0].1, &Val::Bool(false), "never, and shown to be");
+    let long = chance_of(&o, "Over a quarter of an hour, random");
+    assert!(long.exact);
+    near(long.chance, (-1.5f64).exp(), "a long wait");
+
+    // A six-pack's wobbles partly cancel, and one bottle counted six times doesn't.
+    let o = open("bottles");
+    let mut reader = Reader::new();
+    let mut law = |name: &str| reader.law(&uncertain(&o, name)).unwrap_or_else(|| panic!("{name} has a law"));
+    let Law::Normal { mean, sd } = law("A six-pack") else { panic!("a six-pack is a normal") };
+    near(mean, 3012.0, "a six-pack");
+    near(sd, 1.5 * 6f64.sqrt(), "a six-pack's spread");
+    assert_eq!(law("One bottle, six times"), Law::Normal { mean: 3012.0, sd: 9.0 });
+    near(chance_of(&o, "Short of 500 ml").chance, phi(-2.0 / 1.5), "one bottle");
+    near(chance_of(&o, "Short of 3 litres, six times over").chance, phi(-2.0 / 1.5), "one bottle, six times");
+    let pack = chance_of(&o, "A six-pack short of 3 litres");
+    assert!(pack.exact && pack.chance < 1.0 / 1500.0 && pack.chance > 1.0 / 2500.0, "{pack:?}");
+
+    // Halving and doubling are as likely as each other, and the average is above the middle.
+    let o = open("sales");
+    near(o.number("Average sales"), 50000.0 * (0.7f64 * 0.7 / 2.0).exp(), "average");
+    let (half, double) = (chance_of(&o, "Under half"), chance_of(&o, "Over double"));
+    assert!(half.exact && double.exact);
+    near(half.chance, phi(0.5f64.ln() / 0.7), "half");
+    near(double.chance, half.chance, "double");
+    let loss = chance_of(&o, "Makes a loss");
+    assert!(loss.exact, "a lognormal moved along is still read exactly");
+    near(loss.chance, phi((10000.0f64 / 0.3 / 50000.0).ln() / 0.7), "a loss");
+
+    // Each leg is likely, and all three together much less so.
+    let o = open("connection");
+    near(truth(&o.get::<ValueCell>("Everything on time")).prob(), 0.85 * 0.9 * 0.95, "all on time");
+    let odds = o.get::<ValueCell>("Chance of making it").0.0;
+    let mut each: Vec<f64> = odds.cases().iter().map(|(_, v)| if let Val::Num(n) = v { *n } else { panic!("{v:?}") }).collect();
+    each.sort_by(f64::total_cmp);
+    assert_eq!(each.len(), 2, "one for each answer to the later train");
+    near(each[0], 0.85 * 0.9 * 0.95, "the earlier train");
+    near(each[1], 0.85 * 0.9, "the later train");
+
+    // Adding the likeliest of each underestimates a total of jobs that lean towards overrunning.
+    let o = open("painting");
+    let total = Reader::new().summary(&[Share { weight: 1.0, value: Term::Rand(uncertain(&o, "Total")) }]);
+    assert!(!total.exact && (total.mean - 8.5).abs() < 3.0 * total.error, "{total:?}");
+    assert!(total.mean > o.number("Likeliest of each, added"));
+    let day = chance_of(&o, "Done in a working day");
+    assert!(!day.exact && day.chance < 0.5 && day.chance > 0.25, "{day:?}");
+}
