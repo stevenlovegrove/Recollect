@@ -360,6 +360,8 @@ A component that requires `work` is an obligation, and the plan treats it as one
 - **`Cond<T>`:** any value per world. Supports `map`, `zip`, `when`, `holds`, and for numbers `expected`, `min` and `max`.
 - **`Worldly<T>`:** a `Cond<T>` that's written plainly when it's the same in every world, for a cell that may be typed in or worked out.
 
+`chance.rs` is the same for what's uncertain and isn't a short list: a `Rand` is a number, or a truth, as an expression over draws, and a `Reader` says what one comes to, exactly where it has a law and otherwise from draws. See [distributions.md](distributions.md).
+
 A variable is identified by its name, options and weights, so handles stay valid across edits. Equal functions get equal handles, so early cut-off works on them like any other value. Variables and options are usually entity handles as strings, so `show_with` translates them for reading.
 
 Any choices can be pinned: `Space::picks` turns a world into `Picks`, and `Bool::given` and `Cond::given` narrow a value to the worlds consistent with them, with the picked choices gone from it. That's exact, and costs one walk of the diagram. It's how the app answers a what-if, and why it doesn't have to enumerate anything.

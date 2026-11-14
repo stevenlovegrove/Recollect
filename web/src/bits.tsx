@@ -90,7 +90,7 @@ export function Hist({ d, wide }: { d: Dist; wide?: boolean }) {
 export function DistValue({ d, wide }: { d: Dist; wide?: boolean }) {
   if (d.undefined >= 1) return <span className="mono-value">undefined</span>;
   return (
-    <span className="dist" title={distHow(d)}>
+    <span className={`dist ${wide ? "wide" : ""}`} title={distHow(d)}>
       <Hist d={d} wide={wide} />
       <span className="mono-value">{distText(d)}</span>
       {wide && (
@@ -187,6 +187,8 @@ export const PRIOR_MEANS = "How strongly it was believed before any evidence: it
 /** A cell in one line, for a card or a table. */
 export function cellText(cell: Cell, names?: (s: string) => string): string {
   if (cell.error) return "error";
+  // Differing only over chance, it's one uncertain thing: what all of that comes to taken together.
+  if (cell.mix !== undefined) return valueText(cell.mix);
   if (cell.shown) return shownText(cell.shown, names);
   return valueText(cell.value);
 }

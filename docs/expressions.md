@@ -148,6 +148,7 @@ Errors in the cell are for what's wrong in every world: text that doesn't parse,
 A function isn't called. It's expanded into the formula before evaluation, with its arguments substituted, so it holds no state and adds no new meaning. Only a small core is evaluated:
 
 - Operators, `if`, `defined`, `has`, `chose`, `max`, `min`, `distinct`, and `round`, `floor` and `ceil`
+- `exp`, `ln` and `sqrt`, and what's uncertain: `normal`, `uniform`, `triangular` and the rest. A number can be a distribution, and a formula's meaning doesn't change: see [distributions.md](distributions.md)
 - Group expansion, which turns `x in G: e` into one copy of `e` per node in `G`
 
 The rest of the library is written in that core:
