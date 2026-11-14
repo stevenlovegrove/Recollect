@@ -31,9 +31,6 @@ enum Cmd {
         /// What to call it. Defaults to the directory's name.
         #[arg(long)]
         name: Option<String>,
-        /// Which systems it uses.
-        #[arg(long, value_delimiter = ',', default_value = "plan,schedule")]
-        systems: Vec<String>,
     },
     /// Serve the web UI, REST API and MCP endpoint.
     Serve {
@@ -63,9 +60,9 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
     match Cli::parse().cmd {
-        Cmd::Init { dir, name, systems } => {
+        Cmd::Init { dir, name } => {
             let name = name.or_else(|| dir.file_name().map(|n| n.to_string_lossy().to_string())).unwrap_or_else(|| "Untitled".to_string());
-            app::init(&dir, &name, systems).map_err(|e| anyhow::anyhow!("{e}"))?;
+            app::init(&dir, &name).map_err(|e| anyhow::anyhow!("{e}"))?;
             println!("workspace ready at {}", dir.display());
             Ok(())
         }

@@ -986,8 +986,9 @@ pub fn view(o: &Workspace, world: &World) -> View {
         unwritten,
         constants,
         edges,
-        components: g.registry().components().cloned().collect(),
-        cells: g.registry().cells().filter(|c| !c.internal).map(cell_info).collect(),
+        // Every system's, so anything can be given to a node: using one takes its system on.
+        components: recollect_systems::everything().components().cloned().collect(),
+        cells: recollect_systems::everything().cells().filter(|c| !c.internal).map(cell_info).collect(),
         worlds,
         checks: checks(&o.log, &labels).into_iter().chain(refused).collect(),
         ran,

@@ -266,11 +266,11 @@ impl App {
     }
 
     /// Make a new, empty workspace, and open it.
-    pub fn create(self: &Arc<Self>, dir: &Path, name: &str, systems: Vec<String>) -> Result<(), AppError> {
+    pub fn create(self: &Arc<Self>, dir: &Path, name: &str) -> Result<(), AppError> {
         if dir.join("recollect.toml").exists() {
             return Err(AppError::Refused(format!("{} is already a workspace", dir.display())));
         }
-        init(dir, name, systems)?;
+        init(dir, name)?;
         self.open_dir(dir, None)
     }
 
@@ -310,8 +310,8 @@ impl App {
 }
 
 /// Make a workspace directory.
-pub fn init(dir: &Path, name: &str, systems: Vec<String>) -> Result<(), AppError> {
-    let mut files = new_files(name, systems)?;
+pub fn init(dir: &Path, name: &str) -> Result<(), AppError> {
+    let mut files = new_files(name)?;
     files.insert(".gitignore".to_string(), format!("{LOCK}\n"));
     write_files(dir, &Writes { write: files, delete: vec![] }).map_err(AppError::Other)
 }

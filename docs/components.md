@@ -246,7 +246,7 @@ History is a line. Undoing appends the inverse of the newest change not yet undo
 A workspace is files at paths relative to its root:
 
 ```
-recollect.toml       its name, and which systems it uses
+recollect.toml       its name, and which systems it has taken on
 nodes/<id>.yaml      a node each, with its edges
 ```
 

@@ -252,6 +252,13 @@ impl Log {
         (log, problems)
     }
 
+    /// The same graph and history, read by a registry that knows more, as when a workspace takes on
+    /// another system. Nothing it holds changes, and anything worked out is worked out again.
+    pub fn widen(&mut self, registry: Arc<Registry>) {
+        let (graph, _) = Graph::load(self.graph.save(), registry);
+        self.graph = graph;
+    }
+
     // ---------- reading ----------
 
     /// Read-only: writing goes through `commit`.

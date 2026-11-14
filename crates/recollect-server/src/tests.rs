@@ -641,7 +641,7 @@ async fn a_new_workspace_starts_empty_and_an_old_one_is_not_touched() {
     let c = Client::new();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mine");
-    c.post("/api/workspaces/new", json!({ "path": path, "name": "Mine", "systems": ["plan"] })).await;
+    c.post("/api/workspaces/new", json!({ "path": path, "name": "Mine" })).await;
     let v = c.view(json!({})).await;
     assert_eq!(v["workspace"]["name"], "Mine");
     assert!(v["nodes"].as_array().unwrap().is_empty());
@@ -846,7 +846,7 @@ async fn held_out_a_budget_cap_on_a_plan() {
 async fn held_out_a_clause_that_isnt_a_pair() {
     let c = Client::new();
     let dir = tempfile::tempdir().unwrap();
-    c.post("/api/workspaces/new", json!({ "path": dir.path().join("logic"), "name": "Logic", "systems": [] })).await;
+    c.post("/api/workspaces/new", json!({ "path": dir.path().join("logic"), "name": "Logic" })).await;
     let person = |id: &str, name: &str| json!({ "op": "add_node", "id": id, "name": name, "cells": { "options": ["truth", "lie"] } });
     c.post("/api/call/apply", json!({ "ops": [
         person("new:a", "Alice"), person("new:b", "Bob"), person("new:c", "Carol"),
@@ -866,7 +866,7 @@ async fn held_out_a_clause_that_isnt_a_pair() {
 async fn held_out_tiers_and_a_loan_with_a_macro() {
     let c = Client::new();
     let dir = tempfile::tempdir().unwrap();
-    c.post("/api/workspaces/new", json!({ "path": dir.path().join("money"), "name": "Money", "systems": [] })).await;
+    c.post("/api/workspaces/new", json!({ "path": dir.path().join("money"), "name": "Money" })).await;
     c.post("/api/call/apply", json!({ "ops": [
         { "op": "add_node", "id": "new:tier", "name": "Tier", "cells": { "macro": { "params": ["units", "from", "to", "price"], "body": "max(0, min(units, to) - from) * price" } } },
         { "op": "add_node", "id": "new:units", "name": "Units", "cells": { "value": 250 } },
@@ -892,7 +892,7 @@ async fn held_out_tiers_and_a_loan_with_a_macro() {
 async fn held_out_choosing_a_car() {
     let c = Client::new();
     let dir = tempfile::tempdir().unwrap();
-    c.post("/api/workspaces/new", json!({ "path": dir.path().join("car"), "name": "Car", "systems": ["plan"] })).await;
+    c.post("/api/workspaces/new", json!({ "path": dir.path().join("car"), "name": "Car" })).await;
     let option = |id: &str, name: &str, of: &str, value: f64, weight: f64| json!({ "op": "add_node", "id": id, "name": name, "cells": { "value": value }, "links": [{ "to": of, "component": "alternative", "cells": { "weight": weight } }] });
     // A car says what it is, and its kind says what follows from that.
     let car = |id: &str, name: &str, kind: &str, cell: &str, v: f64, price: f64, insurance: f64, range: f64| {
@@ -1004,7 +1004,7 @@ async fn held_out_choosing_a_car() {
 async fn held_out_tables_of_cars_and_years() {
     let c = Client::new();
     let dir = tempfile::tempdir().unwrap();
-    c.post("/api/workspaces/new", json!({ "path": dir.path().join("tables"), "name": "Tables", "systems": ["plan"] })).await;
+    c.post("/api/workspaces/new", json!({ "path": dir.path().join("tables"), "name": "Tables" })).await;
     c.post("/api/call/apply", json!({ "ops": [
         { "op": "add_node", "id": "new:fuel", "name": "Fuel price", "cells": { "value": 1.45 } },
         { "op": "add_node", "id": "new:which", "name": "Which car?", "components": ["decision"] },
@@ -1216,7 +1216,7 @@ async fn a_weight_that_differs_between_worlds_is_an_error() {
 async fn held_out_estimates_that_are_distributions() {
     let c = Client::new();
     let dir = tempfile::tempdir().unwrap();
-    c.post("/api/workspaces/new", json!({ "path": dir.path().join("uncertain"), "name": "Uncertain", "systems": ["plan", "schedule"] })).await;
+    c.post("/api/workspaces/new", json!({ "path": dir.path().join("uncertain"), "name": "Uncertain" })).await;
     let task = |id: &str, name: &str, days: &str| json!({ "op": "add_node", "id": id, "name": name, "components": ["task"], "cells": { "estimate": { "formula": days } }, "links": [{ "to": "new:whole", "component": "part_of" }] });
     c.post("/api/call/apply", json!({ "ops": [
         { "op": "add_node", "id": "new:whole", "name": "Whole" },

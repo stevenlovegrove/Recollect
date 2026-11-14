@@ -41,7 +41,7 @@ target/debug/recollect serve           # UI http://127.0.0.1:7878/   MCP http://
 Samples opened here are working copies in `~/.recollect`, so the originals in `examples/` don't change. A copy from before samples last changed is moved to `~/.recollect/samples-superseded`. To make your own:
 
 ```sh
-target/debug/recollect init ~/ideas --systems plan,schedule
+target/debug/recollect init ~/ideas
 target/debug/recollect serve --workspace ~/ideas
 ```
 

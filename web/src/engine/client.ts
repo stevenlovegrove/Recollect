@@ -72,8 +72,8 @@ export class LocalBackend implements Backend {
   file(path: string) {
     return this.ask<FileText>({ op: "file", path });
   }
-  createInBrowser(name: string, systems: string[]) {
-    return this.ask<void>({ op: "createBrowser", name, systems });
+  createInBrowser(name: string) {
+    return this.ask<void>({ op: "createBrowser", name });
   }
 
   private async pick(): Promise<FileSystemDirectoryHandle> {
@@ -86,9 +86,9 @@ export class LocalBackend implements Backend {
     handle ??= await this.pick();
     await this.ask({ op: "openFolder", handle });
   }
-  async createInFolder(name: string, systems: string[], handle?: FileSystemDirectoryHandle) {
+  async createInFolder(name: string, handle?: FileSystemDirectoryHandle) {
     handle ??= await this.pick();
-    await this.ask({ op: "openFolder", handle, create: { name, systems } });
+    await this.ask({ op: "openFolder", handle, create: { name } });
   }
 
   /** Open one this browser knows. A folder may need allowing again, which has to come from a click. */

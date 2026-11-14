@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use recollect_graph::{CommitError, Entity, Log, Op, SavedGraph, SavedNode, Stored, is_node_path, node_of_path, node_text, parse_node, path_of};
 use recollect_systems::samples::{FORMAT, SAMPLES, config_text, ops_of};
-use recollect_systems::{Built, build};
+use recollect_systems::{Built, build, needed};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -115,10 +115,9 @@ pub struct Workspace {
     pending: Writes,
 }
 
-/// The files of a new, empty workspace.
-pub fn new_files(name: &str, systems: Vec<String>) -> Result<Files, Error> {
-    build(&systems).map_err(Error::Refused)?;
-    let config = Config { name: name.to_string(), about: None, systems };
+/// The files of a new, empty workspace. It takes on systems as it uses them.
+pub fn new_files(name: &str) -> Result<Files, Error> {
+    let config = Config { name: name.to_string(), about: None, systems: Vec::new() };
     Ok(Files::from([(CONFIG.to_string(), toml::to_string(&config).map_err(|e| Error::Other(e.to_string()))?)]))
 }
 
@@ -152,6 +151,41 @@ fn homes_of(parsed: &BTreeMap<String, SavedNode>) -> BTreeMap<Entity, String> {
     homes
 }
 
+/// The components and cells the node files use, which say which systems the workspace needs.
+fn held(parsed: &BTreeMap<String, SavedNode>) -> (BTreeSet<&str>, BTreeSet<&str>) {
+    let (mut components, mut cells) = (BTreeSet::new(), BTreeSet::new());
+    for n in parsed.values() {
+        components.extend(n.components.iter().map(String::as_str));
+        cells.extend(n.cells.keys().chain(n.formulas.keys()).map(String::as_str));
+        for l in &n.links {
+            components.extend(l.components.iter().map(String::as_str));
+            cells.extend(l.cells.keys().chain(l.formulas.keys()).map(String::as_str));
+        }
+    }
+    (components, cells)
+}
+
+/// The components and cells a change-set gives things.
+fn touched(ops: &[Op]) -> (Vec<&str>, Vec<&str>) {
+    let (mut components, mut cells) = (Vec::new(), Vec::new());
+    for op in ops {
+        match op {
+            Op::Add { component, .. } | Op::Link { component, .. } => components.push(component.as_str()),
+            Op::Set { cell, to: Some(_), .. } => cells.push(cell.as_str()),
+            _ => {}
+        }
+    }
+    (components, cells)
+}
+
+/// What a workspace has, together with what it needs, in the order systems are listed. A workspace
+/// never loses a system by not using it any more.
+fn with_needed(have: &[String], needs: Vec<String>) -> Vec<String> {
+    let mut out = have.to_vec();
+    out.extend(needs.into_iter().filter(|n| !have.contains(n)));
+    out
+}
+
 /// The graph the node files say, one node per handle, from the file it lives in.
 fn graph_of(parsed: &BTreeMap<String, SavedNode>, homes: &BTreeMap<Entity, String>) -> SavedGraph {
     SavedGraph { nodes: homes.values().map(|p| parsed[p].clone()).collect() }
@@ -161,12 +195,17 @@ impl Workspace {
     /// Open a workspace from its files. Anything that isn't part of one, such as a log from an older
     /// version, is ignored. What needs attention comes back with it, in words.
     pub fn load(id: &str, location: &str, sample: Option<String>, files: Files) -> Result<(Workspace, Vec<String>), Error> {
-        let config = read_config(files.get(CONFIG).ok_or_else(|| Error::Other(format!("{location} isn't a workspace: it has no {CONFIG}")))?)?;
-        let built = build(&config.systems).map_err(Error::Other)?;
+        let mut config = read_config(files.get(CONFIG).ok_or_else(|| Error::Other(format!("{location} isn't a workspace: it has no {CONFIG}")))?)?;
         let mut parsed = BTreeMap::new();
         for (path, text) in files.iter().filter(|(p, _)| is_node_path(p)) {
             parsed.insert(path.clone(), parse_node(text).map_err(|e| Error::Other(format!("{path} isn't a valid node: {e}")))?);
         }
+        // Whatever its nodes use, as when they were written by hand or by an older version.
+        let (components, cells) = held(&parsed);
+        let systems = with_needed(&config.systems, needed(components, cells));
+        let took_on = systems != config.systems;
+        config.systems = systems;
+        let built = build(&config.systems).map_err(Error::Other)?;
         let homes = homes_of(&parsed);
         let (log, problems) = Log::from_saved(graph_of(&parsed, &homes), built.registry.clone());
         let mut ws = Workspace { id: id.to_string(), location: location.to_string(), sample, config, built, log, known: files, parsed, homes, pending: Writes::default() };
@@ -174,6 +213,9 @@ impl Workspace {
         let homeless: BTreeSet<Entity> = ws.log.graph().entities().filter(|e| !ws.homes.contains_key(e)).collect();
         for node in ws.log.graph().save().nodes.into_iter().filter(|n| homeless.contains(&n.id)) {
             ws.put_node(node);
+        }
+        if took_on {
+            ws.put_config();
         }
         Ok((ws, problems.into_iter().map(|p| format!("{p:?}")).collect()))
     }
@@ -189,6 +231,17 @@ impl Workspace {
             self.pending.write.insert(path.clone(), text);
         }
         self.parsed.insert(path, node);
+    }
+
+    fn put(&mut self, path: String, text: String) {
+        self.known.insert(path.clone(), text.clone());
+        self.pending.delete.retain(|p| *p != path);
+        self.pending.write.insert(path, text);
+    }
+
+    fn put_config(&mut self) {
+        let text = toml::to_string(&self.config).expect("settings serialise");
+        self.put(CONFIG.to_string(), text);
     }
 
     fn remove(&mut self, path: &str) {
@@ -261,6 +314,13 @@ impl Workspace {
                 }
             }
         }
+        // Something written by hand that needs a system this hasn't got is only understood once it's
+        // opened again, with it.
+        let (components, cells) = held(&self.parsed);
+        if with_needed(&self.config.systems, needed(components, cells)) != self.config.systems {
+            out.reopen = true;
+            return out;
+        }
         if graph {
             self.homes = homes_of(&self.parsed);
             let (seq, _) = self.log.reconcile(&graph_of(&self.parsed, &self.homes), "disk");
@@ -285,12 +345,39 @@ impl Workspace {
         Ok(())
     }
 
-    /// Commit these ops. Returns what any `new:` names in them became.
+    /// Commit these ops. Returns what any `new:` names in them became. Using something from a system
+    /// the workspace hasn't got yet, such as a first task, takes that system on, and saying so is part
+    /// of the same change: if it's refused, the workspace is as it was.
     pub fn apply(&mut self, ops: Vec<Value>, author: &str, why: &str) -> Result<Resolved, Error> {
-        let resolved = resolve_ops(ops, self.log.graph()).map_err(Error::Refused)?;
-        self.formulas_work(&resolved.ops)?;
-        self.log.commit(author, why, resolved.ops.clone()).map_err(refusal)?;
-        Ok(resolved)
+        let resolved = resolve_ops(ops.clone(), self.log.graph()).map_err(Error::Refused)?;
+        let (components, cells) = touched(&resolved.ops);
+        let systems = with_needed(&self.config.systems, needed(components, cells));
+        if systems == self.config.systems {
+            self.formulas_work(&resolved.ops)?;
+            self.log.commit(author, why, resolved.ops.clone()).map_err(refusal)?;
+            return Ok(resolved);
+        }
+        let built = build(&systems).map_err(Error::Refused)?;
+        let before = self.built.registry.clone();
+        self.log.widen(built.registry.clone());
+        // Again, now that what it uses is known, so its cells bring their components.
+        let done = resolve_ops(ops, self.log.graph()).map_err(Error::Refused).and_then(|r| {
+            self.formulas_work(&r.ops)?;
+            self.log.commit(author, why, r.ops.clone()).map_err(refusal)?;
+            Ok(r)
+        });
+        match done {
+            Ok(r) => {
+                self.built = built;
+                self.config.systems = systems;
+                self.put_config();
+                Ok(r)
+            }
+            Err(e) => {
+                self.log.widen(before);
+                Err(e)
+            }
+        }
     }
 
     /// Take back any one event.

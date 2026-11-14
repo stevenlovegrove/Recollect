@@ -11,12 +11,15 @@ const GROUPS: { title: string; group: string; about: string }[] = [
   { title: "Puzzles", group: "puzzle", about: "Choices and constraints, whose solutions are the worlds left over" },
 ];
 
-/** What to open: the samples, or something of your own. In the workspace menu your own come first,
- *  since that's where you'd go to open or make one, and the samples follow as examples. */
-export function SamplePicker({ ws, onOpened, ownFirst = false }: { ws: Workspace; onOpened?: () => void; ownFirst?: boolean }) {
+type Opener = (f: () => Promise<void>) => Promise<void>;
+
+/**
+ * Where a workspace comes from: a new one, one of your own, or an example. The same on the welcome
+ * page and in the workspace menu.
+ */
+export function Start({ ws, onOpened }: { ws: Workspace; onOpened?: () => void }) {
   const [err, setErr] = useState<string | null>(null);
-  const a = ws.available;
-  const open = async (f: () => Promise<void>) => {
+  const open: Opener = async (f) => {
     setErr(null);
     try {
       await f();
@@ -27,136 +30,143 @@ export function SamplePicker({ ws, onOpened, ownFirst = false }: { ws: Workspace
       setErr(e instanceof Error ? e.message : String(e));
     }
   };
-  const samples = GROUPS.map((g) => {
-    const inGroup = (a?.samples ?? []).filter((s) => s.group === g.group);
-    if (!inGroup.length) return null;
-    return (
-      <section key={g.title}>
-        <h3>{g.title}</h3>
-        <p className="muted small">{g.about}</p>
-        <div className="picker-grid">
-          {inGroup.map((s) => (
-            <button key={s.name} className={`picker-card ${a?.current?.sample === s.name ? "current" : ""}`} onClick={() => open(() => ws.openSample(s.name))}>
-              <b>{s.title}</b>
-              <span className="muted small">{s.about}</span>
-            </button>
-          ))}
-        </div>
-      </section>
-    );
-  });
-  const own = <OwnWorkspace ws={ws} open={open} />;
+  const server = ws.backend?.kind === "http";
   return (
-    <div className="picker">
-      {ownFirst ? (
-        <>
-          {own}
-          {err && <div className="error">{err}</div>}
-          <hr className="menu-divider" />
-          <h2 className="picker-examples">Examples</h2>
-          {samples}
-        </>
-      ) : (
-        <>
-          {samples}
-          {own}
-          {err && <div className="error">{err}</div>}
-        </>
-      )}
+    <div className="start">
+      <div className="start-own">
+        <section className="start-card">
+          <h3>New</h3>
+          {server ? <NewOnServer ws={ws} open={open} /> : <NewHere ws={ws} open={open} />}
+        </section>
+        <section className="start-card">
+          <h3>Open</h3>
+          {server ? <OpenOnServer ws={ws} open={open} /> : <OpenHere ws={ws} open={open} />}
+        </section>
+      </div>
+      {err && <div className="error">{err}</div>}
+      <Examples ws={ws} open={open} />
     </div>
   );
 }
 
-type Opener = (f: () => Promise<void>) => Promise<void>;
+const NEW_HINT = "Decisions, plans and dates come along as soon as you use them.";
 
-function OwnWorkspace({ ws, open }: { ws: Workspace; open: Opener }) {
-  return ws.backend?.kind === "http" ? <OnServer ws={ws} open={open} /> : <InBrowser ws={ws} open={open} />;
-}
-
-function Systems({ ws, systems, setSystems }: { ws: Workspace; systems: string[]; setSystems: (s: string[]) => void }) {
+/** Run here: kept in this browser, or in a folder on this computer. */
+function NewHere({ ws, open }: { ws: Workspace; open: Opener }) {
+  const [name, setName] = useState("");
+  const b = ws.backend;
+  if (!b) return null;
+  const ready = name.trim().length > 0;
   return (
-    <div className="chips">
-      {(ws.available?.systems ?? []).map((s) => (
-        <label key={s.name} className="toggle" title={s.about}>
-          <input type="checkbox" checked={systems.includes(s.name)} onChange={() => setSystems(systems.includes(s.name) ? systems.filter((x) => x !== s.name) : [...systems, s.name])} />
-          {s.name}
-        </label>
-      ))}
-    </div>
+    <form
+      className="start-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ready) open(() => b.createInBrowser!(name.trim()));
+      }}
+    >
+      <div className="start-row">
+        <input placeholder="Name it" value={name} onChange={(e) => setName(e.target.value)} aria-label="What to call it" />
+        <button className="primary" disabled={!ready}>
+          Create
+        </button>
+      </div>
+      <p className="muted small">
+        {b.folders ? (
+          <>
+            Kept in this browser, or{" "}
+            <button type="button" className="link" disabled={!ready} onClick={() => open(() => b.createInFolder!(name.trim()))}>
+              in a folder
+            </button>{" "}
+            on this computer, as plain files that git and Claude can work on too.
+          </>
+        ) : (
+          "Kept in this browser, as plain files. Move one in or out as a zip."
+        )}{" "}
+        {NEW_HINT}
+      </p>
+    </form>
   );
 }
 
 /** Served by `recollect serve`: a workspace is a directory it can reach by path. */
-function OnServer({ ws, open }: { ws: Workspace; open: Opener }) {
-  const [path, setPath] = useState("");
+function NewOnServer({ ws, open }: { ws: Workspace; open: Opener }) {
   const [name, setName] = useState("");
-  const [systems, setSystems] = useState<string[]>(["plan", "schedule"]);
+  const [path, setPath] = useState("");
   const b = ws.backend!;
+  const ready = !!name.trim() && !!path.trim();
   return (
-    <section>
-      <h3>Your own</h3>
-      <p className="muted small">A workspace is a directory of plain files, so it can live in git.</p>
-      <form
-        className="own"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (path.trim()) open(() => b.openPath!(path.trim()));
-        }}
-      >
-        <input placeholder="Path to a workspace" value={path} onChange={(e) => setPath(e.target.value)} aria-label="Path to a workspace" />
-        <button disabled={!path.trim()}>Open</button>
-      </form>
-      <details className="own-new">
-        <summary>Make a new one</summary>
-        <input placeholder="What to call it" value={name} onChange={(e) => setName(e.target.value)} aria-label="What to call it" />
-        <Systems ws={ws} systems={systems} setSystems={setSystems} />
-        <button className="primary" disabled={!path.trim() || !name.trim()} onClick={() => open(() => b.createAt!(path.trim(), name.trim(), systems))}>
-          Make it at that path
+    <form
+      className="start-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ready) open(() => b.createAt!(path.trim(), name.trim()));
+      }}
+    >
+      <input placeholder="Name it" value={name} onChange={(e) => setName(e.target.value)} aria-label="What to call it" />
+      <div className="start-row">
+        <input placeholder="Where: a directory path" value={path} onChange={(e) => setPath(e.target.value)} aria-label="Where to make it" />
+        <button className="primary" disabled={!ready}>
+          Create
         </button>
-      </details>
-    </section>
+      </div>
+      <p className="muted small">A directory of plain files, so it can live in git. {NEW_HINT}</p>
+    </form>
   );
 }
 
-/** Run here: a workspace is kept in this browser, or is a folder on this computer. */
-function InBrowser({ ws, open }: { ws: Workspace; open: Opener }) {
-  const [name, setName] = useState("");
-  const [systems, setSystems] = useState<string[]>(["plan", "schedule"]);
+function OpenOnServer({ ws, open }: { ws: Workspace; open: Opener }) {
+  const [path, setPath] = useState("");
+  const b = ws.backend!;
+  return (
+    <form
+      className="start-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (path.trim()) open(() => b.openPath!(path.trim()));
+      }}
+    >
+      <div className="start-row">
+        <input placeholder="A workspace's directory" value={path} onChange={(e) => setPath(e.target.value)} aria-label="Path to a workspace" />
+        <button disabled={!path.trim()}>Open</button>
+      </div>
+    </form>
+  );
+}
+
+function OpenHere({ ws, open }: { ws: Workspace; open: Opener }) {
   const b = ws.backend;
   if (!b) return null;
   const recent = ws.available?.recent ?? [];
   const current = ws.available?.current?.id;
   return (
-    <section>
-      <h3>Your own</h3>
-      <p className="muted small">
-        {b.folders
-          ? "A workspace is plain files. Keep it in this browser, or in a folder on this computer, where it can live in git and other programs, Claude among them, can work on it while you watch."
-          : "A workspace is plain files, kept in this browser. This browser can't open folders, though Chrome and Edge can, so to move one in or out, use a zip."}
-      </p>
-      {recent.length > 0 && (
-        <ul className="known">
+    <div className="start-form">
+      {recent.length > 0 ? (
+        <ul className="recent">
           {recent.map((k) => (
             <li key={k.id} className={k.id === current ? "current" : ""}>
-              <button className="link" onClick={() => open(() => b.openKnown!(k.id))}>
-                <b>{k.name}</b>
-              </button>{" "}
-              <span className="muted small">{k.kind === "folder" ? `folder ${k.location}` : "in this browser"}</span>{" "}
+              <button className="recent-open" onClick={() => open(() => b.openKnown!(k.id))} title={k.kind === "folder" ? `The folder ${k.location}` : "Kept in this browser"}>
+                <span className="recent-name">{k.name}</span>
+                <span className="muted small">{k.kind === "folder" ? k.location : "this browser"}</span>
+              </button>
               <button
-                className="link small muted"
+                className="icon recent-forget"
+                aria-label={k.kind === "folder" ? `Forget ${k.name}` : `Delete ${k.name}`}
                 title={k.kind === "folder" ? "Forget it here. The folder isn't touched." : "Delete it from this browser"}
                 onClick={async () => {
                   const sure = k.kind === "folder" || (await askSure(`Delete “${k.name}” from this browser? This can't be undone.`, "Delete"));
                   if (sure) open(() => b.forget!(k.id));
                 }}
               >
-                {k.kind === "folder" ? "forget" : "delete"}
+                ×
               </button>
             </li>
           ))}
         </ul>
+      ) : (
+        <p className="muted small">Nothing of your own yet.</p>
       )}
-      <div className="own">
+      <div className="start-row start-actions">
         {b.folders && <button onClick={() => open(() => b.openFolder!())}>Open a folder…</button>}
         <label className="button-like">
           Import a zip…
@@ -169,21 +179,41 @@ function InBrowser({ ws, open }: { ws: Workspace; open: Opener }) {
           </label>
         )}
       </div>
-      <details className="own-new">
-        <summary>Make a new one</summary>
-        <input placeholder="What to call it" value={name} onChange={(e) => setName(e.target.value)} aria-label="What to call it" />
-        <Systems ws={ws} systems={systems} setSystems={setSystems} />
-        <div className="row">
-          <button className="primary" disabled={!name.trim()} onClick={() => open(() => b.createInBrowser!(name.trim(), systems))}>
-            Keep it in this browser
-          </button>
-          {b.folders && (
-            <button disabled={!name.trim()} onClick={() => open(() => b.createInFolder!(name.trim(), systems))}>
-              Put it in a folder…
+    </div>
+  );
+}
+
+/** The samples, a group at a time, opening on the group of the one that's open. */
+function Examples({ ws, open }: { ws: Workspace; open: Opener }) {
+  const a = ws.available;
+  const groups = GROUPS.filter((g) => (a?.samples ?? []).some((s) => s.group === g.group));
+  const currentGroup = a?.samples.find((s) => s.name === a?.current?.sample)?.group;
+  const [wanted, setWanted] = useState<string | null>(null);
+  const group = groups.find((g) => g.group === (wanted ?? currentGroup)) ?? groups[0];
+  if (!group) return null;
+  return (
+    <section className="start-examples">
+      <div className="start-examples-head">
+        <h3>Examples</h3>
+        <div className="seg" role="tablist" aria-label="Kinds of example">
+          {groups.map((g) => (
+            <button key={g.group} role="tab" aria-selected={g === group} className={g === group ? "active" : ""} onClick={() => setWanted(g.group)}>
+              {g.title}
             </button>
-          )}
+          ))}
         </div>
-      </details>
+      </div>
+      <p className="muted small">{group.about}.</p>
+      <div className="picker-grid">
+        {(a?.samples ?? [])
+          .filter((s) => s.group === group.group)
+          .map((s) => (
+            <button key={s.name} className={`picker-card ${a?.current?.sample === s.name ? "current" : ""}`} onClick={() => open(() => ws.openSample(s.name))}>
+              <b>{s.title}</b>
+              <span className="muted small">{s.about}</span>
+            </button>
+          ))}
+      </div>
     </section>
   );
 }
@@ -191,11 +221,13 @@ function InBrowser({ ws, open }: { ws: Workspace; open: Opener }) {
 export function Welcome({ ws }: { ws: Workspace }) {
   return (
     <div className="welcome">
-      <h1>
-        <span className="logo">◇</span> Recollect
-      </h1>
-      <p className="muted">A graph of ideas, with every open decision held open exactly. Start with one of these.</p>
-      <SamplePicker ws={ws} />
+      <header className="welcome-head">
+        <h1>
+          <span className="logo">◇</span> Recollect
+        </h1>
+        <p className="muted">A graph of ideas, with every open decision held open exactly.</p>
+      </header>
+      <Start ws={ws} />
     </div>
   );
 }

@@ -21,10 +21,10 @@ export type Request =
   | { op: "workspaces" }
   | { op: "start" }
   | { op: "openSample"; name: string; reset: boolean }
-  | { op: "createBrowser"; name: string; systems: string[] }
+  | { op: "createBrowser"; name: string }
   | { op: "importBrowser"; name: string; files: Files }
   | { op: "openBrowser"; id: string }
-  | { op: "openFolder"; handle: FileSystemDirectoryHandle; id?: string; create?: { name: string; systems: string[] } }
+  | { op: "openFolder"; handle: FileSystemDirectoryHandle; id?: string; create?: { name: string } }
   | { op: "forget"; id: string }
   | { op: "call"; method: string; args: unknown }
   | { op: "files" }

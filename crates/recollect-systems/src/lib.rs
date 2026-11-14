@@ -1,6 +1,6 @@
 //! What a workspace can be made of. A system is a function that adds components, the cells they bring
 //! and the checks they make to a `Registry`, which is all the core ever sees. A workspace lists the
-//! systems it uses by name.
+//! systems it has taken on by name, which it does the first time it uses something from one.
 
 pub mod expr;
 pub mod formulas;
@@ -10,8 +10,8 @@ pub mod samples;
 pub mod schedule;
 pub mod view;
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::{Arc, OnceLock};
 
 use recollect_graph::{CellType, Entity, Graph, Name, Registry};
 
@@ -39,6 +39,37 @@ pub const ALWAYS: &[&str] = &["notes", "formulas"];
 pub struct Built {
     pub names: Vec<String>,
     pub registry: Arc<Registry>,
+}
+
+/// Every system at once, for saying which one a component or cell comes from.
+pub fn everything() -> &'static Registry {
+    static ALL: OnceLock<Arc<Registry>> = OnceLock::new();
+    ALL.get_or_init(|| build(&SYSTEMS.iter().map(|s| s.name.to_string()).collect::<Vec<_>>()).expect("every system builds").registry)
+}
+
+/// The systems a workspace needs for what it holds, beyond `ALWAYS`: whichever gives each component
+/// or cell it uses, and schedule once there's a task, since a task's estimate is how long it takes and
+/// dates are made from that. So nobody has to say which systems they want. In `SYSTEMS` order.
+pub fn needed<'a>(components: impl IntoIterator<Item = &'a str>, cells: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let all = everything();
+    let mut out = BTreeSet::new();
+    let mut task = false;
+    for c in components {
+        task |= c == plan::TASK;
+        if let Some(d) = all.component_def(c) {
+            out.insert(d.system.clone());
+        }
+    }
+    for c in cells {
+        if let Some(d) = all.owner(c).and_then(|o| all.component_def(o)) {
+            task |= d.name == plan::TASK;
+            out.insert(d.system.clone());
+        }
+    }
+    if task {
+        out.insert("schedule".to_string());
+    }
+    SYSTEMS.iter().map(|s| s.name).filter(|n| out.contains(*n) && !ALWAYS.contains(n)).map(String::from).collect()
 }
 
 pub fn build(names: &[String]) -> Result<Built, String> {

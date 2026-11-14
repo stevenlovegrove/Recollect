@@ -79,7 +79,7 @@ Write with `apply`, which commits at once: the user sees it as it lands, and can
 {op: set, id, cell, value} or {op: set, id, cell, formula, labels?} or {op: set, id, cell} to take away what's written; \
 the same with `from` and `to` in place of `id` for a cell of the edge between two nodes, such as an option's `weight`; \
 {op: link, from, to, component, cells?} and {op: unlink, from, to, component}; {op: delete_node, id}. Writing in a cell of a component \
-a node doesn't have gives it that component. Nodes can be named by handle or by name, and \"new:anything\" stands for a node that \
+a node doesn't have gives it that component. Using any component takes on the system it comes from, if the workspace hasn't used it yet, so get_overview lists them all. Nodes can be named by handle or by name, and \"new:anything\" stands for a node that \
 doesn't exist yet, the same one wherever it appears in a change-set. So decide on a decision with {op: set, id: \"How do we publish it?\", \
 cell: chosen, value: {ref: <option's handle>}}, and rule an option out with {op: set, from: <option>, to: <decision>, cell: ruled_out, value: \"why\"}.\n\
 \n\

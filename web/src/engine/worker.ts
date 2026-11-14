@@ -252,12 +252,11 @@ async function handle(req: Request): Promise<unknown> {
   switch (req.op) {
     case "workspaces": {
       const all = await known();
-      const { samples, systems } = JSON.parse(catalogue());
+      const { samples } = JSON.parse(catalogue());
       const c = current;
       return {
         current: c ? { name: c.known.name, id: c.known.id, location: c.known.location, sample: c.known.sample ?? null, kind: c.known.kind, readOnly: c.readOnly } : null,
         samples,
-        systems,
         recent: all.filter((k) => !k.sample).map(({ handle: _, ...k }) => k),
       };
     }
@@ -284,7 +283,7 @@ async function handle(req: Request): Promise<unknown> {
     }
     case "createBrowser":
     case "importBrowser": {
-      const files: Files = req.op === "createBrowser" ? JSON.parse(newFiles(req.name, JSON.stringify(req.systems))) : Object.fromEntries(Object.entries(req.files).filter(([p]) => isWorkspaceFile(p)));
+      const files: Files = req.op === "createBrowser" ? JSON.parse(newFiles(req.name)) : Object.fromEntries(Object.entries(req.files).filter(([p]) => isWorkspaceFile(p)));
       if (!files["recollect.toml"]) throw new Failure("refused", "that isn't a workspace: it has no recollect.toml");
       const id = `browser:${uid()}`;
       await writeFiles(id, files);
@@ -302,7 +301,7 @@ async function handle(req: Request): Promise<unknown> {
       const has = (await store.readText("recollect.toml")) !== null;
       if (req.create) {
         if (has) throw new Failure("refused", `${req.handle.name} is already a workspace`);
-        await store.commit({ write: JSON.parse(newFiles(req.create.name, JSON.stringify(req.create.systems))), delete: [] });
+        await store.commit({ write: JSON.parse(newFiles(req.create.name)), delete: [] });
       } else if (!has) throw new Failure("other", `${req.handle.name} isn't a workspace: it has no recollect.toml`);
       const was = await sameFolder(req.handle);
       const id = was?.id ?? req.id ?? `folder:${uid()}`;

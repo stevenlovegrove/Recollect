@@ -15,7 +15,7 @@ The engine underneath is described in [docs/components.md](docs/components.md). 
 A workspace is a directory of plain files:
 
 ```
-recollect.toml       its name, and which systems it uses
+recollect.toml       its name, and which systems it has taken on
 nodes/<id>.yaml      a node each, with its edges, as plain data that can be edited by hand
 ```
 
@@ -23,14 +23,14 @@ The files are what's true. While a workspace is open, every change is an event i
 
 The same engine runs in two places. In a browser, as a static site, it's WebAssembly in a worker, and a workspace is kept in the browser or in a folder on the computer. With `recollect serve`, it's in the server, which also serves Claude over MCP. Either way the engine is `recollect-core`, which does no I/O: it's given a workspace's files and says which to write after each change, so the browser and the server only read and write files.
 
-Nodes and the edges between them are both entities, and each has components, such as `task` on a node or `part_of` on an edge. A component brings cells, so `task` brings `estimate` and an `alternative` edge brings `weight`, and a cell is only there on an entity with its component. A **system** provides components, their cells and their checks, and a workspace lists the ones it uses:
+Nodes and the edges between them are both entities, and each has components, such as `task` on a node or `part_of` on an edge. A component brings cells, so `task` brings `estimate` and an `alternative` edge brings `weight`, and a cell is only there on an entity with its component. A **system** provides components, their cells and their checks. Nobody chooses them: a workspace takes one on the first time it uses something from it, and says so in `recollect.toml`. Every component is on offer from the start, and a change that uses a new one is refused whole, system and all, if it would be refused anyway:
 
 | System | What it adds |
 |---|---|
 | `notes` | Always there. `named` on every node, with its `name`, `notes` with a `body`, `sources`, `drawing`, and edges that only say how ideas relate: `serves`, `supports`, `contradicts`, `constrains`, `supersedes`, `relates` |
 | `formulas` | Always there. `value`, typed in or worked out by a formula, which can be a distribution ([docs/distributions.md](docs/distributions.md)), `label` edges to name what a formula reads, `options` for a choice, `requires` for what your choices have to meet and `evidence` for what's known, which between them say which worlds count, `macro` for a function of your own, and `is_a` for a kind. See [docs/expressions.md](docs/expressions.md) |
-| `plan` | `part`, `work`, `task`, `goal`, `question`, `risk`, `unknown`, `decision`, `uncertain` and `option`, with `part_of`, `alternative` and `depends_on` edges. Works out what's needed, completion, blocking, what can start, scope and pressure |
-| `schedule` | Dates and slack in every world, from `plan`'s facts. A task's estimate is its duration |
+| `plan` | Taken on with its first component. `part`, `work`, `task`, `goal`, `question`, `risk`, `unknown`, `decision`, `uncertain` and `option`, with `part_of`, `alternative` and `depends_on` edges. Works out what's needed, completion, blocking, what can start, scope and pressure |
+| `schedule` | Taken on with the first task, since a task's estimate is its duration. Dates and slack in every world, from `plan`'s facts. It has no component of its own, so it isn't on before then: a puzzle's choices would otherwise have dates worked out for nothing |
 
 A component also says what it means to someone looking at it: what it's for, its icon, which edges give the graph its shape, which say what comes first, and which cells are worth a line on a card. A map is laid out by both kinds of edge, and a tree like the Outline only by shape, because waiting for something isn't being part of it. The app reads that rather than knowing any of it, so a plugin's components would get the same treatment. A component no system knows about is kept and shown as it is.
 
@@ -56,9 +56,9 @@ A cell holds a typed value or a formula, and that's the same whether a person wr
 | **Map** | The graph, laid out by the edges that give it shape or say what comes first, reading down or across. The Links menu chooses which edges shape it, each remembered per workspace in that browser. What a world rules out dims, and nothing moves | Always |
 | **Outline** | The same structure, coarse to fine | Always |
 | **Table** | Nodes against cells. Values and formulas edit in place, as in a spreadsheet, and what just ran is highlighted. The rows can be narrowed to what differs between the worlds left, or in any world, which is what pinning a choice changes; or a table can be shown as a grid of its rows | Always |
-| **Decisions** | Each decision, what each option needs, and whether it's holding work up. Deciding shows what it would change first | `plan` |
-| **Work** | Tasks by where they stand: can start, depends on a decision, waiting, finished, not needed | `plan` |
-| **Timeline** | Dates as a chart, with hatching for how far a date could move | `schedule` |
+| **Decisions** | Each decision, what each option needs, and whether it's holding work up. Deciding shows what it would change first | Once there's a decision |
+| **Work** | Tasks by where they stand: can start, depends on a decision, waiting, finished, not needed | Once there's work |
+| **Timeline** | Dates as a chart, with hatching for how far a date could move | Once there's a task |
 
 Three more look after the workspace rather than work in it, so they're behind ⋯ at the end of the tabs (in More, on a phone):
 

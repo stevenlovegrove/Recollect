@@ -151,11 +151,80 @@ fn a_proposal_left_from_when_there_was_an_inbox_is_ignored() {
 
 #[test]
 fn a_new_workspace_is_just_its_settings() {
-    let files = new_files("Mine", vec!["plan".into()]).unwrap();
+    let files = new_files("Mine").unwrap();
     assert_eq!(files.keys().collect::<Vec<_>>(), vec![CONFIG]);
     let mut ws = open(files);
     assert_eq!(view(&mut ws)["workspace"]["name"], "Mine");
-    assert!(new_files("Bad", vec!["nonsense".into()]).is_err());
+    assert_eq!(ws.config.systems, Vec::<String>::new());
+}
+
+fn systems(ws: &Workspace) -> Vec<&str> {
+    ws.config.systems.iter().map(String::as_str).collect()
+}
+
+#[test]
+fn a_workspace_takes_on_a_system_when_it_first_uses_one_and_keeps_its_history() {
+    let mut ws = open(new_files("Mine").unwrap());
+    ws.take_writes();
+    dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "add_node", "id": "new:a", "name": "An idea" }] }), "t").unwrap();
+    assert_eq!(systems(&ws), Vec::<&str>::new(), "a note needs nothing more");
+
+    // A decision is the plan system's.
+    dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "add_node", "id": "new:d", "name": "Which way?", "components": ["decision"] }] }), "t").unwrap();
+    assert_eq!(systems(&ws), vec!["plan"]);
+    let written = ws.take_writes();
+    assert!(written.write[CONFIG].contains("plan"), "{}", written.write[CONFIG]);
+
+    // A task is dates as well.
+    dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "add_node", "id": "new:t", "name": "Do it", "components": ["task"] }] }), "t").unwrap();
+    assert_eq!(systems(&ws), vec!["plan", "schedule"]);
+    let v = view(&mut ws);
+    let task = v["nodes"].as_array().unwrap().iter().find(|n| n["name"] == "Do it").unwrap();
+    assert!(task["cells"]["finish"].is_object(), "it has dates: {task}");
+
+    // Nothing that happened before is lost, and taking the task back doesn't take the system with it.
+    assert_eq!(v["last_seq"], 2);
+    dispatch(&mut ws, "undo", json!({}), "t").unwrap();
+    assert_eq!(systems(&ws), vec!["plan", "schedule"]);
+    dispatch(&mut ws, "undo", json!({ "seq": 0 }), "t").unwrap();
+    assert!(!view(&mut ws)["nodes"].as_array().unwrap().iter().any(|n| n["name"] == "An idea"));
+}
+
+#[test]
+fn writing_in_a_cell_of_a_system_not_yet_used_takes_it_on() {
+    let mut ws = open(new_files("Mine").unwrap());
+    dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "add_node", "id": "new:t", "name": "Do it", "cells": { "estimate": 3 } }] }), "t").unwrap();
+    assert_eq!(systems(&ws), vec!["plan", "schedule"]);
+    let v = view(&mut ws);
+    let task = v["nodes"].as_array().unwrap().iter().find(|n| n["name"] == "Do it").unwrap();
+    assert!(task["components"].as_array().unwrap().iter().any(|c| c["name"] == "task"), "{task}");
+}
+
+#[test]
+fn a_refused_change_takes_on_no_system() {
+    let mut ws = open(new_files("Mine").unwrap());
+    ws.take_writes();
+    let bad = dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "add_node", "id": "new:t", "name": "Do it", "components": ["task"], "cells": { "estimate": { "formula": "nope" } } }] }), "t");
+    assert!(bad.is_err());
+    assert_eq!(systems(&ws), Vec::<&str>::new());
+    assert!(ws.take_writes().is_empty());
+    // And it still works afterwards, without them.
+    dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "add_node", "id": "new:a", "name": "An idea" }] }), "t").unwrap();
+}
+
+#[test]
+fn nodes_written_by_hand_bring_their_systems_with_them() {
+    let mut files = new_files("Mine").unwrap();
+    let id = recollect_graph::Entity::new();
+    let node = format!("id: {id}\ncomponents:\n- task\ncells:\n  name: By hand\n");
+    files.insert(format!("nodes/{id}.yaml"), node.clone());
+    let mut ws = open(files);
+    assert_eq!(systems(&ws), vec!["plan", "schedule"]);
+    assert!(ws.take_writes().write[CONFIG].contains("schedule"));
+
+    // Arriving while it's open, it needs opening again, with them.
+    let mut ws = open(new_files("Mine").unwrap());
+    assert!(ws.files_changed(BTreeMap::from([(format!("nodes/{id}.yaml"), Some(node))])).reopen);
 }
 
 #[test]

@@ -2832,43 +2832,177 @@ tr.pruned {
 /* ---------- opening a workspace ---------- */
 
 .welcome {
-  max-width: 980px;
-  margin: 0 auto;
-  padding: 40px 24px;
   height: 100%;
   overflow: auto;
+  padding: 56px 24px 40px;
 }
-.welcome h1 {
+.welcome-head,
+.welcome .start {
+  max-width: 920px;
+  margin: 0 auto;
+}
+.welcome-head {
+  margin-bottom: 28px;
+}
+.welcome-head h1 {
   margin: 0 0 4px;
+  font-size: 28px;
 }
-.picker {
-  display: grid;
-  gap: 18px;
-}
-.picker h3 {
+.welcome-head p {
   margin: 0;
 }
-.picker p {
-  margin: 2px 0 8px;
+.start {
+  display: grid;
+  gap: 28px;
+}
+/* New and open side by side: the two things you'd come here for. */
+.start-own {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+}
+.start-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.start h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.start-form {
+  display: grid;
+  gap: 10px;
+}
+.start-form p {
+  margin: 0;
+  line-height: 1.5;
+}
+.start-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.start-row input {
+  flex: 1;
+  min-width: 0;
+}
+.start-actions {
+  flex-wrap: wrap;
+}
+.recent {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 210px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.recent li {
+  display: flex;
+  align-items: center;
+}
+.recent li + li {
+  border-top: 1px solid var(--border);
+}
+.recent-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border: none;
+  border-radius: 0;
+  background: none;
+  padding: 8px 10px;
+  text-align: left;
+}
+.recent-open:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+.recent-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-open .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent li.current .recent-name {
+  color: var(--accent);
+}
+.recent-forget {
+  color: var(--muted);
+  margin-right: 4px;
+}
+.start-examples {
+  display: grid;
+  gap: 10px;
+}
+.start-examples p {
+  margin: 0;
+}
+.start-examples-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+/* A segmented control: one kind of example at a time. */
+.seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.seg button {
+  border: none;
+  background: none;
+  padding: 4px 10px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.seg button.active {
+  background: var(--panel-2);
+  color: var(--text);
+  font-weight: 600;
 }
 .picker-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 8px;
+  gap: 10px;
 }
 .picker-card {
   display: flex;
   flex-direction: column;
   gap: 4px;
   text-align: left;
-  padding: 10px 12px;
-  border-radius: 8px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  line-height: 1.4;
 }
 .picker-card.current {
   border-color: var(--accent);
 }
 .picker-modal {
-  width: min(900px, calc(100vw - 40px));
+  width: min(920px, calc(100vw - 40px));
+  padding: 20px 22px 24px;
   /* What's left under the backdrop's top padding, less a margin, so the end of the list can be
      scrolled to. dvh where it's known, so a phone's browser bars don't hide the end either. */
   max-height: calc(88vh - 24px);
@@ -2876,12 +3010,32 @@ tr.pruned {
   overflow: auto;
   overscroll-behavior: contain;
 }
-.own {
+/* What's open, at the head of the workspace menu. */
+.ws-current {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 0 36px 18px 0;
+  margin-bottom: 22px;
+  border-bottom: 1px solid var(--border);
+}
+.ws-current-text {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+.ws-current h2 {
+  margin: 2px 0 0;
+}
+.ws-current-actions {
   display: flex;
   gap: 8px;
 }
-.own input {
-  flex: 1;
+.ws-current-close {
+  position: absolute;
+  top: -6px;
+  right: -8px;
 }
 /* A file input's label, looking like the buttons beside it. */
 .button-like {
@@ -2893,27 +3047,6 @@ tr.pruned {
 }
 .button-like:hover {
   border-color: var(--muted);
-}
-.known {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 10px;
-  display: grid;
-  gap: 4px;
-}
-.known li.current b {
-  color: var(--accent);
-}
-.own-new {
-  margin-top: 8px;
-  display: grid;
-  gap: 8px;
-}
-.own-new[open] > * + * {
-  margin-top: 8px;
-}
-.own-new input {
-  width: 100%;
 }
 
 /* ---------- later fixes to earlier rules ---------- */
@@ -3513,8 +3646,9 @@ button.icon.act.revert:hover {
 
 /* ---------- the workspace menu ---------- */
 .ws-about {
-  margin: 4px 0 8px;
+  margin: 6px 0 0;
   line-height: 1.45;
+  color: var(--muted);
 }
 /* Files, history and checks, behind ⋯ at the end of the tabs, which take the room up to the right. */
 .tabs-more {
@@ -3544,21 +3678,6 @@ button.icon.act.revert:hover {
   width: 18px;
   height: 18px;
   color: var(--muted);
-}
-.menu-divider {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 16px 0;
-}
-.picker-examples {
-  font-size: 15px;
-  margin: 0 0 4px;
-}
-.picker > .menu-divider {
-  margin: 0;
-}
-.picker > .picker-examples {
-  margin-bottom: -10px;
 }
 
 /* ---------- the worlds chip, and the map's view options across from it ---------- */

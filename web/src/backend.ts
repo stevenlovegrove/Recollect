@@ -35,14 +35,14 @@ export interface Backend {
 
   // Served by `recollect serve`: workspaces are directories it can reach by path.
   openPath?(path: string): Promise<void>;
-  createAt?(path: string, name: string, systems: string[]): Promise<void>;
+  createAt?(path: string, name: string): Promise<void>;
 
   // Run here: workspaces are kept in this browser, or are folders this browser has been allowed into.
   /** Whether this browser can open folders at all. */
   readonly folders?: boolean;
-  createInBrowser?(name: string, systems: string[]): Promise<void>;
+  createInBrowser?(name: string): Promise<void>;
   openFolder?(handle?: FileSystemDirectoryHandle): Promise<void>;
-  createInFolder?(name: string, systems: string[], handle?: FileSystemDirectoryHandle): Promise<void>;
+  createInFolder?(name: string, handle?: FileSystemDirectoryHandle): Promise<void>;
   openKnown?(id: string): Promise<void>;
   forget?(id: string): Promise<void>;
   exportZip?(): Promise<void>;
@@ -86,8 +86,8 @@ class HttpBackend implements Backend {
   openPath(path: string) {
     return this.post<void>("/api/workspaces/open", { path });
   }
-  createAt(path: string, name: string, systems: string[]) {
-    return this.post<void>("/api/workspaces/new", { path, name, systems });
+  createAt(path: string, name: string) {
+    return this.post<void>("/api/workspaces/new", { path, name });
   }
   files() {
     return this.req<FileInfo[]>("/api/files");

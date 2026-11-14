@@ -18,7 +18,7 @@ import { ContextMenu, type CtxTarget } from "./ContextMenu";
 import { Worlds, hasWorlds } from "./WorldBar";
 import { ViewIcon } from "./ViewNav";
 import { DdItemButton, Dropdown } from "./Dropdown";
-import { SamplePicker, Welcome } from "./Welcome";
+import { Start, Welcome } from "./Welcome";
 import { isDropped, label } from "./theme";
 import { AskHost, askSure, askWhy } from "./Ask";
 import { BottomNav } from "./ViewNav";
@@ -57,14 +57,16 @@ export function App() {
   const [focusTable, setFocusTable] = useState<{ name: string; n: number } | null>(null);
   const view = ws.view;
 
-  // What this workspace's systems make worth looking at.
-  const systems = view?.workspace.systems ?? [];
+  // What this workspace holds makes worth looking at: decisions once there's one, work once there's
+  // some, and dates once there's a task to have them.
+  const holds = (c: string) => !!view?.nodes.some((n) => n.components.some((x) => x.name === c));
   const tabs: Tab[] = [
     "map",
     "outline",
     "table",
-    ...(systems.includes("plan") ? (["decisions", "work"] as Tab[]) : []),
-    ...(systems.includes("schedule") ? (["timeline"] as Tab[]) : []),
+    ...(holds("decision") ? (["decisions"] as Tab[]) : []),
+    ...(holds("work") ? (["work"] as Tab[]) : []),
+    ...(holds("task") && view?.workspace.systems.includes("schedule") ? (["timeline"] as Tab[]) : []),
   ];
   const tab: Tab = tabs.includes(wanted) || MENU_TABS.includes(wanted) ? wanted : "map";
   const setTab = useCallback((t: Tab) => setWanted(t), []);
@@ -286,39 +288,35 @@ export function App() {
       {picking && (
         <div className="modal-backdrop" onClick={() => setPicking(false)}>
           <div className="modal picker-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="row spread">
-              <h2>{view.workspace.name}</h2>
-              <button className="icon" onClick={() => setPicking(false)} aria-label="Close">
+            {/* What's open, and what can be done with it, above where another comes from. */}
+            <header className="ws-current">
+              <div className="ws-current-text">
+                <span className="muted small">{view.workspace.sample ? "Example, your own working copy" : ws.backend?.kind === "local" && view.workspace.location === "this browser" ? "In this browser" : view.workspace.location}</span>
+                <h2>{view.workspace.name}</h2>
+                {view.workspace.about && <p className="ws-about">{view.workspace.about}</p>}
+              </div>
+              <div className="ws-current-actions">
+                {ws.backend?.exportZip && (
+                  <button onClick={() => ws.backend!.exportZip!().catch((e) => alert(String(e)))} title="Save a copy as a zip">
+                    Save as zip
+                  </button>
+                )}
+                {view.workspace.sample && (
+                  <button
+                    title="The original is safe: this discards what you've done to your copy"
+                    onClick={async () => {
+                      if (await askSure(`Start “${view.workspace.name}” again? This discards what you've done to it.`, "Start again")) ws.openSample(view.workspace.sample!, true).catch((e) => alert(String(e)));
+                    }}
+                  >
+                    Start again
+                  </button>
+                )}
+              </div>
+              <button className="icon ws-current-close" onClick={() => setPicking(false)} aria-label="Close">
                 ×
               </button>
-            </div>
-            {view.workspace.about && <p className="ws-about">{view.workspace.about}</p>}
-            <p className="small muted">
-              {view.workspace.sample ? "A sample" : ws.backend?.kind === "local" && view.workspace.location === "this browser" ? "Kept in this browser" : `At ${view.workspace.location}`}
-              {ws.backend?.exportZip && (
-                <>
-                  {" · "}
-                  <button className="link" onClick={() => ws.backend!.exportZip!().catch((e) => alert(String(e)))}>
-                    Save a copy as a zip
-                  </button>
-                </>
-              )}
-            </p>
-            {view.workspace.sample && (
-              <p className="small">
-                <span className="muted">This is your working copy of a sample, so the original is safe.</span>{" "}
-                <button
-                  className="link"
-                  onClick={async () => {
-                    if (await askSure(`Start “${view.workspace.name}” again? This discards what you've done to it.`, "Start again")) ws.openSample(view.workspace.sample!, true).catch((e) => alert(String(e)));
-                  }}
-                >
-                  Start it again
-                </button>
-              </p>
-            )}
-            <hr className="menu-divider" />
-            <SamplePicker ws={ws} onOpened={() => setPicking(false)} ownFirst />
+            </header>
+            <Start ws={ws} onOpened={() => setPicking(false)} />
           </div>
         </div>
       )}

@@ -7,7 +7,6 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use recollect_systems::{ALWAYS, SYSTEMS};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -57,8 +56,7 @@ struct SampleInfo {
 async fn workspaces(State(app): S) -> impl IntoResponse {
     let current = app.with(|o| Ok(json!({ "name": o.ws.config.name, "id": o.ws.id, "location": o.ws.location, "sample": o.ws.sample }))).ok();
     let samples: Vec<SampleInfo> = app.sample_list().iter().map(|s| SampleInfo { name: s.name, title: s.title, about: s.about, group: s.group, systems: s.systems }).collect();
-    let systems: Vec<Value> = SYSTEMS.iter().filter(|s| !ALWAYS.contains(&s.name)).map(|s| json!({ "name": s.name, "about": s.about })).collect();
-    Json(json!({ "current": current, "samples": samples, "systems": systems, "home": app.home }))
+    Json(json!({ "current": current, "samples": samples, "home": app.home }))
 }
 
 #[derive(Deserialize)]
@@ -83,12 +81,10 @@ async fn open(State(app): S, Json(body): Json<OpenBody>) -> Result<StatusCode, A
 struct NewBody {
     path: PathBuf,
     name: String,
-    #[serde(default)]
-    systems: Vec<String>,
 }
 
 async fn create(State(app): S, Json(body): Json<NewBody>) -> Result<StatusCode, AppError> {
-    blocking(app, move |app| app.create(&body.path, &body.name, body.systems)).await?;
+    blocking(app, move |app| app.create(&body.path, &body.name)).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -4,7 +4,6 @@
 
 use recollect_core::{Error, Files, Workspace, dispatch, new_files, sample_files};
 use recollect_systems::samples::SAMPLES;
-use recollect_systems::{ALWAYS, SYSTEMS};
 use serde::Serialize;
 use serde_json::{Value, json};
 use wasm_bindgen::prelude::*;
@@ -34,18 +33,17 @@ struct SampleInfo {
     systems: &'static [&'static str],
 }
 
-/// The samples there are and the systems a new workspace can use.
+/// The samples there are.
 #[wasm_bindgen]
 pub fn catalogue() -> String {
     let samples: Vec<SampleInfo> = SAMPLES.iter().map(|s| SampleInfo { name: s.name, title: s.title, about: s.about, group: s.group, systems: s.systems }).collect();
-    let systems: Vec<Value> = SYSTEMS.iter().filter(|s| !ALWAYS.contains(&s.name)).map(|s| json!({ "name": s.name, "about": s.about })).collect();
-    text(&json!({ "samples": samples, "systems": systems }))
+    text(&json!({ "samples": samples }))
 }
 
 /// The files of a new, empty workspace.
 #[wasm_bindgen(js_name = newFiles)]
-pub fn new_workspace_files(name: &str, systems: &str) -> Result<String, JsValue> {
-    Ok(text(&new_files(name, parse(systems)?).map_err(fail)?))
+pub fn new_workspace_files(name: &str) -> Result<String, JsValue> {
+    Ok(text(&new_files(name).map_err(fail)?))
 }
 
 /// The files of a fresh copy of a sample.

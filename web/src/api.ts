@@ -356,7 +356,6 @@ export interface KnownWorkspace {
 export interface Workspaces {
   current: { name: string; id: string; location: string; sample: string | null; kind?: "browser" | "folder"; readOnly?: boolean } | null;
   samples: SampleInfo[];
-  systems: { name: string; about: string }[];
   /** Served by `recollect serve`: where it keeps its own things. */
   home?: string;
   /** Run in the browser: what it's opened before. */
