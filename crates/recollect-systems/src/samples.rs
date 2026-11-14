@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use recollect_graph::{CellType, Entity, Name, On, Op, Stored};
 use serde_json::{Value, json};
 
-use crate::formulas::{AT, At, Called, EVIDENCE, IS_A, LABEL, OPTIONS, Options, REQUIRES, VALUE, ValueCell};
+use crate::formulas::{AT, At, AtLeast, Called, EVIDENCE, IS_A, LABEL, OPTIONS, Options, REQUIRES, VALUE, ValueCell};
 use crate::notes::{Body, DRAWING, Drawing, NOTES};
 use crate::plan::{ALTERNATIVE, DECISION, DEPENDS_ON, EXCLUDES, KNOWING, Done, Estimate, GOAL, PART_OF, RISK, TASK, UNCERTAIN, UNKNOWN, WITHIN, Weight};
 
@@ -29,6 +29,7 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "sales", title: "First-year sales", about: "Lognormal: a number that grows by multiplying, so it can't go below nothing and has a long tail. Its average is above its middle, and halving is as likely as doubling.", group: "chance", systems: &[], build: sales },
     Sample { name: "connection", title: "Making the connection", about: "Bernoulli: three legs of a journey, each on time or not. How likely all three are, and how much a later train buys you.", group: "chance", systems: &["plan"], build: connection },
     Sample { name: "painting", title: "Painting a room", about: "Triangular: three-point guesses at each job. Adding up the likeliest of each says seven hours, which is less than it'll usually take.", group: "chance", systems: &[], build: painting },
+    Sample { name: "drawbridge", title: "The drawbridge", about: "Two routes home: one over a bridge that's sometimes up, and a steady ring road. The bridge is quicker on average and better in a hurry, and worse when you need to be sure. Unless you can see it from your window.", group: "chance", systems: &["plan"], build: drawbridge },
     Sample { name: "savings", title: "Savings, give or take", about: "A table of years that grow by an uncertain amount. Growth drawn afresh each year averages out, and one rate drawn once compounds, so the same formula ends up far wider. Both are exact.", group: "chance", systems: &[], build: savings },
     Sample { name: "supplier", title: "Choosing a supplier", about: "Three quotes held three ways: a plain number, a three-point guess, and a price with extras. What each comes to with shipping, and how likely it is to be within budget.", group: "sheet", systems: &["plan"], build: supplier },
     Sample { name: "shelf", title: "Will the shelf fit?", about: "Two measurements, each a little uncertain: how much clearance there is, and how likely there is to be any.", group: "chance", systems: &[], build: shelf },
@@ -55,7 +56,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "31";
+pub const FORMAT: &str = "32";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -371,6 +372,47 @@ Adding the likeliest of each says seven hours. That's the planning mistake: beca
     b.formula("Total", "sum(job)").note("Total", "All three. A sum of triangulars has no name, so it's read from draws, and says so.");
     b.value("Likeliest of each, added", 7.0).note("Likeliest of each, added", "2 + 3 + 2. What a plan made of single numbers would say.");
     b.formula("Done in a working day", "t <= 8").label("Done in a working day", "Total", "t").note("Done in a working day", "Eight hours or less. Less likely than not, though the likeliest of each adds up to seven.");
+}
+
+fn drawbridge(b: &mut Build) {
+    about(b, r#"You have two ways home. Over the river there's a drawbridge, which is up for boats four times in ten, and then you wait. Round the ring road is longer, and steady.
+
+So the bridge route's time is a **mixture**: usually about 25 minutes, and sometimes nearer 38. Its histogram has two humps, and its average, about 30 minutes, sits in the gap between them: it's a journey you almost never take.
+
+Which way is better depends on what you need, and not in the way the averages suggest:
+
+- **On average**, the bridge is quicker: about 30 minutes against 33.
+- **In a hurry,** it's better too: with half an hour, it's on time six times in ten, and the ring road hardly ever.
+- **To be sure**, it's worse. With 40 minutes, the ring road is on time 99% of the time and the bridge only about 90%, because when the bridge is up, it can be very up. **On time** is required 95% of the time, so only the ring road is left.
+
+**Things to try**
+
+- Select **Over the bridge**: its histogram has two humps. Then **Within two minutes of 30**: you're that close to its average about one time in thirty.
+- Look at **Average journey** and **Chance of being on time** for each way.
+- Set **On time**'s **at least** to 0.85 in the panel on the right, and both ways are left. Set **Minutes you have** to 33 and **at least** to 0.55, and only the bridge is.
+- Link **Which way?** to **The bridge is up** with a **knowing** link: you can see the bridge from your window before you choose. Now each way is judged for each, and taking the bridge when it's down meets 95% easily. Seeing the bridge is worth more than either route."#);
+    b.formula("Drive to the river", "normal(15, 1.5)").note("Drive to the river", "Minutes, give or take traffic. A bell curve: the sum of lots of small delays.");
+    b.formula("The bridge is up", "bernoulli(0.4)").note("The bridge is up", "Up for boats four times in ten. A short list of two answers, so it's held exactly, and it can be pinned, or known.");
+    b.formula("Waiting for the bridge", "triangular(8, 12, 20)").note("Waiting for the bridge", "When it's up: at least 8 minutes, most likely 12, and as long as 20 behind a slow barge.");
+    let bridge = "Over the bridge";
+    b.formula(bridge, "drive + if(up, wait, 0) + normal(10, 1)").label(bridge, "Drive to the river", "drive").label(bridge, "The bridge is up", "up").label(bridge, "Waiting for the bridge", "wait");
+    b.note(bridge, "To the river, then the bridge, then ten more minutes. Two answers, one for each way the bridge could be, and taken together a histogram with two humps.");
+    b.formula("Round the ring road", "normal(33, 3)").note("Round the ring road", "Longer, and steady: one hump.");
+    let near = "Within two minutes of 30";
+    b.formula(near, "abs(b - 30) <= 2").label(near, bridge, "b").note(near, "About its average, give or take two minutes. Hardly ever: the average is between the two humps, where almost no journeys are.");
+
+    let way = "Which way?";
+    b.add(way, DECISION).set(way, OPTIONS, Options(vec!["Over the bridge".to_string(), "Round the ring road".to_string()]));
+    b.note(way, "Yours to choose. Link it to The bridge is up by knowing, to say you can see the bridge before you set off.");
+    let journey = "Journey";
+    b.formula(journey, r#"if(way.chosen.value = "Over the bridge", bridge, ring)"#).label(journey, way, "way").label(journey, bridge, "bridge").label(journey, "Round the ring road", "ring");
+    b.note(journey, "However you go.");
+    b.formula("Average journey", "mean(j)").label("Average journey", journey, "j").note("Average journey", "One for each way. The bridge's is read from draws, since a bell curve plus a triangle has no name, and it says so.");
+    b.value("Minutes you have", 40.0).note("Minutes you have", "Until you have to be home.");
+    let on_time = "On time";
+    b.formula(on_time, "j <= have").label(on_time, journey, "j").label(on_time, "Minutes you have", "have").add(on_time, REQUIRES).set(on_time, REQUIRES, AtLeast(0.95));
+    b.note(on_time, "Required 95% of the time. With 40 minutes, only the ring road is that sure.");
+    b.formula("Chance of being on time", "chance(t)").label("Chance of being on time", on_time, "t").note("Chance of being on time", "For each way: never averaged over your own choice.");
 }
 
 fn savings(b: &mut Build) {

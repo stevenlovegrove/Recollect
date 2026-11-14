@@ -1,0 +1,9 @@
+id: 01a1d8d6-6731-7212-963e-a8f9fe83244e
+components:
+- notes
+- value
+cells:
+  body: Up for boats four times in ten. A short list of two answers, so it's held exactly, and it can be pinned, or known.
+  name: The bridge is up
+formulas:
+  value: bernoulli(0.4)

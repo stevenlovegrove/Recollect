@@ -1,0 +1,22 @@
+id: 01a1d8d6-6731-7212-963e-a90270c6b9a9
+components:
+- notes
+- requires
+- value
+cells:
+  at_least: 0.95
+  body: Required 95% of the time. With 40 minutes, only the ring road is that sure.
+  name: On time
+formulas:
+  value: j <= have
+links:
+- to: 01a1d8d6-6731-7212-963e-a8ff5908922b
+  components:
+  - label
+  cells:
+    called: j
+- to: 01a1d8d6-6731-7212-963e-a90170b75ae2
+  components:
+  - label
+  cells:
+    called: have

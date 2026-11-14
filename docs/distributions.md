@@ -258,6 +258,7 @@ Anything else is read from 4,096 draws. Each draw's values are spread evenly, on
 | **Filling bottles** | `normal` for a measurement: how often one is short, and why six added are hardly ever, where one counted six times is |
 | **First-year sales** | `lognormal` for what grows by multiplying: an average above its middle, halving as likely as doubling, and a loss that's still exact |
 | **Making the connection** | `bernoulli` for what happens or doesn't: three likely legs, a much less likely journey, and `chance` for each choice of train |
+| **The drawbridge** | A mixture with two humps: a route quicker on average and better in a hurry, and worse when you need to be sure, unless you can see the bridge before you choose, which is `knowing` |
 | **Painting a room** | `triangular` for a three-point guess: adding the likeliest of each underestimates the total |
 
 `tests/samples.rs` checks each says what it claims.

@@ -1,0 +1,15 @@
+id: 01a1d8d6-6731-7212-963e-a90046363a0e
+components:
+- notes
+- value
+cells:
+  body: One for each way. The bridge's is read from draws, since a bell curve plus a triangle has no name, and it says so.
+  name: Average journey
+formulas:
+  value: mean(j)
+links:
+- to: 01a1d8d6-6731-7212-963e-a8ff5908922b
+  components:
+  - label
+  cells:
+    called: j

@@ -1,0 +1,15 @@
+id: 01a1d8d6-6731-7212-963e-a903639d1ffb
+components:
+- notes
+- value
+cells:
+  body: 'For each way: never averaged over your own choice.'
+  name: Chance of being on time
+formulas:
+  value: chance(t)
+links:
+- to: 01a1d8d6-6731-7212-963e-a90270c6b9a9
+  components:
+  - label
+  cells:
+    called: t

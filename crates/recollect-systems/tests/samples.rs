@@ -418,3 +418,61 @@ fn the_examples_of_each_kind_of_uncertain_number_say_what_they_claim() {
     let day = chance_of(&o, "Done in a working day");
     assert!(!day.exact && day.chance < 0.5 && day.chance > 0.25, "{day:?}");
 }
+
+#[test]
+fn the_drawbridge_is_quicker_on_average_and_worse_when_you_need_to_be_sure() {
+    use recollect_graph::Op;
+    use recollect_graph::chance::{Reader, Share, Term};
+    use recollect_systems::formulas::{Chosen, known_draws, worlds_left};
+    use recollect_systems::plan::KNOWING;
+    let mut o = open("drawbridge");
+
+    // Over the bridge, taken together, has two humps, and its average is between them.
+    let bridge = o.get::<ValueCell>("Over the bridge").0.0;
+    assert_eq!(bridge.len(), 2, "one for each way the bridge could be");
+    let shares: Vec<Share> = bridge.cases().iter().map(|(when, v)| Share { weight: when.prob(), value: match v { Val::Rand(r) => Term::Rand(*r), other => panic!("{other:?}") } }).collect();
+    let together = Reader::new().summary(&shares);
+    let bars = &together.hist.bars;
+    let peaks = (1..bars.len() - 1).filter(|&i| bars[i] > bars[i - 1] && bars[i] >= bars[i + 1] && bars[i] > 0.01).count();
+    assert_eq!(peaks, 2, "two humps: {bars:?}");
+    assert!((together.mean - (25.0 + 0.4 * 40.0 / 3.0)).abs() < 0.2, "{together:?}");
+    let near = o.get::<ValueCell>("Within two minutes of 30").0.0;
+    let near: f64 = near.cases().iter().map(|(when, v)| when.prob() * match v {
+        Val::Bool(b) => f64::from(u8::from(*b)),
+        Val::Rand(r) => Reader::new().chance(&[Share { weight: 1.0, value: Term::Rand(*r) }]).chance,
+        other => panic!("{other:?}"),
+    }).sum();
+    assert!(near < 0.06, "you're hardly ever near the average: {near}");
+
+    // For each way: the bridge is quicker on average, and less sure to be on time with 40 minutes.
+    let read = |o: &Opened, name: &str, option: &str| -> f64 {
+        let chosen = o.get::<Chosen>("Which way?").0.0;
+        let world = chosen.cases().iter().find(|(_, v)| matches!(v, Val::Ref(e) if recollect_systems::label_of(o.g(), *e) == option)).map(|(when, _)| when.clone()).unwrap();
+        let value = o.get::<ValueCell>(name).0.0;
+        let found = value.cases().into_iter().find(|(when, _)| !(when & &world).is_never()).unwrap().1.clone();
+        match found {
+            Val::Num(n) => n,
+            Val::Estimate(e) => e.value,
+            other => panic!("{name} for {option} is {other:?}"),
+        }
+    };
+    let (bridge_mean, ring_mean) = (read(&o, "Average journey", "Over the bridge"), read(&o, "Average journey", "Round the ring road"));
+    assert!(bridge_mean < ring_mean && (ring_mean - 33.0).abs() < 1e-9, "{bridge_mean} {ring_mean}");
+    let (bridge_odds, ring_odds) = (read(&o, "Chance of being on time", "Over the bridge"), read(&o, "Chance of being on time", "Round the ring road"));
+    assert!(bridge_odds > 0.85 && bridge_odds < 0.93 && ring_odds > 0.98, "{bridge_odds} {ring_odds}");
+
+    let left = |o: &Opened| worlds_left(o.g(), &Space::global().picks(&BTreeMap::new()), &Space::global().always(), &mut Reader::given(known_draws(o.g())));
+    let takes = |o: &Opened, option: &str| o.get::<Chosen>("Which way?").0.0.holds(|v| matches!(v, Val::Ref(e) if recollect_systems::label_of(o.g(), *e) == option));
+    assert!(left(&o) == takes(&o, "Round the ring road"), "only the ring road is sure enough");
+
+    // In a hurry, the bridge is the better bet.
+    let (have, on_time) = (o.id("Minutes you have"), o.id("On time"));
+    o.log.commit("t", "in a hurry", vec![Op::set(have, ValueCell::num(33.0)), Op::set(on_time, recollect_systems::formulas::AtLeast(0.55))]).unwrap();
+    assert!(left(&o) == takes(&o, "Over the bridge"));
+
+    // Seeing the bridge before you choose: the bridge when it's down, and either when it's up as long as it's the ring road.
+    o.log.commit("t", "back to 40", vec![Op::set(have, ValueCell::num(40.0)), Op::set(on_time, recollect_systems::formulas::AtLeast(0.95))]).unwrap();
+    o.log.commit("t", "look out of the window", vec![Op::link(o.id("Which way?"), o.id("The bridge is up"), KNOWING)]).unwrap();
+    let up = o.get::<ValueCell>("The bridge is up").0.0.holds(|v| *v == Val::Bool(true));
+    assert!(left(&o) == (&takes(&o, "Round the ring road") | &(&takes(&o, "Over the bridge") & &!&up)), "the bridge when it's down, and the ring road either way");
+}

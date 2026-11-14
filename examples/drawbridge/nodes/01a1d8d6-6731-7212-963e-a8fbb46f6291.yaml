@@ -1,0 +1,25 @@
+id: 01a1d8d6-6731-7212-963e-a8fbb46f6291
+components:
+- notes
+- value
+cells:
+  body: To the river, then the bridge, then ten more minutes. Two answers, one for each way the bridge could be, and taken together a histogram with two humps.
+  name: Over the bridge
+formulas:
+  value: drive + if(up, wait, 0) + normal(10, 1)
+links:
+- to: 01a1d8d6-6731-7212-963e-a8f83f016c51
+  components:
+  - label
+  cells:
+    called: drive
+- to: 01a1d8d6-6731-7212-963e-a8f9fe83244e
+  components:
+  - label
+  cells:
+    called: up
+- to: 01a1d8d6-6731-7212-963e-a8fae9ebeb85
+  components:
+  - label
+  cells:
+    called: wait

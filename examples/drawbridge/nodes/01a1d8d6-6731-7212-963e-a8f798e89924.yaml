@@ -1,0 +1,22 @@
+id: 01a1d8d6-6731-7212-963e-a8f798e89924
+components:
+- notes
+cells:
+  body: |-
+    You have two ways home. Over the river there's a drawbridge, which is up for boats four times in ten, and then you wait. Round the ring road is longer, and steady.
+
+    So the bridge route's time is a **mixture**: usually about 25 minutes, and sometimes nearer 38. Its histogram has two humps, and its average, about 30 minutes, sits in the gap between them: it's a journey you almost never take.
+
+    Which way is better depends on what you need, and not in the way the averages suggest:
+
+    - **On average**, the bridge is quicker: about 30 minutes against 33.
+    - **In a hurry,** it's better too: with half an hour, it's on time six times in ten, and the ring road hardly ever.
+    - **To be sure**, it's worse. With 40 minutes, the ring road is on time 99% of the time and the bridge only about 90%, because when the bridge is up, it can be very up. **On time** is required 95% of the time, so only the ring road is left.
+
+    **Things to try**
+
+    - Select **Over the bridge**: its histogram has two humps. Then **Within two minutes of 30**: you're that close to its average about one time in thirty.
+    - Look at **Average journey** and **Chance of being on time** for each way.
+    - Set **On time**'s **at least** to 0.85 in the panel on the right, and both ways are left. Set **Minutes you have** to 33 and **at least** to 0.55, and only the bridge is.
+    - Link **Which way?** to **The bridge is up** with a **knowing** link: you can see the bridge from your window before you choose. Now each way is judged for each, and taking the bridge when it's down meets 95% easily. Seeing the bridge is worth more than either route.
+  name: About this example

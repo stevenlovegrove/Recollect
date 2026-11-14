@@ -1,0 +1,9 @@
+id: 01a1d8d6-6731-7212-963e-a8fc85f2fb17
+components:
+- notes
+- value
+cells:
+  body: 'Longer, and steady: one hump.'
+  name: Round the ring road
+formulas:
+  value: normal(33, 3)

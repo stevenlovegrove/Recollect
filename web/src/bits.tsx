@@ -45,17 +45,20 @@ export const estimateOf = (v: unknown): Estimate | undefined => only(v, "estimat
 
 /** An estimate in a few words. It always says it's about that. */
 export function estimateText(e: Estimate): string {
-  return e.error ? `≈ ${toWithin(e.value, e.error)} ± ${figures(e.error)}` : `≈ ${figures(e.value)}`;
+  return e.error ? `≈ ${toWithin(e.value, e.error)} ± ${smallFigures(e.error)}` : `≈ ${figures(e.value)}`;
 }
 
 export function estimateHow(e: Estimate): string {
-  return `Read from ${e.draws.toLocaleString()} draws, not worked out exactly. ${e.error ? `It could be out by about ${figures(e.error)}.` : "It's come through something that doesn't say how far out it could be."}`;
+  return `Read from ${e.draws.toLocaleString()} draws, not worked out exactly. ${e.error ? `It could be out by about ${smallFigures(e.error)}.` : "It's come through something that doesn't say how far out it could be."}`;
 }
 
 /** How likely an uncertain truth is, if that's what this is: `{"chance": …}`. */
 export const chanceOf = (v: unknown): Chance | undefined => only(v, "chance") as Chance | undefined;
 
 const figures = (n: number) => valueText(+n.toPrecision(3));
+
+/** A small number, such as how far out something could be, to two figures however small it is. */
+const smallFigures = (n: number) => (Math.abs(n) >= 1 ? figures(n) : String(+n.toPrecision(2)));
 
 /**
  * A number that could be out by about `error`, written to as many places as that leaves meaningful, so
@@ -70,7 +73,7 @@ function toWithin(n: number, error: number): string {
 /** An uncertain number in a few words: its middle and its spread. What was read from draws says it's about that. */
 export function distText(d: Dist): string {
   if (d.undefined >= 1) return "undefined";
-  return `${d.exact ? `${figures(d.mean)}` : `≈ ${toWithin(d.mean, d.error)}`} ± ${figures(d.sd)}`;
+  return `${d.exact ? `${figures(d.mean)}` : `≈ ${toWithin(d.mean, d.error)}`} ± ${smallFigures(d.sd)}`;
 }
 
 /** How an uncertain number was got, for a tooltip: its name if it has one, or how many draws and how far out. */
@@ -78,7 +81,7 @@ export function distHow(d: Dist): string {
   const range = `Nine times in ten it's between ${figures(d.low)} and ${figures(d.high)}`;
   const gaps = d.undefined > 0 && d.undefined < 1 ? `. Undefined ${beliefText(d.undefined)} of the time` : "";
   if (d.exact) return `${d.law ? `Exactly ${d.law}` : "Exact"}. ${range}${gaps}`;
-  return `Read from ${d.draws.toLocaleString()} draws, so the mean could be out by about ${figures(d.error)}. ${range}${gaps}`;
+  return `Read from ${d.draws.toLocaleString()} draws, so the mean could be out by about ${smallFigures(d.error)}. ${range}${gaps}`;
 }
 
 /** A chance in a few words. One nothing settled says how many draws it held in, and never says never. */

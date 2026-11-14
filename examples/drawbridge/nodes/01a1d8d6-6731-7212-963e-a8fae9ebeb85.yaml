@@ -1,0 +1,9 @@
+id: 01a1d8d6-6731-7212-963e-a8fae9ebeb85
+components:
+- notes
+- value
+cells:
+  body: 'When it''s up: at least 8 minutes, most likely 12, and as long as 20 behind a slow barge.'
+  name: Waiting for the bridge
+formulas:
+  value: triangular(8, 12, 20)
