@@ -3886,6 +3886,8 @@ button.icon.act.revert:hover {
 .stepper-text {
   font-size: 12.5px;
   padding: 0 4px;
+  min-width: 17ch;
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 .world-panel .drawing-pick {
@@ -3899,15 +3901,36 @@ button.icon.act.revert:hover {
   border-radius: 50%;
   color: var(--muted);
 }
-/* Small, in the bottom corner, out of the way of everything else. */
+/* The card's contents above, and along its bottom, stepping on the left and the ? in the corner. The
+   card never gets shorter while it's open, and this stays at its bottom, so it never moves. */
+.world-card {
+  display: flex;
+  flex-direction: column;
+}
 .world-panel {
-  position: relative;
-  padding-bottom: 14px;
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+.world-body::after {
+  content: "";
+  display: block;
+  clear: both;
+}
+.world-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  margin: auto -4px -4px 0;
+  padding-top: 10px;
+  box-sizing: content-box;
+  position: sticky;
+  bottom: -12px;
+  background: var(--panel);
 }
 .worlds-help {
-  position: absolute;
-  right: -4px;
-  bottom: -6px;
+  margin-left: auto;
   width: 18px;
   height: 18px;
   padding: 0;

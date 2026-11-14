@@ -3,6 +3,7 @@ import type { OptionView, VarView, World } from "../api";
 import type { ViewProps } from "./MapView";
 import type { Workspace } from "../workspace";
 import { BELIEF_MEANS, beliefText as percent } from "../bits";
+import { api } from "../api";
 import { DrawingFrame } from "./DrawingFrame";
 
 export const DEFAULT = "default";
@@ -35,26 +36,49 @@ export function useRemembered(key: string): [string, (v: string) => void] {
  * one and everything narrows, on every page, with nothing saved. For a puzzle, the worlds left are its
  * solutions. It's what the worlds chip grows into: `summary` is the chip's own line, at its head.
  */
-export function WorldPanel({ ws, onSelect, summary }: { ws: Workspace; onSelect: (id: string | null) => void; summary: ReactNode }) {
+/** Where stepping through the worlds is: what it started from, how many there were, which it's at, and
+ *  the world that is, to tell when something else has changed it. */
+export type Stepping = { base: World; total: bigint; at: bigint; shown: string };
+type Steps = [Stepping | null, (s: Stepping | null) => void];
+
+/** Stepping, kept by whatever outlives the panel, so folding it away and back carries on where it was,
+ *  and forgotten once the world is changed some other way. */
+export function useStepping(ws: Workspace): Steps {
+  const [stepping, setStepping] = useState<Stepping | null>(null);
+  useEffect(() => {
+    if (stepping && same(ws.world) !== stepping.shown) setStepping(null);
+  }, [ws.world]); // eslint-disable-line react-hooks/exhaustive-deps
+  return [stepping, setStepping];
+}
+
+/** A world as text that doesn't depend on the order its choices were listed in. */
+const same = (world: World) => JSON.stringify(Object.keys(world).sort().map((k) => [k, world[k]]));
+
+export function WorldPanel({ ws, onSelect, summary, steps }: { ws: Workspace; onSelect: (id: string | null) => void; summary: ReactNode; steps: Steps }) {
   const g = ws.view!;
   const w = g.worlds;
   const quantities = w.quantities ?? [];
   const pinned = Object.keys(w.picks).length + quantities.length + Object.keys(ws.world).filter((k) => k.startsWith("!")).length;
   // What it all means, for whoever asks.
   const [help, setHelp] = useState(false);
-  // Stepping through solutions pins every choice, which leaves one, so remember the list it was in.
-  const [stepping, setStepping] = useState<{ list: World[]; at: number } | null>(null);
-  useEffect(() => {
-    if (stepping && JSON.stringify(stepping.list[stepping.at]) !== JSON.stringify(ws.world)) setStepping(null);
-  }, [ws.world]); // eslint-disable-line react-hooks/exhaustive-deps
-  const step = (by: number) => {
-    const list = stepping?.list ?? w.solutions;
-    if (!list.length) return;
-    const at = stepping ? (stepping.at + by + list.length) % list.length : by > 0 ? 0 : list.length - 1;
-    setStepping({ list, at });
-    ws.setWorld(list[at]);
+  // Each world is asked for by where it comes, so there's no limit to how far stepping goes.
+  const [stepping, setStepping] = steps;
+  const total = /^\d+$/.test(w.count) ? BigInt(w.count) : null;
+  const step = async (by: number) => {
+    const base = stepping?.base ?? ws.world;
+    const n = stepping?.total ?? total;
+    if (!n || n < BigInt(1)) return;
+    const at = stepping ? (stepping.at + BigInt(by) + n) % n : by > 0 ? BigInt(0) : n - BigInt(1);
+    const found = await api.worldAt(base, at.toString());
+    if (!found) return;
+    // What's ruled out, and quantities pinned, stay as they were: the worlds stepped through respect them.
+    const next = { ...found, ...Object.fromEntries(Object.entries(base).filter(([k]) => k.startsWith("!") || k.startsWith("="))) };
+    setStepping({ base, total: n, at, shown: same(next) });
+    ws.setWorld(next);
   };
-  const solutions = `${w.solutions.length}${w.solutions.length === 300 ? "+" : ""}`;
+  const solutions = (stepping?.total ?? total ?? BigInt(0)).toLocaleString();
+  // A puzzle's worlds are its solutions; anywhere else they're just worlds.
+  const kind = w.constrained ? ["Solution", "solutions", "solution"] : ["World", "worlds", "world"];
 
   const drawings = g.nodes.filter((n) => typeof n.cells.drawing?.value === "string");
   const [wanted, setWanted] = useRemembered(`recollect.drawing:${g.workspace.id}`);
@@ -70,20 +94,10 @@ export function WorldPanel({ ws, onSelect, summary }: { ws: Workspace; onSelect:
 
   return (
     <div className="world-panel">
+      <div className="world-body">
       {/* The chip it grew from stays at the right end, where it was, with what acts on it before it. */}
       <div className="worlds-head">
         <span className="worlds-tools left">
-          {w.constrained && (stepping || w.solutions.length > 1) && (
-            <span className="stepper" title={stepping ? `Solution ${stepping.at + 1} of ${stepping.list.length}` : `Step through the ${solutions} solutions`}>
-              <button className="icon small" onClick={() => step(-1)} aria-label="Previous solution">
-                ◀
-              </button>
-              <span className="stepper-text">{stepping ? `Solution ${stepping.at + 1} of ${stepping.list.length}` : `Step through ${solutions} solutions`}</span>
-              <button className="icon small" onClick={() => step(1)} aria-label="Next solution">
-                ▶
-              </button>
-            </span>
-          )}
           {drawings.length > 0 && (
             <select className="small drawing-pick" value={drawing?.id ?? DEFAULT} onChange={(e) => setWanted(e.target.value)} aria-label="Show" title="Show the choices, or a drawing of them">
               <option value={DEFAULT}>Choices</option>
@@ -154,13 +168,28 @@ export function WorldPanel({ ws, onSelect, summary }: { ws: Workspace; onSelect:
             a cross means it's ruled out, and blank means no world lands there.
           </p>
           {w.vars.some((v) => v.uncertain) && <p>For what's uncertain, the percentage is the belief in each: how strongly it's believed given the evidence and whatever's pinned, so it changes as you pin things.</p>}
-          {w.constrained && <p>Requirements rule some worlds out, so for a puzzle the worlds left are its solutions, and they can be stepped through.</p>}
+          <p>The arrows at the bottom step through the worlds left one at a time, each with every choice pinned.{w.constrained ? " Requirements rule some worlds out, so here the worlds left are the solutions." : ""}</p>
         </div>
       )}
-      {/* Out of the way, in the corner: what it all means, for whoever asks. */}
-      <button className={`icon worlds-help ${help ? "on" : ""}`} aria-pressed={help} aria-label="What this means" title="What this means" onClick={() => setHelp(!help)}>
-        ?
-      </button>
+      </div>
+      {/* At the bottom of the card, which never gets shorter while it's open, so stepping never moves
+          it, and the ? across from it. */}
+      <div className="world-foot">
+        {(stepping || (total !== null && total > BigInt(1))) && (
+          <span className="stepper" title={stepping ? `${kind[0]} ${(stepping.at + BigInt(1)).toLocaleString()} of ${solutions}` : `Step through the ${solutions} ${kind[1]}, one at a time`}>
+            <button className="icon small" onClick={() => step(-1)} aria-label={`Previous ${kind[2]}`}>
+              ◀
+            </button>
+            <span className="stepper-text">{stepping ? `${kind[0]} ${(stepping.at + BigInt(1)).toLocaleString()} of ${solutions}` : `Step through ${solutions} ${kind[1]}`}</span>
+            <button className="icon small" onClick={() => step(1)} aria-label={`Next ${kind[2]}`}>
+              ▶
+            </button>
+          </span>
+        )}
+        <button className={`icon worlds-help ${help ? "on" : ""}`} aria-pressed={help} aria-label="What this means" title="What this means" onClick={() => setHelp(!help)}>
+          ?
+        </button>
+      </div>
     </div>
   );
 }

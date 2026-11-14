@@ -304,3 +304,27 @@ fn an_option_ruled_out_only_for_looking_is_left_out_of_every_world_and_saved_now
 
     assert!(ws.take_writes().is_empty(), "and nothing is written");
 }
+
+#[test]
+fn every_world_can_be_stepped_to_by_where_it_comes_in_every_sample() {
+    for s in SAMPLES {
+        let mut ws = open(sample_files(s.name).unwrap());
+        let v = view(&mut ws);
+        let Ok(n) = v["worlds"]["count"].as_str().unwrap().parse::<u128>() else { continue };
+        if n < 2 {
+            continue;
+        }
+        let at = |ws: &mut Workspace, k: u128| dispatch(ws, "world_at", json!({ "world": {}, "at": k.to_string() }), "t").unwrap().0;
+        // All of them where there are few, and the first, second and last where there are many.
+        let places: Vec<u128> = if n <= 40 { (0..n).collect() } else { vec![0, 1, n - 1] };
+        let mut seen = std::collections::BTreeSet::new();
+        for k in places {
+            let world = at(&mut ws, k);
+            assert!(world.is_object(), "{}: world {k} of {n}", s.name);
+            assert!(seen.insert(world.to_string()), "{}: world {k} came twice", s.name);
+            let there = dispatch(&mut ws, "view", json!({ "world": world }), "t").unwrap().0;
+            assert_eq!(there["worlds"]["count"], "1", "{}: world {k} of {n} is one world: {world}", s.name);
+        }
+        assert!(at(&mut ws, n).is_null(), "{}: nothing after the last", s.name);
+    }
+}

@@ -198,8 +198,12 @@ pub struct WorldsView {
     pub count: String,
     /// Whether anything rules worlds out, as a puzzle's constraints do.
     pub constrained: bool,
-    /// The worlds in play, if that's what the workspace is about. Limited to the first few hundred.
+    /// For a puzzle, its solutions, each with every choice pinned. Only the first few hundred: stepping
+    /// asks for each world by where it comes instead.
     pub solutions: Vec<World>,
+    /// The world asked for by where it comes, when one was.
+    #[serde(skip)]
+    pub at: Option<World>,
     /// Quantities pinned to a value or a range, and whether each could be.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub quantities: Vec<QuantityPin>,
@@ -747,7 +751,8 @@ struct Asked {
 
 /// `constrained` is whether what's written rules worlds out, as a puzzle's requirements do, rather than
 /// only what's being looked at.
-fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap<String, Var>, quantities: Vec<QuantityPin>, constrained: bool) -> WorldsView {
+/// With `at`, it also picks out the world that comes `at`th, with every choice pinned, for stepping.
+fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap<String, Var>, quantities: Vec<QuantityPin>, constrained: bool, at: Option<u128>) -> WorldsView {
     let in_play = &lens.in_play;
     // A decision whose options depend on other choices is several variables with its name, one for each
     // set of options that can be left, so it's asked where it lands rather than read off one of them.
@@ -857,24 +862,73 @@ fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap
     clues(&mut views, &asked, in_play, held);
     // Each way things could go is counted once: a variable of a draw that isn't the one in use doesn't make another.
     let at_rest = groups.iter().fold(plan::at_rest(g), |acc, group| Some(acc.map_or_else(|| group.at_rest(), |a| &a & &group.at_rest())));
-    let (count, solutions) = if at_rest.is_none() {
+    let with_applied = |mut s: World| {
+        s.extend(applied.clone());
+        s
+    };
+    let (count, solutions, picked_at) = if at_rest.is_none() {
+        // Every variable the worlds left depend on, as well as those still open.
+        let mut every = in_play.vars();
+        every.extend(unpicked.iter().cloned());
+        let picked_at = at.and_then(|k| in_play.nth(&every, k)).map(with_applied);
         if constrained {
             let n = in_play.count(&unpicked);
-            let found = in_play.solutions(&unpicked, 300).into_iter().map(|mut s| {
-                s.extend(applied.clone());
-                s
-            });
-            (n.to_string(), found.collect())
+            (n.to_string(), in_play.solutions(&unpicked, 300).into_iter().map(with_applied).collect(), picked_at)
+        } else if !lens.found.is_always() {
+            // Something's ruled out, so the worlds left are counted rather than multiplied out.
+            (in_play.count(&every).to_string(), vec![], picked_at)
         } else {
-            (count.map_or_else(|| "more than can be counted".to_string(), |n| n.to_string()), vec![])
+            (count.map_or_else(|| "more than can be counted".to_string(), |n| n.to_string()), vec![], picked_at)
         }
     } else {
         // Each way things could go, once: a variable that isn't in use doesn't make another.
-        let n = (in_play & &at_rest.expect("just checked").given(&lens.picks)).count_with(&unpicked);
+        let rest = at_rest.expect("just checked").given(&lens.picks);
+        let n = (in_play & &rest).count_with(&unpicked);
         let found = if constrained { ways(&asked, in_play, &applied, 300) } else { vec![] };
-        (n.to_string(), found)
+        let picked_at = at.and_then(|k| nth_way(&asked, in_play, k)).map(with_applied);
+        (n.to_string(), found, picked_at)
     };
-    WorldsView { picks: applied, vars: views, count, constrained, solutions, quantities }
+    WorldsView { picks: applied, vars: views, count, constrained, solutions, quantities, at: picked_at }
+}
+
+/// The `k`th way everything open could land, counting from 0 in the order `ways` lists them. It's found by
+/// counting the ways under each option rather than listing every way before it, and the same worlds
+/// left at the same question are only counted once, so it's as quick far along as near the start.
+fn nth_way(asked: &[Asked], in_play: &Bool, k: u128) -> Option<World> {
+    fn ways_from(asked: &[Asked], i: usize, left: &Bool, memo: &mut HashMap<(usize, Bool), u128>) -> u128 {
+        if left.is_never() {
+            return 0;
+        }
+        if i == asked.len() {
+            return 1;
+        }
+        if let Some(&n) = memo.get(&(i, left.clone())) {
+            return n;
+        }
+        let n = asked[i].lands.iter().map(|(_, lands)| ways_from(asked, i + 1, &(left & lands), memo)).sum();
+        memo.insert((i, left.clone()), n);
+        n
+    }
+    let mut memo = HashMap::new();
+    if k >= ways_from(asked, 0, in_play, &mut memo) {
+        return None;
+    }
+    let (mut left, mut k, mut out) = (in_play.clone(), k, World::new());
+    for (i, a) in asked.iter().enumerate() {
+        let (option, here) = a.lands.iter().find_map(|(option, lands)| {
+            let here = &left & lands;
+            let n = ways_from(asked, i + 1, &here, &mut memo);
+            if k < n {
+                Some((option.clone(), here))
+            } else {
+                k -= n;
+                None
+            }
+        })?;
+        out.insert(a.id.clone(), option);
+        left = here;
+    }
+    Some(out)
 }
 
 /// The ways everything open could land, among the worlds in play, up to `limit`.
@@ -968,6 +1022,16 @@ fn relabel(text: &str, labels: &Labels) -> String {
 
 /// The whole graph, narrowed to `world`.
 pub fn view(o: &Workspace, world: &World) -> View {
+    view_at(o, world, None)
+}
+
+/// The world that comes `k`th among those left, counting from 0, with every choice pinned. It's what
+/// stepping through the worlds shows, worked out when asked for, however many there are.
+pub fn world_at(o: &Workspace, world: &World, k: u128) -> Option<World> {
+    view_at(o, world, Some(k)).worlds.at
+}
+
+fn view_at(o: &Workspace, world: &World, at: Option<u128>) -> View {
     let (copy, quantities) = looked_at(o.log.graph(), world);
     let g: &Graph = copy.as_ref().unwrap_or_else(|| o.log.graph());
     let labels = Labels::gather(g);
@@ -994,7 +1058,7 @@ pub fn view(o: &Workspace, world: &World) -> View {
     let constants = g.constants().into_iter().map(|(e, _)| node(e, recollect_systems::label_of(g, e))).collect();
     let edges = g.edges().filter(|(_, from, _)| !is_lens(g, *from)).map(|(e, from, to)| EdgeView { id: e, from, to, components: g.given(e).into_iter().collect(), cells: cells(g, e, &lens, &labels, &mut vars) }).collect();
     let refused: Vec<CheckView> = quantities.iter().filter_map(|q| Some(CheckView { severity: "notice", rule: "pin_not_applied".to_string(), on: if q.node == Entity::whole() { vec![] } else { vec![q.node] }, detail: format!("{} {} couldn't be pinned to {}: {}", labels.of(&q.node.to_string()), q.cell, q.text, q.refused.as_ref()?) })).collect();
-    let worlds = worlds(g, world, &lens, &labels, vars, quantities, narrows(o.log.graph()));
+    let worlds = worlds(g, world, &lens, &labels, vars, quantities, narrows(o.log.graph()), at);
     let ran = g.take_ran().into_iter().filter(|(_, c)| !internal(g, c)).map(|(node, cell)| RanView { node, cell }).collect();
     View {
         workspace: WorkspaceView { name: o.config.name.clone(), about: o.config.about.clone(), id: o.id.clone(), location: o.location.clone(), systems: o.built.names.clone(), sample: o.sample.clone() },

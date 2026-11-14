@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { Workspace } from "./workspace";
 import { ViewIcon } from "./ViewNav";
-import { WorldPanel } from "./views/WorldPanel";
+import { WorldPanel, useStepping } from "./views/WorldPanel";
 
 /** Whether there's anything to narrow to: an open choice, or something pinned. */
 export function hasWorlds(ws: Workspace) {
@@ -51,6 +51,7 @@ function Summary({ ws, open, onToggle }: { ws: Workspace; open: boolean; onToggl
  */
 export function Worlds({ ws, open, onOpen, onSelect }: { ws: Workspace; open: boolean; onOpen: (open: boolean) => void; onSelect: (id: string | null) => void }) {
   const here = useRef<HTMLDivElement>(null);
+  const steps = useStepping(ws);
   const card = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -60,19 +61,24 @@ export function Worlds({ ws, open, onOpen, onSelect }: { ws: Workspace; open: bo
     document.addEventListener("pointerdown", away);
     return () => document.removeEventListener("pointerdown", away);
   }, [open, onOpen]);
-  // While it's open it only ever grows, so what's under the pointer stays put as choices are pinned and
-  // their percentages come and go. It starts again from what it holds each time it opens.
-  const widest = useRef(0);
+  // While it's open it only ever grows, wider or taller, so what's under the pointer stays put as choices
+  // are pinned, their percentages come and go, and what's worth finding out is answered. It starts again
+  // from what it holds each time it opens.
+  const biggest = useRef({ width: 0, height: 0 });
   useLayoutEffect(() => {
     const el = card.current;
     if (!open || !el) {
-      widest.current = 0;
+      biggest.current = { width: 0, height: 0 };
       return;
     }
     el.style.minWidth = "";
-    const width = el.getBoundingClientRect().width;
-    widest.current = Math.min(Math.max(widest.current, width), window.innerWidth - 24);
-    el.style.minWidth = `${widest.current}px`;
+    el.style.minHeight = "";
+    const box = el.getBoundingClientRect();
+    const b = biggest.current;
+    b.width = Math.min(Math.max(b.width, box.width), window.innerWidth - 24);
+    b.height = Math.min(Math.max(b.height, box.height), window.innerHeight - 70);
+    el.style.minWidth = `${b.width}px`;
+    el.style.minHeight = `${b.height}px`;
   });
   if (!hasWorlds(ws)) return null;
   const toggle = () => onOpen(!open);
@@ -81,7 +87,7 @@ export function Worlds({ ws, open, onOpen, onSelect }: { ws: Workspace; open: bo
       <Summary ws={ws} open={open} onToggle={toggle} />
       {open && (
         <div className="world-card" ref={card}>
-          <WorldPanel ws={ws} onSelect={onSelect} summary={<Summary ws={ws} open={open} onToggle={toggle} />} />
+          <WorldPanel ws={ws} onSelect={onSelect} steps={steps} summary={<Summary ws={ws} open={open} onToggle={toggle} />} />
         </div>
       )}
     </div>

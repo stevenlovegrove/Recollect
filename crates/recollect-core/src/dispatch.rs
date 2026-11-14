@@ -80,8 +80,16 @@ struct UndoArgs {
     why: String,
 }
 
+#[derive(Deserialize)]
+struct WorldAtArgs {
+    #[serde(default)]
+    world: World,
+    /// Which, counting from 0, as text: there can be more worlds than a JavaScript number counts exactly.
+    at: String,
+}
+
 /// The methods `dispatch` knows.
-pub const METHODS: &[&str] = &["view", "plan", "try", "sweep", "rows", "history", "apply", "undo", "redo"];
+pub const METHODS: &[&str] = &["view", "world_at", "plan", "try", "sweep", "rows", "history", "apply", "undo", "redo"];
 
 /// Answer one call on the workspace. `author` is who's asking, for anything that changes it.
 pub fn dispatch(ws: &mut Workspace, method: &str, a: Value, author: &str) -> Result<(Value, Effect), Error> {
@@ -89,6 +97,11 @@ pub fn dispatch(ws: &mut Workspace, method: &str, a: Value, author: &str) -> Res
     let graph = Effect { graph: true };
     match method {
         "view" => read(to_json(views::view(ws, &args::<WorldArgs>(a)?.world))),
+        "world_at" => {
+            let w: WorldAtArgs = args(a)?;
+            let at: u128 = w.at.parse().map_err(|_| Error::Refused(format!("{} isn't a place among the worlds", w.at)))?;
+            read(to_json(views::world_at(ws, &w.world, at)))
+        }
         "plan" => read(to_json(views::planning(ws, &args::<WorldArgs>(a)?.world).map_err(Error::Refused)?)),
         "try" => {
             let t: TryArgs = args(a)?;

@@ -393,6 +393,8 @@ export const api = {
   workspaces: async () => (await backend()).workspaces(),
   openSample: async (sample: string, reset = false) => (await backend()).openSample(sample, reset),
   view: (world: World) => call<View>("view", { world }),
+  /** The world that comes `at`th among those `world` leaves, counting from 0, with every choice pinned. `at` is text because there can be more worlds than a number holds exactly. */
+  worldAt: (world: World, at: string) => call<World | null>("world_at", { world, at }),
   plan: (world: World) => call<PlanData>("plan", { world }),
   apply: (ops: Op[], why = "") => call<{ created: Record<string, string> }>("apply", { ops, why }),
   /** Take back one event, or the newest change if none is given. */

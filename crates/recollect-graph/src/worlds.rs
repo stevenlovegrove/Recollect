@@ -570,6 +570,15 @@ impl PartialEq for Bool {
     }
 }
 
+impl Eq for Bool {}
+
+/// By the same node equality goes by, so the same set of worlds hashes the same.
+impl std::hash::Hash for Bool {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.f.hash(state);
+    }
+}
+
 impl fmt::Debug for Bool {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.show())
@@ -767,6 +776,52 @@ impl Bool {
         let mut out = Vec::new();
         go(&self.space.lock(), self.f, 0, &order, &mut Vec::new(), &mut out, limit);
         out
+    }
+
+    /// The `k`th satisfying assignment of `vars`, counting from 0, in the order `solutions` lists them,
+    /// without listing any before it: at each variable, the counts under each option say which it's
+    /// under. `None` if there aren't that many. `vars` must include everything this depends on.
+    pub fn nth(&self, vars: &[Var], k: u128) -> Option<BTreeMap<String, String>> {
+        fn count(m: &Mdd, f: F, level: usize, order: &[u32], memo: &mut HashMap<(F, usize), u128>) -> u128 {
+            if f == FALSE {
+                return 0;
+            }
+            if level == order.len() {
+                assert!(f == TRUE, "vars must include everything this depends on");
+                return 1;
+            }
+            if let Some(&n) = memo.get(&(f, level)) {
+                return n;
+            }
+            let v = order[level];
+            let width = m.vars[v as usize].options.len();
+            let n = (0..width).map(|i| count(m, m.cofactor(f, v, i), level + 1, order, memo)).sum();
+            memo.insert((f, level), n);
+            n
+        }
+        let mut order: Vec<u32> = vars.iter().map(|v| v.idx).collect();
+        order.sort();
+        order.dedup();
+        let m = self.space.lock();
+        let mut memo = HashMap::new();
+        if k >= count(&m, self.f, 0, &order, &mut memo) {
+            return None;
+        }
+        let (mut f, mut k, mut out) = (self.f, k, BTreeMap::new());
+        for (level, &v) in order.iter().enumerate() {
+            let def = &m.vars[v as usize];
+            for (i, o) in def.options.iter().enumerate() {
+                let under = m.cofactor(f, v, i);
+                let n = count(&m, under, level + 1, &order, &mut memo);
+                if k < n {
+                    out.insert(def.name.clone(), o.clone());
+                    f = under;
+                    break;
+                }
+                k -= n;
+            }
+        }
+        Some(out)
     }
 
     /// True in one world: `choice → option`. Choices it doesn't depend on needn't be listed.

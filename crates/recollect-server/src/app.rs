@@ -191,7 +191,7 @@ impl App {
     /// again, so it's made on top of whatever someone else has done to them.
     pub fn call(&self, method: &str, args: Value, author: &str) -> Result<Value, AppError> {
         let (value, effect, changed) = self.with(|o| {
-            let reads = matches!(method, "view" | "plan" | "try" | "sweep" | "rows" | "history");
+            let reads = matches!(method, "view" | "world_at" | "plan" | "try" | "sweep" | "rows" | "history");
             let changed = if reads { Default::default() } else { o.sync()? };
             let (value, effect) = dispatch(&mut o.ws, method, args, author)?;
             o.flush()?;
