@@ -36,6 +36,8 @@ export interface Dist {
   /** How much of the time it's undefined. The rest is about when it isn't. */
   undefined: number;
   hist: { from: number; to: number; bars: number[] };
+  /** How much of the time it's below 0, where it can be. */
+  below0?: number;
   /** The distribution it is, if it has a name, as it would be written. */
   law?: string;
   /** These are exactly right. Otherwise they were read from `draws` draws, and `error` is how far out the mean could be. */

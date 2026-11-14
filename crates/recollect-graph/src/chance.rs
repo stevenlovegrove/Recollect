@@ -1214,6 +1214,9 @@ pub struct Summary {
     /// How much of the time it's undefined. The rest are about when it isn't.
     pub undefined: f64,
     pub hist: Hist,
+    /// How much of the time it's below 0, where its histogram crosses 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub below0: Option<f64>,
     /// The distribution it is, if it has a name, as it would be written.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub law: Option<String>,
@@ -1722,7 +1725,9 @@ impl Reader {
             laws.iter_mut().for_each(|(w, _)| *w /= defined);
             let law = if laws.len() == 1 { laws.remove(0).1 } else { Law::Mixed(laws) };
             let named = if matches!(law, Law::Point(_)) { None } else { law.text() };
-            return Summary { mean: law.mean(), sd: law.sd(), low: law.quantile(0.05), mid: law.quantile(0.5), high: law.quantile(0.95), least, most, undefined, hist: law.hist(), law: named, exact: true, draws: 0, error: 0.0 };
+            let hist = law.hist();
+            let below0 = (hist.from < 0.0 && hist.to > 0.0).then(|| law.mass(0.0, false));
+            return Summary { mean: law.mean(), sd: law.sd(), low: law.quantile(0.05), mid: law.quantile(0.5), high: law.quantile(0.95), least, most, undefined, hist, below0, law: named, exact: true, draws: 0, error: 0.0 };
         }
 
         let mut values = Vec::new();
@@ -1737,7 +1742,9 @@ impl Reader {
         let sd = values.sd();
         // Given something, only the draws where it holds were read.
         let draws = if live.iter().any(|s| matches!(&s.value, Term::Rand(r) if self.tied(r))) { self.draws_kept() } else { DRAWS };
-        Summary { mean: values.mean(), sd, low: values.quantile(0.05), mid: values.quantile(0.5), high: values.quantile(0.95), least, most, undefined, hist: values.hist(), law: None, exact: false, draws, error: sd / (draws.max(1) as f64).sqrt() }
+        let hist = values.hist();
+        let below0 = (hist.from < 0.0 && hist.to > 0.0).then(|| values.0.iter().filter(|(v, _)| *v < 0.0).map(|(_, w)| w).sum::<f64>() / values.total());
+        Summary { mean: values.mean(), sd, low: values.quantile(0.05), mid: values.quantile(0.5), high: values.quantile(0.95), least, most, undefined, hist, below0, law: None, exact: false, draws, error: sd / (draws.max(1) as f64).sqrt() }
     }
 
     /// How likely a truth is, if it's each of these this much of the time.
@@ -2156,6 +2163,16 @@ mod tests {
         near(sure(bin(Op::Lt, &estimate, &n(3.0))), 0.25);
         // And what covers everything is always, with nothing to read.
         assert_eq!(bin(Op::Or, &bin(Op::Lt, &n(1.0), &a), &bin(Op::Le, &a, &n(1.0))), Term::Flag(true));
+    }
+
+    #[test]
+    fn how_much_is_below_zero_is_said_where_it_crosses_zero() {
+        let mut reader = Reader::new();
+        let s = reader.summary(&one(&normal("t/zero/x", 0.05, 0.1)));
+        assert!((s.below0.unwrap() - phi(-0.5)).abs() < 1e-12, "{s:?}");
+        assert_eq!(reader.summary(&one(&normal("t/zero/y", 5.0, 1.0))).below0, None, "it doesn't come near");
+        let drawn = reader.summary(&one(&bin(Op::Mul, &normal("t/zero/a", 0.0, 1.0), &normal("t/zero/b", 0.0, 1.0))));
+        assert!(!drawn.exact && (drawn.below0.unwrap() - 0.5).abs() < 0.03, "{drawn:?}");
     }
 
     #[test]

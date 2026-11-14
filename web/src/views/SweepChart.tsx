@@ -109,6 +109,22 @@ export function SweepChart({ ws, lines, inputs, title }: { ws: Workspace; lines:
 const [W, H, LEFT, RIGHT, TOP, BOTTOM] = [640, 240, 64, 112, 12, 30];
 
 /**
+ * Round numbers to mark an axis with, from below `lo` to above `hi`: steps of 1, 2 or 5 times a power of
+ * ten, so that zero is one of them wherever it's in range.
+ */
+function niceTicks(lo: number, hi: number, about = 4): number[] {
+  const span = hi - lo || Math.abs(hi) || 1;
+  const raw = span / about;
+  const power = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map((k) => k * power).find((s) => s >= raw) ?? 10 * power;
+  const first = Math.floor(lo / step) * step;
+  const out: number[] = [];
+  for (let t = first; t <= hi + step * 1e-9; t += step) out.push(Math.abs(t) < step * 1e-9 ? 0 : +t.toPrecision(12));
+  if (out[out.length - 1] < hi) out.push(+(out[out.length - 1] + step).toPrecision(12));
+  return out;
+}
+
+/**
  * Lines over a run of numbers, one per name, with each named at its end and a crosshair that reads them
  * all. A null is a gap in a line. A line through uncertain numbers can have a band behind it: where each
  * falls nine times in ten.
@@ -119,11 +135,13 @@ export function LinePlot({ xs, ys, bands, names, xName, label }: { xs: number[];
   const last = xs.length - 1;
   const all = [...(ys ?? []).flat().filter((v): v is number => v !== null), ...(bands ?? []).flat().flatMap((b) => (b ? [b.low, b.high] : []))];
   const [ylo, yhi] = all.length ? [Math.min(...all), Math.max(...all)] : [0, 1];
-  const ypad = (yhi - ylo || Math.abs(yhi) || 1) * 0.08;
-  const [y0, y1] = [ylo - ypad, yhi + ypad];
+  // Round ticks that cover everything, so zero is marked wherever it's in range.
+  const ticks = niceTicks(ylo, yhi);
+  const [y0, y1] = [ticks[0], ticks[ticks.length - 1]];
   const px = (x: number) => LEFT + ((x - from) / (to - from || 1)) * (W - LEFT - RIGHT);
   const py = (y: number) => TOP + (1 - (y - y0) / (y1 - y0 || 1)) * (H - TOP - BOTTOM);
-  const ticks = [0, 1, 2, 3].map((i) => y0 + ((y1 - y0) * i) / 3);
+  // The axis is zero where zero's in range, and otherwise the lowest tick, which a gap in the grid says isn't zero.
+  const axis = y0 <= 0 && y1 >= 0 ? 0 : y0;
   // Each line's name at its end, nudged apart where lines end close together.
   const ends = (ys ?? [])
     .map((row, li) => ({ li, y: [...row].reverse().find((v) => v !== null) }))
@@ -156,9 +174,9 @@ export function LinePlot({ xs, ys, bands, names, xName, label }: { xs: number[];
       >
         {ticks.map((t, i) => (
           <g key={i}>
-            <line x1={LEFT} x2={W - RIGHT} y1={py(t)} y2={py(t)} className={i === 0 ? "sweep-axis" : "sweep-grid"} />
+            <line x1={LEFT} x2={W - RIGHT} y1={py(t)} y2={py(t)} className={t === axis ? "sweep-axis" : "sweep-grid"} />
             <text x={LEFT - 6} y={py(t) + 4} textAnchor="end" className="sweep-tick">
-              {valueText(+t.toPrecision(3))}
+              {valueText(t)}
             </text>
           </g>
         ))}

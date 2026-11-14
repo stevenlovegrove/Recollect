@@ -99,11 +99,19 @@ export function Hist({ d, wide }: { d: Dist; wide?: boolean }) {
   const [w, h] = wide ? [180, 36] : [72, 16];
   const top = Math.max(...d.hist.bars, 1e-9);
   const each = w / d.hist.bars.length;
+  // Where zero is, if the histogram crosses it, so what's below it can be told from what's above.
+  const { from, to } = d.hist;
+  const zero = from < 0 && to > 0 ? (-from / (to - from)) * w : null;
   return (
-    <svg className={`hist ${d.exact ? "" : "drawn"}`} width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={`From ${figures(d.hist.from)} to ${figures(d.hist.to)}`}>
+    <svg className={`hist ${d.exact ? "" : "drawn"}`} width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={`From ${figures(from)} to ${figures(to)}${zero !== null ? ", either side of nothing" : ""}`}>
       {d.hist.bars.map((b, i) => (
-        <rect key={i} x={i * each} y={h - (b / top) * h} width={Math.max(each - 0.5, 0.5)} height={(b / top) * h} />
+        <rect key={i} x={i * each} y={h - (b / top) * h} width={Math.max(each - 0.5, 0.5)} height={(b / top) * h} className={zero !== null && (i + 1) * each <= zero ? "below-zero" : undefined} />
       ))}
+      {zero !== null && (
+        <line x1={zero} x2={zero} y1={0} y2={h} className="hist-zero">
+          <title>0</title>
+        </line>
+      )}
     </svg>
   );
 }
@@ -118,6 +126,7 @@ export function DistValue({ d, wide }: { d: Dist; wide?: boolean }) {
       {wide && (
         <span className="dist-how muted">
           {figures(d.hist.from)} to {figures(d.hist.to)} · {d.exact ? (d.law ?? "exact") : `from ${d.draws.toLocaleString()} draws`}
+          {d.hist.from < 0 && d.hist.to > 0 && d.below0 !== undefined && ` · ${beliefText(d.below0)} of the time under 0`}
         </span>
       )}
     </span>

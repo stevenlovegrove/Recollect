@@ -2148,6 +2148,18 @@ input.sheet-input {
 .hist.drawn rect {
   fill: color-mix(in srgb, var(--accent) 55%, transparent);
 }
+/* What's below zero is the same colour, cooler, so the two sides read apart. */
+.hist rect.below-zero {
+  fill: color-mix(in srgb, var(--accent) 55%, var(--danger));
+}
+.hist.drawn rect.below-zero {
+  fill: color-mix(in srgb, color-mix(in srgb, var(--accent) 55%, var(--danger)) 55%, transparent);
+}
+.hist-zero {
+  stroke: var(--text);
+  stroke-width: 1;
+  opacity: 0.6;
+}
 .pin-row {
   display: flex;
   align-items: center;
