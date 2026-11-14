@@ -535,7 +535,7 @@ fn uncertain_estimates_add_up_exactly_and_the_later_of_two_is_drawn() {
     for (task, days) in [("design", "normal(3, 1)"), ("build", "normal(5, 2)"), ("test", "normal(2, 2)")] {
         g.add(task, TASK).formula_on(task, Estimate::NAME, days).link(task, "whole", PART_OF);
     }
-    g.formula("effort", "effort()");
+    g.formula("effort", "sum(t in task: t.estimate)").input("effort", "design", "task").input("effort", "build", "task").input("effort", "test", "task");
     let mut reader = Reader::new();
     assert_eq!(reader.law(&rand(&only(&g, "effort"))), Some(Law::Normal { mean: 10.0, sd: 3.0 }));
 

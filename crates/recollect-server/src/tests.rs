@@ -818,7 +818,7 @@ async fn held_out_a_budget_cap_on_a_plan() {
     // A PDF needs the layout checked again once it's tagged, so what's shared costs more on that path.
     let p = c.propose("Cap the effort at six days", "the review is in a week", vec![
         json!({ "op": "set", "id": "Lay out the pages", "cell": "estimate", "formula": "if(chose(approach, free), 3, 2)", "labels": { "approach": approach, "free": free } }),
-        json!({ "op": "add_node", "id": "new:effort", "name": "Effort", "cells": { "value": { "formula": "effort()" } } }),
+        json!({ "op": "add_node", "id": "new:effort", "name": "Effort", "cells": { "value": { "formula": "if(any(u in gap: u.need), undefined, sum(t in task: if(t.need, t.estimate, 0)))", "labels": { "gap": "Something else", "task": ["Agree who approves it", "Lay out the pages", "Get it printed", "Tag it for screen readers", "Build the site"] } } } }),
         json!({ "op": "add_node", "id": "new:cap", "name": "Within six days", "components": ["requires"], "cells": { "value": { "formula": "effort <= 6", "labels": { "effort": "new:effort" } } } }),
     ]).unwrap();
     let (_, list) = (StatusCode::OK, c.post("/api/call/proposals", json!({})).await);
@@ -1231,7 +1231,7 @@ async fn held_out_estimates_that_are_distributions() {
         task("new:design", "Design", "normal(3, 1)"),
         task("new:build", "Build", "normal(5, 2)"),
         task("new:test", "Test", "normal(2, 2)"),
-        { "op": "add_node", "id": "new:effort", "name": "Effort", "cells": { "value": { "formula": "effort()" } } },
+        { "op": "add_node", "id": "new:effort", "name": "Effort", "cells": { "value": { "formula": "sum(t in task: t.estimate)", "labels": { "task": ["new:design", "new:build", "new:test"] } } } },
         { "op": "add_node", "id": "new:late", "name": "Later of two", "cells": { "value": { "formula": "max(a.estimate, b.estimate)", "labels": { "a": "new:design", "b": "new:build" } } } },
         { "op": "add_node", "id": "new:tight", "name": "Under a fortnight", "cells": { "value": { "formula": "e < 14", "labels": { "e": "new:effort" } } } },
         { "op": "add_node", "id": "new:die", "name": "Die", "cells": { "value": { "formula": "integers(1, 6)" } } },

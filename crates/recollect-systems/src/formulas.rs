@@ -627,7 +627,7 @@ impl<'c, 'a> Expander<'c, 'a> {
         }
         if let Some(m) = expr::library(name) {
             // The library isn't a macro of the kind a workspace writes: it can follow edges and scan, as
-            // `effort()` does, where a workspace's macro only has its parameters.
+            // `is_leaf()` does, where a workspace's macro only has its parameters.
             let vars = self.bind(name, &m.params, args, scope)?;
             return self.expand(&m.body, &Scope { vars, ..Scope::default() });
         }

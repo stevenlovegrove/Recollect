@@ -190,9 +190,6 @@ const NEEDS_START: &[&str] = &["max", "min"];
 const LIBRARY: &[(&str, &[&str], &str)] = &[
     ("abs", &["x"], "if(x < 0, -x, x)"),
     ("or", &["x", "fallback"], "if(defined(x), x, fallback)"),
-    // A plan's effort in each world. Summing over tasks, not up through parents, counts shared work
-    // once. A gap in play means nobody knows, and a task with no estimate is the same.
-    ("effort", &[], "if(any(u in with.unknown: u.need), undefined, sum(t in with.task: if(t.need, t.estimate, 0)))"),
     // Whether this node's own time is its own, because nothing beneath it stands in for it.
     ("is_leaf", &[], "count(p in in.part_of: !p.dropped) = 0 && !has(self.decision)"),
     // Whether what's beneath is finished: its parts, and the option taken. What has nothing to finish

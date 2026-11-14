@@ -156,7 +156,6 @@ The rest of the library is written in that core:
 ```
 abs(x)                 = if(x < 0, -x, x)
 or(x, fallback)        = if(defined(x), x, fallback)
-effort()               = if(any(u in with.unknown: u.need), undefined, sum(t in with.task: if(t.need, t.estimate, 0)))
 sum(x in G: e)         = e[x₁] + e[x₂] + … + 0
 all(x in G: e)         = e[x₁] && e[x₂] && … && true
 max(x in G: e, start)  = max(max(start, e[x₁]), e[x₂]) …
@@ -185,7 +184,7 @@ cells:
 A formula labels an edge to it `effort`, and calls `effort(t)`. So it's in the log with an author and a reason, it can be reviewed in the inbox, and changing it reruns only what uses it.
 
 - **Recursion needs no special check.** A macro's body can use macros it has label edges to. Its expanded form is an internal cell on its own node, `macro_body`, read by whatever calls it, so a caller only reads one hop. A macro that calls itself is a loop in those cells, which the engine already reports.
-- **Bodies are closed.** A body can only use its parameters and other macros, so the same call means the same thing wherever it appears. The library is the exception: `effort()` has no parameters and scans for every task in the workspace, which is why a total is better written out over what it labels: see [The separate systems become one model](#the-separate-systems-become-one-model).
+- **Bodies are closed.** A body can only use its parameters and other macros, so the same call means the same thing wherever it appears. The library is the exception, for what the schedule's own formulas need: `is_leaf()` follows this node's edges. Nothing in it reads the whole workspace.
 - **Names can't capture.** Substitution is on the parsed form, so a macro's parameter can't clash with a name at the call site.
 - **Types are checked after expansion,** with errors pointing at the call and the body. A macro works on anything its body does, so `max` works on numbers and text.
 - **Size is capped.** `f(x) = g(x) + g(x)` nested 30 times is enormous, so expanding past a limit is an error in that cell. Identical subexpressions are evaluated once, which is safe because everything's pure.
@@ -286,7 +285,7 @@ Claude can say "this depends on that", and with formulas it can say "this has to
 
 Because a plan's cells can be read and estimates can vary, the plan and its costs are the same graph. A node that labels each task `task` and says `sum(t in task: if(t.need, t.estimate, 0))` is the plan's days in every world, and its edges say what it's a total of. On the handbook plan it's 6 days for the printed booklet, 8 for the PDF and 5 for the website. Shared work counts once, because it's a sum over tasks and not a rollup through parents, which would double-count anything with two parents. A task with no estimate makes the total undefined, which is honest, and `or(t.estimate, 0)` says otherwise. When something ends is its own `finish`, read as `goal.finish`.
 
-`with.task` is every task in the workspace, and `whole.plan_end` when the last of them ends. They, and the library's `effort()`, which is the sum above over `with.task` and undefined where a gap is in play, are for when the whole workspace is what's meant. A second plan in the same workspace would be counted too, and nothing on a map says what they read.
+`with.task` is every task in the workspace, and `whole.plan_end` when the last of them ends. They're for when the whole workspace is what's meant: a second plan in the same workspace would be counted too, and nothing on a map says what they read. There used to be an `effort()` that summed over `with.task`, and it went for that reason. A gap in play adds no task, so a total that should be unknown there says so: `if(any(u in gap: u.need), undefined, …)`, labelling the gaps.
 
 Add a `requires` node saying `days <= 6`, labelling that total, and the PDF is ruled out, with a readable reason. A decision's estimate and its dates can depend on each other, so "the GPU option is faster, but only if we've bought the GPU" is a formula.
 

@@ -766,7 +766,11 @@ fn effort_is_worked_out_across_a_plan_with_shared_work_counted_once() {
             g.link(t, p, PART_OF);
         }
     }
-    g.formula("effort", "effort()");
+    // It says what it's a total of, and which gaps would make it unknown, by labelling them.
+    g.formula("effort", "if(any(u in gap: u.need), undefined, sum(t in task: if(t.need, t.estimate, 0)))").input("effort", "else", "gap");
+    for t in ["imu", "static", "export", "search", "detector"] {
+        g.input("effort", t, "task");
+    }
     let v = value(&g, "effort").0.0;
     let at = |o: &str| BTreeMap::from([(g.id("calib").to_string(), g.id(o).to_string())]);
     assert_eq!((v.at(&at("cad")), v.at(&at("free")), v.at(&at("board")), v.at(&at("else"))), (&Val::Num(6.0), &Val::Num(8.0), &Val::Num(5.0), &Val::Undefined));
