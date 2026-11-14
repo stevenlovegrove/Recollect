@@ -71,9 +71,9 @@ keyed by choice and option, by name or handle. That's how to answer what-if ques
 Typical jobs: ELABORATE a coarse node. DECOMPOSE it (get_tree first, reusing existing nodes wherever the same work appears, and stop \
 when a leaf could be started today). Find what's shared. Surface RISKS, with a `contradicts` edge to what they threaten. Suggest what \
 would discriminate between the options of an open decision. Search before adding, and prefer dropping to deleting. Say why in every \
-rationale, and cite where claims came from in a node's `sources`. Reasons belong in the log, not in a node's text.\n\
+change's `why`, and cite where claims came from in a node's `sources`. Reasons belong in the log, not in a node's text.\n\
 \n\
-Write with `propose`, which the user reviews in the inbox. Ops are: \
+Write with `apply`, which commits at once: the user sees it as it lands, and can take any one change back from History. Ops are: \
 {op: add_node, id: \"new:x\", name, body?, components?: [component], cells?: {cell: value or {formula, labels}}, links?: [{to, component, cells?}]}; \
 {op: add, id, component} and {op: remove, id, component}; \
 {op: set, id, cell, value} or {op: set, id, cell, formula, labels?} or {op: set, id, cell} to take away what's written; \
@@ -194,20 +194,10 @@ pub struct HistoryParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ProposeParams {
-    /// Short summary shown in the inbox.
-    pub title: String,
-    /// Why these changes, and what evidence they rest on.
-    pub rationale: String,
-    /// Applied in order, atomically. See the server instructions for their form.
-    #[schemars(with = "Vec<serde_json::Map<String, Value>>")]
-    pub ops: Vec<Value>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ApplyParams {
-    /// Why, recorded in the log.
+    /// Why these changes, and what evidence they rest on. Recorded in the log.
     pub why: String,
+    /// Applied in order, atomically. See the server instructions for their form.
     #[schemars(with = "Vec<serde_json::Map<String, Value>>")]
     pub ops: Vec<Value>,
 }
@@ -281,29 +271,10 @@ impl RecollectMcp {
         })
     }
 
-    #[tool(description = "Submit a change-set for the user to review in the inbox. It's checked now as if committed, and refused if it wouldn't apply or would break an invariant. Returns the proposal's id.")]
-    async fn propose(&self, Parameters(p): Parameters<ProposeParams>) -> Result<String, String> {
-        let prop = self.app.call("propose", json!({ "title": p.title, "rationale": p.rationale, "ops": p.ops }), "claude").map_err(|e| e.to_string())?;
-        Ok(format!("Proposal `{}` queued with {} op(s). The user will review it in the Recollect inbox.", prop["id"].as_str().unwrap_or_default(), prop["ops"].as_array().map_or(0, Vec::len)))
-    }
-
-    #[tool(description = "Commit ops directly, without review. Only allowed when the workspace sets llm_direct_writes = true. Otherwise use `propose`.")]
+    #[tool(description = "Commit a change-set. It's all or nothing, and refused, with the reason, if it wouldn't apply or would newly break an invariant. The user can take it back from History.")]
     async fn apply(&self, Parameters(p): Parameters<ApplyParams>) -> Result<String, String> {
-        if !self.app.with(|o| Ok(o.ws.config.llm_direct_writes)).map_err(|e| e.to_string())? {
-            return Err("direct writes are off for this workspace: use `propose`".to_string());
-        }
         let done = self.app.call("apply", json!({ "ops": p.ops, "why": p.why }), "claude").map_err(|e| e.to_string())?;
         serde_json::to_string_pretty(&done).map_err(|e| e.to_string())
-    }
-
-    #[tool(description = "Pending proposals, and whether each still applies.")]
-    async fn list_proposals(&self) -> Result<String, String> {
-        let list = self.app.with(|o| Ok(o.ws.proposal_views())).map_err(|e| e.to_string())?;
-        let list: Vec<Value> = list
-            .into_iter()
-            .map(|p| serde_json::json!({ "id": p.proposal.id, "title": p.proposal.title, "rationale": p.proposal.rationale, "ops": p.proposal.ops.len(), "error": p.error }))
-            .collect();
-        serde_json::to_string_pretty(&list).map_err(|e| e.to_string())
     }
 }
 

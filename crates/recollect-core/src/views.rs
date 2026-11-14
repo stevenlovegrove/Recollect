@@ -340,7 +340,6 @@ pub struct WorkspaceView {
     pub location: String,
     pub systems: Vec<String>,
     pub sample: Option<String>,
-    pub direct_writes: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -980,7 +979,7 @@ pub fn view(o: &Workspace, world: &World) -> View {
     let worlds = worlds(g, world, &lens, &labels, vars, quantities);
     let ran = g.take_ran().into_iter().filter(|(_, c)| !internal(g, c)).map(|(node, cell)| RanView { node, cell }).collect();
     View {
-        workspace: WorkspaceView { name: o.config.name.clone(), about: o.config.about.clone(), id: o.id.clone(), location: o.location.clone(), systems: o.built.names.clone(), sample: o.sample.clone(), direct_writes: o.config.llm_direct_writes },
+        workspace: WorkspaceView { name: o.config.name.clone(), about: o.config.about.clone(), id: o.id.clone(), location: o.location.clone(), systems: o.built.names.clone(), sample: o.sample.clone() },
         last_seq: o.log.last_seq(),
         undo: o.log.undo_next(),
         redo: o.log.redo_next(),

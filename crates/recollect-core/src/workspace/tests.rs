@@ -196,3 +196,10 @@ fn an_unknown_method_or_bad_arguments_say_so() {
     assert!(matches!(dispatch(&mut ws, "apply", json!({ "ops": 3 }), "t"), Err(Error::Refused(_))));
     assert!(matches!(dispatch(&mut ws, "sweep", json!({ "set": { "node": recollect_graph::Entity::new(), "cell": "value" }, "values": vec![0.0; 201], "read": [] }), "t"), Err(Error::Refused(_))));
 }
+
+#[test]
+fn a_workspace_from_when_claude_had_to_propose_still_opens() {
+    let config = read_config("name = \"Old\"\nsystems = [\"plan\"]\nllm_direct_writes = false\n").unwrap();
+    assert_eq!(config.name, "Old");
+    assert_eq!(config.systems, vec!["plan".to_string()]);
+}

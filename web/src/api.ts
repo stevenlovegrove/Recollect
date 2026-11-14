@@ -227,7 +227,7 @@ export interface Check {
 
 export interface View {
   /** `id` is what the app knows it by, and `location` says where it is, for a person to read. */
-  workspace: { name: string; about: string | null; id: string; location: string; systems: string[]; sample: string | null; direct_writes: boolean };
+  workspace: { name: string; about: string | null; id: string; location: string; systems: string[]; sample: string | null };
   /** The newest event since it was opened, which changes with every change. */
   last_seq: number | null;
   /** The event undo would take back. */

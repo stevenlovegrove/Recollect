@@ -65,9 +65,8 @@ pub struct Config {
     pub about: Option<String>,
     #[serde(default)]
     pub systems: Vec<String>,
-    /// Whether Claude may change things directly, rather than proposing them for review.
-    #[serde(default)]
-    pub llm_direct_writes: bool,
+    // `llm_direct_writes`, from when Claude's changes waited for review, is still read and ignored:
+    // Claude now writes directly, and any change can be taken back from History.
 }
 
 pub const CONFIG: &str = "recollect.toml";
@@ -157,7 +156,7 @@ pub struct Workspace {
 /// The files of a new, empty workspace.
 pub fn new_files(name: &str, systems: Vec<String>) -> Result<Files, Error> {
     build(&systems).map_err(Error::Refused)?;
-    let config = Config { name: name.to_string(), about: None, systems, llm_direct_writes: false };
+    let config = Config { name: name.to_string(), about: None, systems };
     Ok(Files::from([(CONFIG.to_string(), toml::to_string(&config).map_err(|e| Error::Other(e.to_string()))?)]))
 }
 
