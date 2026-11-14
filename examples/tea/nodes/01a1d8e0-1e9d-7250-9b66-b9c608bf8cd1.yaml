@@ -1,0 +1,24 @@
+id: 01a1d8e0-1e9d-7250-9b66-b9c608bf8cd1
+components:
+- notes
+cells:
+  body: |-
+    There's a cup of tea on the desk. The room is 20°C, and the thermometer says the tea is 40°C. When was it made?
+
+    Three things nobody wrote down decide it, and each is something uncertain with a short list of answers, so everything here is worked out exactly:
+
+    - **Made how long ago**: any whole minute in the last two hours, equally.
+    - **What kind of cup**: a thin glass cools fast, a mug less so, and a flask cup slowly. Mugs are the commonest.
+    - **Milk in it?**: with milk it starts at 75°C, and black at 85°C.
+
+    The tea cools towards the room as tea does: `20 + (start - 20) × exp(-cooling × minutes)`.
+
+    What the reading says isn't one answer but six: **made how long ago** has six separate humps, from about 22 minutes to about 80. Its average, 50 minutes, is a time it almost certainly wasn't made. And the flask cup has gone from one in four to 42%, because a slowly cooling cup spends longer near 40°C, so it's likelier to be caught there.
+
+    **Things to try**
+
+    - Select **Made how long ago** and look at its histogram: six humps, taken together.
+    - Look at the beliefs on **What kind of cup?** and **Milk in it?**, and compare them with how likely each was before.
+    - Click **known?** on **It says 35 ten minutes later**. That's a second reading, and it settles the cup: a mug. It can't settle the milk, though: how fast tea cools from here on doesn't depend on how hot it started, so made black 39 minutes ago and made with milk 33 minutes ago look the same from now on.
+    - Then pin **Milk in it?** in the bar at the top, and there's one answer left, give or take a minute.
+  name: About this example

@@ -259,6 +259,8 @@ Anything else is read from 4,096 draws. Each draw's values are spread evenly, on
 | **First-year sales** | `lognormal` for what grows by multiplying: an average above its middle, halving as likely as doubling, and a loss that's still exact |
 | **Making the connection** | `bernoulli` for what happens or doesn't: three likely legs, a much less likely journey, and `chance` for each choice of train |
 | **The drawbridge** | A mixture with two humps: a route quicker on average and better in a hurry, and worse when you need to be sure, unless you can see the bridge before you choose, which is `knowing` |
+| **When was the tea made?** | Inference, exactly: one reading of a cooling cup leaves six separate answers for when it was made, and a second says which cup but not whether it had milk |
+| **Which die was it?** | Inference from a maximum: a highest roll of 7 makes a d8 three times as likely as a d12, and a 9 or more next less likely |
 | **Painting a room** | `triangular` for a three-point guess: adding the likeliest of each underestimates the total |
 
 `tests/samples.rs` checks each says what it claims.

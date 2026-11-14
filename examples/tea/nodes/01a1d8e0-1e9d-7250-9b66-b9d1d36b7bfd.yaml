@@ -1,0 +1,16 @@
+id: 01a1d8e0-1e9d-7250-9b66-b9d1d36b7bfd
+components:
+- evidence
+- notes
+- value
+cells:
+  body: Known, to the nearest degree. It rules out every cup, milk and time that wouldn't read 40.
+  name: The thermometer says 40
+formulas:
+  value: round(now) = 40
+links:
+- to: 01a1d8e0-1e9d-7250-9b66-b9cf613574cd
+  components:
+  - label
+  cells:
+    called: now

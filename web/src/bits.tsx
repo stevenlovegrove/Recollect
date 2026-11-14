@@ -339,6 +339,27 @@ export function Truth({ component, r }: { component: string; r: Reading }) {
   );
 }
 
+/** More cases than this, where they're all taken together too, are folded away under the summary. */
+const MOST_CASES_SHOWN = 6;
+
+/**
+ * The cases worth listing. Where they're taken together, they're all matters of chance, so a case that
+ * nothing still in play lands on has nothing to say and is left out.
+ */
+function casesWorthListing(cell: Cell, cases: { when: Reading; value: unknown }[]) {
+  return cell.mix === undefined ? cases : cases.filter((c) => c.when.prob > 0 || c.when.always);
+}
+
+/** A long list folded under how many there are. */
+function Folded({ count, children }: { count: number; children: React.ReactNode }) {
+  return (
+    <details className="cases-folded">
+      <summary className="muted small">each of the {count} ways it could be</summary>
+      {children}
+    </details>
+  );
+}
+
 /** What a value means, for the few that aren't plain. */
 const MEANING: Record<string, (v: unknown) => string | undefined> = {
   done: (v) => (v === true ? "finished" : v === false ? "still owed" : "nothing to finish"),
@@ -369,18 +390,29 @@ export function CellValue({ ws, cell, onSelect, component }: { ws: Workspace; ce
     );
   }
   if (s.cases.length === 1) return <AnyValue v={s.cases[0].value} text={shownValue} wide />;
+  const cases = casesWorthListing(cell, s.cases);
+  const list = cases.map((c, i) => (
+    <span key={i} className="case">
+      <AnyValue v={c.value} text={shownValue} /> <span className="muted">when</span> <Formula r={c.when} />
+    </span>
+  ));
+  const together = cell.mix !== undefined && (
+    <span className="case mix">
+      <AnyValue v={cell.mix} text={shownValue} wide /> <span className="muted">taken together</span>
+    </span>
+  );
+  // Many cases taken together read best as the summary, with each a click away.
+  if (together && cases.length > MOST_CASES_SHOWN)
+    return (
+      <span className="cases">
+        {together}
+        <Folded count={cases.length}>{list}</Folded>
+      </span>
+    );
   return (
     <span className="cases">
-      {s.cases.map((c, i) => (
-        <span key={i} className="case">
-          <AnyValue v={c.value} text={shownValue} /> <span className="muted">when</span> <Formula r={c.when} />
-        </span>
-      ))}
-      {cell.mix !== undefined && (
-        <span className="case mix">
-          <AnyValue v={cell.mix} text={shownValue} wide /> <span className="muted">taken together</span>
-        </span>
-      )}
+      {list}
+      {together}
     </span>
   );
 }
@@ -408,9 +440,20 @@ export function Resolved({ ws, cell, component }: { ws: Workspace; cell: Cell; c
   if (s.kind === "bool") return <div className="resolved">{s.always ? row(0, "true") : s.never ? row(0, "false") : row(0, "true", s)}</div>;
   if (s.kind === "named") return <div className="resolved">{row(0, shownText(s, name))}</div>;
   if (s.cases.length === 1) return <div className="resolved">{row(0, read(s.cases[0].value))}</div>;
+  const cases = casesWorthListing(cell, s.cases);
+  const rows = cases.map((c, i) => row(i, read(c.value), c.when));
+  if (cell.mix !== undefined && cases.length > MOST_CASES_SHOWN)
+    return (
+      <div className="resolved">
+        {row("mix", read(cell.mix), undefined, "taken together")}
+        <Folded count={cases.length}>
+          <div className="resolved">{rows}</div>
+        </Folded>
+      </div>
+    );
   return (
     <div className="resolved">
-      {s.cases.map((c, i) => row(i, read(c.value), c.when))}
+      {rows}
       {cell.mix !== undefined && row("mix", read(cell.mix), undefined, "taken together")}
     </div>
   );

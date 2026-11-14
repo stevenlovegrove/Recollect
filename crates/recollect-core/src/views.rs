@@ -490,13 +490,15 @@ fn present(v: &Value, reader: &RefCell<Reader>) -> Value {
     }
 }
 
-/// What an uncertain value comes to with every answer to what's a matter of chance taken together, each
-/// counting as much as it's believed among the worlds in play. Nothing, unless something in it is
-/// uncertain and it's numbers throughout, or truths throughout.
+/// What a value comes to with every answer to what's a matter of chance taken together, each counting as
+/// much as it's believed among the worlds in play. Nothing, unless it's numbers throughout, or uncertain
+/// truths throughout.
 fn mixed(s: &Shown, in_play: &Bool, reader: &RefCell<Reader>) -> Option<Value> {
     let Shown::Cond(c) = s else { return None };
     let cases = c.cases();
-    if cases.len() < 2 || !cases.iter().any(|(_, v)| rand_of(v).is_some()) {
+    // Numbers that differ over what's a matter of chance, uncertain or not: a die's total is as much a
+    // distribution as a bell curve is, and is exact.
+    if cases.len() < 2 || !cases.iter().any(|(_, v)| v.is_number() || rand_of(v).is_some()) {
         return None;
     }
     let held = in_play.prob();

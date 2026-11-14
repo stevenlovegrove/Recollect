@@ -1,0 +1,3 @@
+name = "Which die was it?"
+about = "Inference: a d6, a d8 or a d12, rolled three times, and all you're told is that the highest roll was a 7. The d8 is now three times as likely as the d12, and a big next roll is less likely than before you knew anything."
+systems = ["plan"]

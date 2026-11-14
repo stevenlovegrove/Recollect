@@ -1,0 +1,9 @@
+id: 01a1d8e0-1e9d-7250-9b66-b9cef20a2690
+components:
+- notes
+- value
+cells:
+  body: 'In minutes: any whole minute of the last two hours, as likely as any other until something''s known.'
+  name: Made how long ago
+formulas:
+  value: integers(0, 120)

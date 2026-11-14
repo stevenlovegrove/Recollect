@@ -1,0 +1,13 @@
+id: 01a1d8e0-9100-76be-ac86-e857d0c5d5f7
+components:
+- value
+cells:
+  name: Third roll
+formulas:
+  value: integers(1, die.chosen.sides)
+links:
+- to: 01a1d8e0-9100-76be-ac86-e851a5c70336
+  components:
+  - label
+  cells:
+    called: die

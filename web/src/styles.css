@@ -2183,6 +2183,10 @@ input.sheet-input {
 .mono-value.estimate {
   font-style: italic;
 }
+.cases-folded summary {
+  cursor: pointer;
+  margin-top: 2px;
+}
 .case.mix {
   border-top: 1px dashed var(--border);
   padding-top: 3px;

@@ -1,0 +1,8 @@
+id: 01a1d8e0-9100-76be-ac86-e851a5c70336
+components:
+- decision
+- notes
+- uncertain
+cells:
+  body: Picked at random, so each is as likely as the others until something's known.
+  name: Which die?

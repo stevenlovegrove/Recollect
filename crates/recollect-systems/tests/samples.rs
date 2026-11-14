@@ -476,3 +476,65 @@ fn the_drawbridge_is_quicker_on_average_and_worse_when_you_need_to_be_sure() {
     let up = o.get::<ValueCell>("The bridge is up").0.0.holds(|v| *v == Val::Bool(true));
     assert!(left(&o) == (&takes(&o, "Round the ring road") | &(&takes(&o, "Over the bridge") & &!&up)), "the bridge when it's down, and the ring road either way");
 }
+
+/// How strongly each option of an uncertain question is believed, given the evidence, by name.
+fn beliefs(o: &Opened, question: &str) -> BTreeMap<String, f64> {
+    use recollect_systems::formulas::Chosen;
+    let known = o.g().registry().constrained(o.g()).unwrap_or_else(|| Space::global().always());
+    let chosen = o.get::<Chosen>(question).0.0;
+    chosen.cases().iter().filter_map(|(when, v)| match v {
+        Val::Ref(e) => Some((recollect_systems::label_of(o.g(), *e), (when & &known).prob() / known.prob())),
+        _ => None,
+    }).collect()
+}
+
+/// What a number comes to on average over what's known, where it differs over short lists.
+fn known_mean(o: &Opened, name: &str) -> f64 {
+    let known = o.g().registry().constrained(o.g()).unwrap_or_else(|| Space::global().always());
+    let value = o.get::<ValueCell>(name).0.0;
+    value.cases().iter().map(|(when, v)| if let Val::Num(n) = v { n * (when & &known).prob() } else { panic!("{v:?}") }).sum::<f64>() / known.prob()
+}
+
+#[test]
+fn one_reading_of_the_tea_leaves_six_answers_and_a_second_says_which_cup() {
+    use recollect_graph::Op;
+    use recollect_systems::formulas::EVIDENCE;
+    let mut o = open("tea");
+    let near = |got: f64, want: f64, what: &str| assert!((got - want).abs() < 1e-9, "{what}: {got} isn't {want}");
+    let cups = beliefs(&o, "What kind of cup?");
+    near(cups["A thin glass"], 3.0 / 19.0, "the glass");
+    near(cups["A mug"], 8.0 / 19.0, "the mug");
+    near(cups["A flask cup"], 8.0 / 19.0, "the flask cup, up from a quarter");
+    near(known_mean(&o, "Made how long ago"), 947.0 / 19.0, "an average in a gap");
+    near(o.number("Average minutes ago"), 947.0 / 19.0, "and mean() says the same");
+    // Six humps: the minutes still possible fall in six separate runs.
+    let known = o.g().registry().constrained(o.g()).unwrap();
+    let ago = o.get::<ValueCell>("Made how long ago").0.0;
+    let mut minutes: Vec<i64> = ago.cases().iter().filter(|(when, _)| !(when & &known).is_never()).map(|(_, v)| if let Val::Num(n) = v { *n as i64 } else { panic!() }).collect();
+    minutes.sort();
+    let runs = 1 + minutes.windows(2).filter(|w| w[1] - w[0] > 1).count();
+    assert_eq!((runs, minutes.first(), minutes.last()), (6, Some(&22), Some(&80)), "{minutes:?}");
+
+    // A second reading says which cup, and nothing about the milk.
+    let second = o.id("It says 35 ten minutes later");
+    o.log.commit("t", "a second reading", vec![Op::add(second, EVIDENCE)]).unwrap();
+    near(beliefs(&o, "What kind of cup?")["A mug"], 1.0, "the mug");
+    near(beliefs(&o, "Milk in it?")["Black"], 0.5, "milk still even");
+    near(known_mean(&o, "Made how long ago"), 36.5, "33, 34, 39 or 40 minutes");
+}
+
+#[test]
+fn the_highest_of_three_rolls_says_which_die_and_what_comes_next() {
+    let o = open("which-die");
+    let dice = beliefs(&o, "Which die?");
+    let (d8, d12) = (127.0 / 512.0, 127.0 / 1728.0);
+    assert!(dice["A d6"].abs() < 1e-12, "{dice:?}");
+    assert!((dice["A d8"] - d8 / (d8 + d12)).abs() < 1e-12 && (dice["A d12"] - d12 / (d8 + d12)).abs() < 1e-12, "{dice:?}");
+    // A next roll only a d12 can make is less likely than before anything was known: 11% then, and 8% now.
+    let known = o.g().registry().constrained(o.g()).unwrap();
+    let above = truth(&o.get::<ValueCell>("A next roll of 9 or more"));
+    let now = (&above & &known).prob() / known.prob();
+    assert!((now - d12 / (d8 + d12) * 4.0 / 12.0).abs() < 1e-12 && (above.prob() - 1.0 / 9.0).abs() < 1e-12, "{now} {}", above.prob());
+    assert!(now < above.prob());
+    assert!((o.number("Average next roll") - (d8 * 4.5 + d12 * 6.5) / (d8 + d12)).abs() < 1e-9);
+}

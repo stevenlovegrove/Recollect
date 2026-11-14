@@ -1,0 +1,8 @@
+id: 01a1d8e0-1e9d-7250-9b66-b9cbac44cbc3
+components:
+- decision
+- notes
+- uncertain
+cells:
+  body: 'How hot it was when it was made: milk takes ten degrees off.'
+  name: Milk in it?

@@ -1,0 +1,19 @@
+id: 01a1d8e0-9100-76be-ac86-e850c26e3a50
+components:
+- notes
+cells:
+  body: |-
+    Someone picks one of three dice, a d6, a d8 or a d12, without saying which, and rolls it three times. All they tell you is that **the highest of the three rolls was a 7**.
+
+    Which die is it? Not the d6, which can't roll a 7. Between the other two, you might think the d12 is as likely as the d8, since either can roll a 7. It isn't: the d8 is three times as likely. A d12 rolled three times would probably have shown something higher than 7, so a highest roll of 7 is much more what a d8 does. That's the same reasoning that estimated how many tanks an army had from the highest serial number captured.
+
+    It also changes what to expect next. Before anything was known, a next roll of 9 or more was 11% likely: only a d12 can. Knowing the highest so far was a 7 makes it less likely, 8%, because it's mostly the d8 now.
+
+    Every die is a short list of outcomes, so all of this is exact.
+
+    **Things to try**
+
+    - Look at the beliefs on **Which die?**: none for the d6, 77% for the d8 and 23% for the d12.
+    - Select **The next roll** and compare **A next roll of 9 or more** with before: click **known ✓** on **The highest roll was a 7** to take it away, and back.
+    - Change the 7 in **The highest roll was a 7** to a 6, or a 9, and see the beliefs move.
+  name: About this example

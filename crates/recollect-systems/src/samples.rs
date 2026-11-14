@@ -30,6 +30,8 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "connection", title: "Making the connection", about: "Bernoulli: three legs of a journey, each on time or not. How likely all three are, and how much a later train buys you.", group: "chance", systems: &["plan"], build: connection },
     Sample { name: "painting", title: "Painting a room", about: "Triangular: three-point guesses at each job. Adding up the likeliest of each says seven hours, which is less than it'll usually take.", group: "chance", systems: &[], build: painting },
     Sample { name: "drawbridge", title: "The drawbridge", about: "Two routes home: one over a bridge that's sometimes up, and a steady ring road. The bridge is quicker on average and better in a hurry, and worse when you need to be sure. Unless you can see it from your window.", group: "chance", systems: &["plan"], build: drawbridge },
+    Sample { name: "tea", title: "When was the tea made?", about: "Inference: a mug at 40°C in a 20°C room, and nobody saying when it was made. One reading leaves six quite different answers. A second reading ten minutes later says which cup, and still can't tell made hot long ago from made with milk more recently.", group: "chance", systems: &["plan"], build: tea },
+    Sample { name: "which-die", title: "Which die was it?", about: "Inference: a d6, a d8 or a d12, rolled three times, and all you're told is that the highest roll was a 7. The d8 is now three times as likely as the d12, and a big next roll is less likely than before you knew anything.", group: "chance", systems: &["plan"], build: which_die },
     Sample { name: "savings", title: "Savings, give or take", about: "A table of years that grow by an uncertain amount. Growth drawn afresh each year averages out, and one rate drawn once compounds, so the same formula ends up far wider. Both are exact.", group: "chance", systems: &[], build: savings },
     Sample { name: "supplier", title: "Choosing a supplier", about: "Three quotes held three ways: a plain number, a three-point guess, and a price with extras. What each comes to with shipping, and how likely it is to be within budget.", group: "sheet", systems: &["plan"], build: supplier },
     Sample { name: "shelf", title: "Will the shelf fit?", about: "Two measurements, each a little uncertain: how much clearance there is, and how likely there is to be any.", group: "chance", systems: &[], build: shelf },
@@ -56,7 +58,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "32";
+pub const FORMAT: &str = "33";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -413,6 +415,76 @@ Which way is better depends on what you need, and not in the way the averages su
     b.formula(on_time, "j <= have").label(on_time, journey, "j").label(on_time, "Minutes you have", "have").add(on_time, REQUIRES).set(on_time, REQUIRES, AtLeast(0.95));
     b.note(on_time, "Required 95% of the time. With 40 minutes, only the ring road is that sure.");
     b.formula("Chance of being on time", "chance(t)").label("Chance of being on time", on_time, "t").note("Chance of being on time", "For each way: never averaged over your own choice.");
+}
+
+fn tea(b: &mut Build) {
+    about(b, r#"There's a cup of tea on the desk. The room is 20°C, and the thermometer says the tea is 40°C. When was it made?
+
+Three things nobody wrote down decide it, and each is something uncertain with a short list of answers, so everything here is worked out exactly:
+
+- **Made how long ago**: any whole minute in the last two hours, equally.
+- **What kind of cup**: a thin glass cools fast, a mug less so, and a flask cup slowly. Mugs are the commonest.
+- **Milk in it?**: with milk it starts at 75°C, and black at 85°C.
+
+The tea cools towards the room as tea does: `20 + (start - 20) × exp(-cooling × minutes)`.
+
+What the reading says isn't one answer but six: **made how long ago** has six separate humps, from about 22 minutes to about 80. Its average, 50 minutes, is a time it almost certainly wasn't made. And the flask cup has gone from one in four to 42%, because a slowly cooling cup spends longer near 40°C, so it's likelier to be caught there.
+
+**Things to try**
+
+- Select **Made how long ago** and look at its histogram: six humps, taken together.
+- Look at the beliefs on **What kind of cup?** and **Milk in it?**, and compare them with how likely each was before.
+- Click **known?** on **It says 35 ten minutes later**. That's a second reading, and it settles the cup: a mug. It can't settle the milk, though: how fast tea cools from here on doesn't depend on how hot it started, so made black 39 minutes ago and made with milk 33 minutes ago look the same from now on.
+- Then pin **Milk in it?** in the bar at the top, and there's one answer left, give or take a minute."#);
+    doubt(b, "What kind of cup?", "cooling", &[("A thin glass", json!(0.045), 1.0), ("A mug", json!(0.03), 2.0), ("A flask cup", json!(0.015), 1.0)]);
+    b.note("What kind of cup?", "How fast it cools, each minute, as a share of how much warmer than the room it is. A mug is twice as likely as either of the others.");
+    doubt(b, "Milk in it?", "starts_at", &[("With milk", json!(75.0), 1.0), ("Black", json!(85.0), 1.0)]);
+    b.note("Milk in it?", "How hot it was when it was made: milk takes ten degrees off.");
+    b.formula("Made how long ago", "integers(0, 120)").note("Made how long ago", "In minutes: any whole minute of the last two hours, as likely as any other until something's known.");
+    let (now, later) = ("Temperature now", "Ten minutes later");
+    for (name, minutes) in [(now, "t"), (later, "(t + 10)")] {
+        b.formula(name, &format!("20 + (milk.chosen.starts_at - 20) * exp(-cup.chosen.cooling * {minutes})"));
+        b.label(name, "Milk in it?", "milk").label(name, "What kind of cup?", "cup").label(name, "Made how long ago", "t");
+    }
+    b.note(now, "What it would be now, for each cup, milk, and time it was made.");
+    b.note(later, "What it would be ten minutes from now.");
+    let reading = "The thermometer says 40";
+    b.formula(reading, "round(now) = 40").label(reading, now, "now").add(reading, EVIDENCE);
+    b.note(reading, "Known, to the nearest degree. It rules out every cup, milk and time that wouldn't read 40.");
+    let second = "It says 35 ten minutes later";
+    b.formula(second, "round(later) = 35").label(second, later, "later");
+    b.note(second, "A second reading, not known yet: click known? to say it was taken.");
+    b.formula("Average minutes ago", "mean(t)").label("Average minutes ago", "Made how long ago", "t").note("Average minutes ago", "Exact, and misleading: it's in a gap between humps.");
+    b.formula("Made in the last half hour", "t <= 30").label("Made in the last half hour", "Made how long ago", "t").note("Made in the last half hour", "Only if it's the thin glass.");
+}
+
+fn which_die(b: &mut Build) {
+    about(b, r#"Someone picks one of three dice, a d6, a d8 or a d12, without saying which, and rolls it three times. All they tell you is that **the highest of the three rolls was a 7**.
+
+Which die is it? Not the d6, which can't roll a 7. Between the other two, you might think the d12 is as likely as the d8, since either can roll a 7. It isn't: the d8 is three times as likely. A d12 rolled three times would probably have shown something higher than 7, so a highest roll of 7 is much more what a d8 does. That's the same reasoning that estimated how many tanks an army had from the highest serial number captured.
+
+It also changes what to expect next. Before anything was known, a next roll of 9 or more was 11% likely: only a d12 can. Knowing the highest so far was a 7 makes it less likely, 8%, because it's mostly the d8 now.
+
+Every die is a short list of outcomes, so all of this is exact.
+
+**Things to try**
+
+- Look at the beliefs on **Which die?**: none for the d6, 77% for the d8 and 23% for the d12.
+- Select **The next roll** and compare **A next roll of 9 or more** with before: click **known ✓** on **The highest roll was a 7** to take it away, and back.
+- Change the 7 in **The highest roll was a 7** to a 6, or a 9, and see the beliefs move."#);
+    doubt(b, "Which die?", "sides", &[("A d6", json!(6), 1.0), ("A d8", json!(8), 1.0), ("A d12", json!(12), 1.0)]);
+    b.note("Which die?", "Picked at random, so each is as likely as the others until something's known.");
+    for roll in ["First roll", "Second roll", "Third roll", "The next roll"] {
+        b.formula(roll, "integers(1, die.chosen.sides)").label(roll, "Which die?", "die");
+    }
+    b.note("The next roll", "Not rolled yet: what to expect from it, given what's known.");
+    let highest = "Highest of the three";
+    b.formula(highest, "max(a, max(b, c))").label(highest, "First roll", "a").label(highest, "Second roll", "b").label(highest, "Third roll", "c");
+    let told = "The highest roll was a 7";
+    b.formula(told, "h = 7").label(told, highest, "h").add(told, EVIDENCE);
+    b.note(told, "All you're told. It rules out the d6 entirely, and most of what a d12 rolls three times.");
+    b.formula("A next roll of 9 or more", "n >= 9").label("A next roll of 9 or more", "The next roll", "n").note("A next roll of 9 or more", "Only a d12 can, four times in twelve: so it's a third as likely as the d12 is.");
+    b.formula("Average next roll", "mean(n)").label("Average next roll", "The next roll", "n").note("Average next roll", "Over which die it is and how it lands, given what's known.");
 }
 
 fn savings(b: &mut Build) {

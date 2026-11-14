@@ -1,0 +1,15 @@
+id: 01a1d8e0-1e9d-7250-9b66-b9d287e6ac02
+components:
+- notes
+- value
+cells:
+  body: 'A second reading, not known yet: click known? to say it was taken.'
+  name: It says 35 ten minutes later
+formulas:
+  value: round(later) = 35
+links:
+- to: 01a1d8e0-1e9d-7250-9b66-b9d09cd4ecc2
+  components:
+  - label
+  cells:
+    called: later

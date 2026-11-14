@@ -1,0 +1,15 @@
+id: 01a1d8e0-9100-76be-ac86-e85ce193ea25
+components:
+- notes
+- value
+cells:
+  body: Over which die it is and how it lands, given what's known.
+  name: Average next roll
+formulas:
+  value: mean(n)
+links:
+- to: 01a1d8e0-9100-76be-ac86-e85839ebb301
+  components:
+  - label
+  cells:
+    called: n

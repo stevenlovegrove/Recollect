@@ -1,0 +1,3 @@
+name = "When was the tea made?"
+about = "Inference: a mug at 40°C in a 20°C room, and nobody saying when it was made. One reading leaves six quite different answers. A second reading ten minutes later says which cup, and still can't tell made hot long ago from made with milk more recently."
+systems = ["plan"]
