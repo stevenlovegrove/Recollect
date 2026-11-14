@@ -7,9 +7,9 @@ use std::cell::{Cell as StdCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use recollect_graph::chance::{Rand, Reader, Share, Term};
-use recollect_graph::worlds::{Bool, Picks, Var};
+use recollect_graph::worlds::{Bool, DrawGroup, Picks, Var};
 use recollect_graph::{Backed, CellDef, CellType, ComponentDef, ComponentType, Entity, Error, Event, Graph, Log, Named, On, Op, Origin, Shown, Source, Stored, Violation};
-use recollect_systems::formulas::{CHOICE, Called, EVIDENCE, FOUND, Found, LABEL, VALUE, ValueCell, is_chance, known_draws, narrows, shown_free, worlds_left};
+use recollect_systems::formulas::{CHOICE, Called, EVIDENCE, FOUND, Found, LABEL, VALUE, ValueCell, draws_found, is_chance, known_draws, narrows, shown_free, worlds_left};
 use recollect_systems::expr::Val;
 use recollect_systems::notes::Body;
 use recollect_systems::plan::{self, Matrix, UNCERTAIN, WorkItem};
@@ -559,7 +559,8 @@ struct Lens {
 impl Lens {
     fn new(g: &Graph, world: &World) -> Lens {
         let picks = plan::picks(g, world);
-        let found = plan::pinned(g, world).given(&picks);
+        // A draw that's several variables is pinned where whichever is in use lands there.
+        let found = (&plan::pinned(g, world) & &draws_found(world)).given(&picks);
         // Whatever's known about draws is given to everything this reads.
         let reader = RefCell::new(Reader::given(known_draws(g)));
         let in_play = worlds_left(g, &picks, &found, &mut reader.borrow_mut());
@@ -741,8 +742,14 @@ fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap
     let mut asked = Vec::new();
     let held = in_play.prob();
     let chance = |lands: &Bool| if held > 0.0 { (lands & in_play).prob() / held } else { 0.0 };
+    // A draw that's several variables, one for each set of outcomes, is one question, asked below.
+    let groups = DrawGroup::gather(vars.values().cloned());
     for (id, var) in &vars {
         if narrowed.iter().any(|n| n.id.to_string() == *id) {
+            continue;
+        }
+        if var.group().is_some() {
+            unpicked.push(var.clone());
             continue;
         }
         let options = var.options();
@@ -803,9 +810,36 @@ fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap
         }
         views.push(VarView { id: id.clone(), name: labels.of(&id), options: views_options, uncertain: g.has(n.id, UNCERTAIN), sure: None, clues: Vec::new() });
     }
+    for group in &groups {
+        let options = group.options();
+        let picked = world.get(&group.name).filter(|p| options.contains(p));
+        let lands: Vec<(String, Bool)> = options.iter().map(|o| (o.clone(), group.lands(o).given(&lens.picks))).collect();
+        let views_options = lands
+            .iter()
+            .map(|(o, l)| {
+                let possible = match picked {
+                    Some(p) => p == o,
+                    None => !(l & in_play).is_never(),
+                };
+                let chance = match picked {
+                    Some(p) => f64::from(p == o),
+                    None => chance(l),
+                };
+                // Before anything's known, it's as likely as whatever decides which variable is in use makes it.
+                OptionView { id: o.clone(), name: o.clone(), weight: group.lands(o).prob(), gap: false, possible, picked: picked == Some(o), chance }
+            })
+            .collect();
+        if let Some(p) = picked {
+            applied.insert(group.name.clone(), p.clone());
+        } else {
+            asked.push(Asked { id: group.name.clone(), lands });
+        }
+        views.push(VarView { id: group.name.clone(), name: labels.of(&group.name), options: views_options, uncertain: true, sure: None, clues: Vec::new() });
+    }
     views.sort_by(|a, b| a.id.cmp(&b.id));
     clues(&mut views, &asked, in_play, held);
-    let at_rest = plan::at_rest(g);
+    // Each way things could go is counted once: a variable of a draw that isn't the one in use doesn't make another.
+    let at_rest = groups.iter().fold(plan::at_rest(g), |acc, group| Some(acc.map_or_else(|| group.at_rest(), |a| &a & &group.at_rest())));
     let (count, solutions) = if at_rest.is_none() {
         if constrained {
             let n = in_play.count(&unpicked);

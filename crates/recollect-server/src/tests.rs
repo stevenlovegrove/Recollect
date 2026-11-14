@@ -1391,3 +1391,47 @@ async fn knowing_what_cant_be_true_leaves_nothing_and_breaks_nothing() {
     walk(&v, "", &mut bad);
     assert!(bad.is_empty(), "{bad:?}");
 }
+
+/// A draw whose outcomes depend on something else, as a roll of a die that could be a d6, a d8 or a d12
+/// does, is one question: listed once, with everything it could land on, pinned as one, and each world
+/// counted once.
+#[tokio::test]
+async fn a_draw_whose_outcomes_depend_on_something_is_one_question() {
+    let c = Client::new();
+    c.open("which-die").await;
+    let v = c.view(json!({})).await;
+    let vars = v["worlds"]["vars"].as_array().unwrap();
+    let named = |name: &str| vars.iter().filter(|x| x["name"] == name).collect::<Vec<_>>();
+    for roll in ["First roll", "Second roll", "Third roll", "The next roll"] {
+        let found = named(roll);
+        assert_eq!(found.len(), 1, "{roll} is listed once: {:?}", found.iter().map(|x| &x["id"]).collect::<Vec<_>>());
+        let options: Vec<&str> = found[0]["options"].as_array().unwrap().iter().map(|o| o["name"].as_str().unwrap()).collect();
+        assert_eq!(options, (1..=12).map(|n| n.to_string()).collect::<Vec<_>>().iter().map(String::as_str).collect::<Vec<_>>(), "{roll}");
+    }
+    // A d8 or a d12 rolled three times with 7 the highest, then any next roll: 127 × 8 + 127 × 12.
+    assert_eq!(v["worlds"]["count"], (127 * 8 + 127 * 12).to_string());
+
+    // Pinned to the d8, a roll can't be more than 8, and the first roll's 7 is as likely as the evidence makes it.
+    let die = named("Which die?")[0]["id"].as_str().unwrap().to_string();
+    let d8 = named("Which die?")[0]["options"].as_array().unwrap().iter().find(|o| o["name"] == "A d8").unwrap()["id"].as_str().unwrap().to_string();
+    let pinned = c.view(json!({ die.as_str(): d8 })).await;
+    let vars = pinned["worlds"]["vars"].as_array().unwrap();
+    let options = |name: &str| vars.iter().find(|x| x["name"] == name).unwrap()["options"].as_array().unwrap().clone();
+    for roll in ["First roll", "The next roll"] {
+        for o in options(roll) {
+            let n: u32 = o["name"].as_str().unwrap().parse().unwrap();
+            assert_eq!(o["possible"].as_bool().unwrap(), n <= if roll == "First roll" { 7 } else { 8 }, "{roll} {n}: {o}");
+        }
+    }
+    let next = options("The next roll");
+    assert!(next.iter().take(8).all(|o| (o["chance"].as_f64().unwrap() - 0.125).abs() < 1e-12), "{next:?}");
+    assert_eq!(pinned["worlds"]["count"], (127 * 8).to_string());
+
+    // Pinning the next roll itself is finding it out: a 10 says it's the d12.
+    let roll = vars.iter().find(|x| x["name"] == "The next roll").unwrap()["id"].as_str().unwrap().to_string();
+    let ten = c.view(json!({ roll.as_str(): "10" })).await;
+    let dice = ten["worlds"]["vars"].as_array().unwrap().iter().find(|x| x["name"] == "Which die?").unwrap()["options"].as_array().unwrap().clone();
+    let belief = |name: &str| dice.iter().find(|o| o["name"] == name).unwrap()["chance"].as_f64().unwrap();
+    assert_eq!((belief("A d6"), belief("A d8"), belief("A d12")), (0.0, 0.0, 1.0));
+    assert_eq!(cell(&ten, "Average next roll", "value")["value"], 10.0, "and what's averaged over chance reads it");
+}

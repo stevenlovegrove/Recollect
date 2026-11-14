@@ -47,7 +47,7 @@ The arguments are ordinary formulas, so they can read other cells, differ betwee
 A number is a plain number, or a handle to an expression over **draws**. Expressions live in one table shared by every value, and the same expression always gets the same handle, so comparing two is comparing handles, and a memoised cell stops what reads it from rerunning when its expression hasn't changed, as a `Bool` does.
 
 - **A draw is a standard one, with no parameters,** named for where it's written: the node, the cell, and which draw of that formula it is. `normal(mu, sigma)` is an expression over it, so its parameters can be anything a number can. Changing sigma keeps the draw, so what's shown moves smoothly between edits, and two what-ifs are compared on the same draws.
-- **A distribution over a short list is a variable in the diagram,** the same as an `uncertain` decision: its outcomes and their weights. `integers(1, 6)` is one, so two dice added are eleven cases with exact chances, by the code that already does that.
+- **A distribution over a short list is a variable in the diagram,** the same as an `uncertain` decision: its outcomes and their weights. `integers(1, 6)` is one, so two dice added are eleven cases with exact chances, by the code that already does that. Where its ends differ between worlds, as a roll of whichever die was picked does, it's a variable for each set of outcomes, each knowing where it's the one in use, and it's shown, pinned and counted as one question, as a decision whose options depend on other choices is.
 - **Everything else is a tree,** exact as a function, however it's then read.
 
 Each expression is held in the simplest exact form there is:

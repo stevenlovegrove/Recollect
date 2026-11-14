@@ -28,6 +28,9 @@ struct VarDef {
     options: Vec<String>,
     weights: Vec<f64>,
     gaps: Vec<bool>,
+    /// For one of several variables that are one draw, each for a different set of outcomes: what the
+    /// draw is called, and the worlds where this one is the one in use. See `Var::in_group`.
+    group: Option<(String, F)>,
 }
 
 #[derive(Debug, Default)]
@@ -345,7 +348,7 @@ impl Space {
             Some(&i) => i,
             None => {
                 let i = m.vars.len() as u32;
-                m.vars.push(VarDef { name: name.to_string(), options: names, weights, gaps });
+                m.vars.push(VarDef { name: name.to_string(), options: names, weights, gaps, group: None });
                 m.index.insert(key, i);
                 i
             }
@@ -396,6 +399,15 @@ impl Space {
             }
         }
         Picks(picks)
+    }
+
+    /// The variables that are one draw, by what the draw is called. See `Var::in_group`.
+    pub fn draw_group(&self, name: &str) -> Option<DrawGroup> {
+        let vars: Vec<Var> = {
+            let m = self.lock();
+            m.vars.iter().enumerate().filter(|(_, v)| v.group.as_ref().is_some_and(|(g, _)| g == name)).map(|(i, _)| Var { space: self.clone(), idx: i as u32 }).collect()
+        };
+        DrawGroup::gather(vars).pop()
     }
 
     /// How many diagram nodes exist: a measure of how hard things have been.
@@ -449,6 +461,19 @@ impl Var {
         Bool { space: self.space.clone(), f }
     }
 
+    /// Say this is one of several variables that are one draw, each for a different set of outcomes, and
+    /// that it's the one in use where `in_use` holds. A die whose number of sides differs between worlds
+    /// is a variable for each, and only one is ever rolled.
+    pub fn in_group(&self, draw: &str, in_use: &Bool) {
+        self.space.lock().vars[self.idx as usize].group = Some((draw.to_string(), in_use.f));
+    }
+
+    /// The draw this is one variable of, and the worlds where it's the one in use, if it is one of several.
+    pub fn group(&self) -> Option<(String, Bool)> {
+        let m = self.space.lock();
+        m.vars[self.idx as usize].group.as_ref().map(|(name, f)| (name.clone(), Bool { space: self.space.clone(), f: *f }))
+    }
+
     /// How likely each option is, in the order of `options`.
     pub fn weights(&self) -> Vec<f64> {
         self.space.lock().vars[self.idx as usize].weights.clone()
@@ -468,6 +493,57 @@ impl Var {
     /// The options still possible where `given` holds.
     pub fn possible(&self, given: &Bool) -> Vec<String> {
         self.options().into_iter().filter(|o| !(&self.is(o) & given).is_never()).collect()
+    }
+}
+
+/// One draw made of several variables, each for a different set of outcomes, with the worlds where each is
+/// the one in use. It's one question: what the draw lands on.
+#[derive(Clone)]
+pub struct DrawGroup {
+    pub name: String,
+    pub variants: Vec<(Var, Bool)>,
+}
+
+impl DrawGroup {
+    /// The variables among these that are one of several, gathered by the draw they're part of.
+    pub fn gather(vars: impl IntoIterator<Item = Var>) -> Vec<DrawGroup> {
+        let mut groups: BTreeMap<String, DrawGroup> = BTreeMap::new();
+        for v in vars {
+            if let Some((name, in_use)) = v.group() {
+                let g = groups.entry(name.clone()).or_insert_with(|| DrawGroup { name, variants: Vec::new() });
+                if !g.variants.iter().any(|(x, _)| x.idx == v.idx) {
+                    g.variants.push((v, in_use));
+                }
+            }
+        }
+        groups.into_values().collect()
+    }
+
+    /// Everything it could land on, numbers in order.
+    pub fn options(&self) -> Vec<String> {
+        let mut all: Vec<String> = self.variants.iter().flat_map(|(v, _)| v.options()).collect();
+        all.sort_by(|a, b| match (a.parse::<f64>(), b.parse::<f64>()) {
+            (Ok(x), Ok(y)) => x.total_cmp(&y),
+            _ => a.cmp(b),
+        });
+        all.dedup();
+        all
+    }
+
+    /// The worlds where it lands on this.
+    pub fn lands(&self, option: &str) -> Bool {
+        let space = &self.variants[0].0.space;
+        self.variants.iter().fold(space.never(), |acc, (v, in_use)| &acc | &(in_use & &v.is(option)))
+    }
+
+    /// Where each variable not in use is at rest, on its first option, so a world is counted once however
+    /// many variables there are that it doesn't use.
+    pub fn at_rest(&self) -> Bool {
+        let space = &self.variants[0].0.space;
+        self.variants.iter().fold(space.always(), |acc, (v, in_use)| {
+            let first = v.options()[0].clone();
+            &acc & &(in_use | &v.is(&first))
+        })
     }
 }
 

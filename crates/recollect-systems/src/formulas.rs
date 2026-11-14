@@ -188,7 +188,7 @@ fn over_values(over: &Over) -> Cond<Val> {
 
 /// What's known, as anything a cell reads: the worlds evidence leaves, what it says about draws, and what's
 /// been found out by pinning, which only a view's copy of the graph has.
-fn known_by(cx: &Cx) -> Result<(Bool, Option<Term>, Picks), Error> {
+fn known_by(cx: &Cx) -> Result<(Bool, Option<Term>, Picks, BTreeMap<String, String>), Error> {
     let mut known = Space::global().always();
     let mut draws: Option<Term> = None;
     for e in cx.scan(EVIDENCE) {
@@ -209,20 +209,36 @@ fn known_by(cx: &Cx) -> Result<(Bool, Option<Term>, Picks), Error> {
             found.extend(f);
         }
     }
-    Ok((known, draws, Space::global().picks(&found)))
+    let picks = Space::global().picks(&found);
+    Ok((known, draws, picks, found))
+}
+
+/// What finding out these draws leaves, for those that are several variables: the worlds where whichever
+/// is in use lands on what each was found to be.
+pub fn draws_found(found: &BTreeMap<String, String>) -> Bool {
+    let mut out = Space::global().always();
+    for (name, option) in found.iter().filter(|(k, _)| crate::is_draw(k)) {
+        if let Some(group) = Space::global().draw_group(name) {
+            out = &out & &group.lands(option);
+        }
+    }
+    out
 }
 
 /// `chance(x)` or `mean(x)`: over every matter of chance, given what's known, for each way the choices
 /// that are someone's to make could go. Never over one of those.
 fn expect(cx: &Cx, mean: bool, of: &Ev) -> Result<Cond<Val>, Error> {
-    let (known, draws, picks) = known_by(cx)?;
+    let (known, draws, picks, found) = known_by(cx)?;
     let reader_known = match &draws {
         Some(Term::Rand(r)) => Some(*r),
         // What's known can't all be true, so nothing can be said given it.
         Some(_) => return Ok(pure(Val::Undefined)),
         None => None,
     };
-    let what = of.data().given(&picks);
+    let whole = of.data();
+    // A draw that's several variables is found out where whichever is in use lands on what it was found to be.
+    let known = &known & &draws_found(&found);
+    let what = whole.given(&picks);
     let known = known.given(&picks);
     let chancy = |name: &str| crate::is_draw(name) || name.parse::<Entity>().is_ok_and(|e| cx.has(e, crate::plan::UNCERTAIN));
     let mut reader = Reader::given(reader_known);
@@ -1466,9 +1482,13 @@ fn integers(cx: &Cx, low: &Cond<Val>, high: &Cond<Val>, site: u32) -> Result<Con
             (Val::Num(a), Val::Num(b)) if a.fract() != 0.0 || b.fract() != 0.0 || a > b => pure(Val::Undefined),
             (Val::Num(a), Val::Num(b)) if b - a < MOST_LISTED => {
                 let options: Vec<(String, f64, bool)> = (0..=(b - a) as i64).map(|i| ((a + i as f64).to_string(), 1.0, false)).collect();
-                // The same draw with other ends is another variable, so it says which it is.
-                let name = if several { format!("{name}[{a}..{b}]") } else { name.clone() };
-                Space::global().var(&name, &options).value().map(|o| Val::num(o.parse().expect("written as a number just above")))
+                // The same draw with other ends is another variable, so it says which it is, and where it's
+                // the one in use, so it can be shown as one draw.
+                let var = Space::global().var(&if several { format!("{name}[{a}..{b}]") } else { name.clone() }, &options);
+                if several {
+                    var.in_group(&name, &when);
+                }
+                var.value().map(|o| Val::num(o.parse().expect("written as a number just above")))
             }
             (low, high) if number_like(low) && number_like(high) => {
                 let u = Term::Rand(chance::draw(Std::Uniform, &name));
@@ -1499,9 +1519,13 @@ fn bernoulli(cx: &Cx, p: &Cond<Val>, site: u32) -> Result<Cond<Val>, Error> {
             Val::Num(p) if !(0.0..=1.0).contains(p) => pure(Val::Undefined),
             Val::Num(p) if *p == 0.0 || *p == 1.0 => pure(Val::Bool(*p == 1.0)),
             Val::Num(p) => {
-                let name = if several { format!("{name}[{p}]") } else { name.clone() };
+                let var_name = if several { format!("{name}[{p}]") } else { name.clone() };
                 let options = [("true".to_string(), *p, false), ("false".to_string(), 1.0 - p, false)];
-                Space::global().var(&name, &options).value().map(|o| Val::Bool(o == "true"))
+                let var = Space::global().var(&var_name, &options);
+                if several {
+                    var.in_group(&name, &when);
+                }
+                var.value().map(|o| Val::Bool(o == "true"))
             }
             Val::Rand(r) if !r.is_truth() => {
                 let (u, p) = (Term::Rand(chance::draw(Std::Uniform, &name)), Term::Rand(*r));
