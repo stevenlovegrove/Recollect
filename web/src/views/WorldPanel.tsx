@@ -39,7 +39,7 @@ export function WorldPanel({ ws, onSelect, summary }: { ws: Workspace; onSelect:
   const g = ws.view!;
   const w = g.worlds;
   const quantities = w.quantities ?? [];
-  const pinned = Object.keys(w.picks).length + quantities.length;
+  const pinned = Object.keys(w.picks).length + quantities.length + Object.keys(ws.world).filter((k) => k.startsWith("!")).length;
   // What it all means, for whoever asks.
   const [help, setHelp] = useState(false);
   // Stepping through solutions pins every choice, which leaves one, so remember the list it was in.
@@ -149,8 +149,9 @@ export function WorldPanel({ ws, onSelect, summary }: { ws: Workspace; onSelect:
       {help && (
         <div className="world-help muted small">
           <p>
-            Every way the open choices could land is a world. Click an option to pin it, and again to let it go: every page then shows what's true if so, and nothing is
-            saved. Solid means pinned, a dot means it's the only one left, and blank means no world lands there.
+            Every way the open choices could land is a world. Click an option to pin it, and again to let it go. Right-click one, or press and hold, to rule it out
+            instead, and again to bring it back. Every page then shows what's true if so, and nothing is saved. Solid means pinned, a dot means it's the only one left,
+            a cross means it's ruled out, and blank means no world lands there.
           </p>
           {w.vars.some((v) => v.uncertain) && <p>For what's uncertain, the percentage is the belief in each: how strongly it's believed given the evidence and whatever's pinned, so it changes as you pin things.</p>}
           {w.constrained && <p>Requirements rule some worlds out, so for a puzzle the worlds left are its solutions, and they can be stepped through.</p>}
@@ -164,8 +165,28 @@ export function WorldPanel({ ws, onSelect, summary }: { ws: Workspace; onSelect:
   );
 }
 
+/** How the world says an option is ruled out, just for looking. The engine reads the same. */
+const outKey = (v: VarView, o: OptionView) => `!${v.id}/${o.id}`;
+export const isOut = (ws: ViewProps["ws"], v: VarView, o: OptionView) => outKey(v, o) in ws.world;
+
+/** Click pins an option, or lets it go. On one that's ruled out, it brings it back instead. */
 function pinner(ws: ViewProps["ws"], v: VarView, o: OptionView) {
-  return () => ws.pin(v.id, o.picked ? null : o.id);
+  return () => (isOut(ws, v, o) ? ruler(ws, v, o)() : ws.pin(v.id, o.picked ? null : o.id));
+}
+
+/** Right-click (or a long press) rules an option out, or brings it back: only for looking, like pinning. */
+function ruler(ws: ViewProps["ws"], v: VarView, o: OptionView) {
+  return (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    const next = { ...ws.world };
+    const k = outKey(v, o);
+    if (k in next) delete next[k];
+    else {
+      next[k] = "out";
+      if (next[v.id] === o.id) delete next[v.id];
+    }
+    ws.setWorld(next);
+  };
 }
 
 /** An option as it reads: a row of a table by its key, as a map card does, and anything else by its name. */
@@ -200,9 +221,9 @@ function Grid({ ws }: { ws: ViewProps["ws"] }) {
               {head.map((h) => {
                 const o = v.options.find((x) => x.name === h.name)!;
                 return (
-                  <td key={h.id} className={`world-cell ${o.picked ? "picked" : ""} ${onlyLeft(v, o) ? "forced" : ""} ${o.possible ? "possible" : "gone"}`}>
-                    <button onClick={pinner(ws, v, o)} aria-label={`${v.name}: ${o.name}`} title={`${v.name}: ${o.name}`}>
-                      {o.picked ? "●" : onlyLeft(v, o) ? "•" : ""}
+                  <td key={h.id} className={`world-cell ${o.picked ? "picked" : ""} ${onlyLeft(v, o) ? "forced" : ""} ${o.possible ? "possible" : "gone"} ${isOut(ws, v, o) ? "out" : ""}`}>
+                    <button onClick={pinner(ws, v, o)} onContextMenu={ruler(ws, v, o)} aria-label={`${v.name}: ${o.name}`} title={`${v.name}: ${o.name}${isOut(ws, v, o) ? ", ruled out" : ""}`}>
+                      {o.picked ? "●" : isOut(ws, v, o) ? "×" : onlyLeft(v, o) ? "•" : ""}
                     </button>
                   </td>
                 );
@@ -240,8 +261,8 @@ function Board({ ws }: { ws: ViewProps["ws"] }) {
             ) : (
               <span className="board-small">
                 {v.options.map((o) => (
-                  <button key={o.id} disabled={!o.possible} onClick={() => ws.pin(v.id, o.id)}>
-                    {o.possible ? o.name : ""}
+                  <button key={o.id} className={isOut(ws, v, o) ? "out" : ""} disabled={!o.possible && !isOut(ws, v, o)} onClick={pinner(ws, v, o)} onContextMenu={ruler(ws, v, o)}>
+                    {o.possible || isOut(ws, v, o) ? o.name : ""}
                   </button>
                 ))}
               </span>
@@ -263,7 +284,13 @@ function Lists({ ws }: { ws: ViewProps["ws"] }) {
           <div className="world-var">{v.name}</div>
           <div className="chips">
             {v.options.map((o) => (
-              <button key={o.id} className={`world-opt ${o.picked ? "picked" : ""} ${o.possible ? "" : "gone"} ${o.gap ? "gap" : ""}`} onClick={pinner(ws, v, o)} title={o.name}>
+              <button
+                key={o.id}
+                className={`world-opt ${o.picked ? "picked" : ""} ${o.possible ? "" : "gone"} ${o.gap ? "gap" : ""} ${isOut(ws, v, o) ? "out" : ""}`}
+                onClick={pinner(ws, v, o)}
+                onContextMenu={ruler(ws, v, o)}
+                title={isOut(ws, v, o) ? `${o.name}: ruled out. Click to bring it back` : `${o.name}. Right-click to rule it out`}
+              >
                 {optionName(ws, o)}
                 {v.uncertain && v.options.length > 1 && (o.chance > 0 || !o.gap) && (
                   <span className="muted small" title={`Belief: ${BELIEF_MEANS.toLowerCase()}. Prior belief, before any evidence: ${percent(o.weight)}.`}>
@@ -294,7 +321,17 @@ function WorthFindingOut({ ws, onSelect, help }: { ws: ViewProps["ws"]; onSelect
   const [wanted, setWanted] = useState<string | null>(null);
   const target = open.find((v) => v.id === wanted) ?? usual;
   if (!target || !w.vars.some((v) => v.clues?.length)) return null;
-  const likeliest = [...target.options].sort((a, b) => b.chance - a.chance)[0];
+  // What's believed most, which may be several, or everything there is, before anything's found out.
+  const most = Math.max(...target.options.map((o) => o.chance));
+  const likeliest = target.options.filter((o) => o.chance > 0 && Math.abs(o.chance - most) < 1e-9);
+  const names = (os: OptionView[]) => (os.length === 1 ? optionName(ws, os[0]) : `${os.slice(0, -1).map((o) => optionName(ws, o)).join(", ")} and ${optionName(ws, os[os.length - 1])}`);
+  const believed = !likeliest.length
+    ? "No world is left for any of them."
+    : likeliest.length === target.options.filter((o) => o.chance > 0).length && likeliest.length > 1
+      ? `Nothing is believed more than anything else yet: ${likeliest.length === 2 ? "both" : "each"} ${percent(most)}.`
+      : likeliest.length > 1
+        ? `Believed most now: ${names(likeliest)}, ${percent(most)} each.`
+        : `Believed most now: ${names(likeliest)}, ${percent(most)}.`;
   const nameOf = (id: string) => w.vars.find((v) => v.id === id)?.name ?? id;
   return (
     <section className="worth-finding-out">
@@ -309,7 +346,8 @@ function WorthFindingOut({ ws, onSelect, help }: { ws: ViewProps["ws"]; onSelect
         </select>
       </h4>
       <p className="muted small">
-        Believed most now: {optionName(ws, likeliest)}, {percent(likeliest.chance)}.{help && target.clues?.length ? " Each of these, once known, would leave you this sure on average." : ""}
+        {believed}
+        {help && target.clues?.length ? " Each of these, once known, would leave you this sure on average." : ""}
       </p>
       {!target.clues?.length && <p className="muted small">Nothing else that's open would change which is believed most, on its own.</p>}
       <ol>

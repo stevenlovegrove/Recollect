@@ -401,6 +401,16 @@ impl Space {
         Picks(picks)
     }
 
+    /// The worlds where a choice, by name, lands on this option, in whichever of its variables has it.
+    /// Never, if none does.
+    pub fn lands(&self, name: &str, option: &str) -> Bool {
+        let vars: Vec<Var> = {
+            let m = self.lock();
+            m.vars.iter().enumerate().filter(|(_, v)| v.name == name && v.options.iter().any(|o| o == option)).map(|(i, _)| Var { space: self.clone(), idx: i as u32 }).collect()
+        };
+        self.any(vars.iter().map(|v| v.is(option)))
+    }
+
     /// The variables that are one draw, by what the draw is called. See `Var::in_group`.
     pub fn draw_group(&self, name: &str) -> Option<DrawGroup> {
         let vars: Vec<Var> = {

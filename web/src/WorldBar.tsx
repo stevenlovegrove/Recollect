@@ -14,6 +14,7 @@ function pinnedList(ws: Workspace): string[] {
   const w = ws.view!.worlds;
   const said = [
     ...w.vars.flatMap((v) => v.options.filter((o) => o.picked).map((o) => `${v.name}: ${o.name}`)),
+    ...w.vars.flatMap((v) => v.options.filter((o) => `!${v.id}/${o.id}` in ws.world).map((o) => `${v.name}: not ${o.name}`)),
     ...(w.quantities ?? []).map((q) => `${ws.byId.get(q.node)?.name ?? "something"} ${q.text.includes("..") ? `in ${q.text}` : `= ${q.text}`}`),
   ];
   return said;

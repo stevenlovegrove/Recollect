@@ -2640,6 +2640,16 @@ tr.pruned {
 .world-opt.gap {
   border-style: dashed;
 }
+/* Ruled out, only for looking: struck through, and still there to bring back. */
+.world-opt.out,
+.board-small button.out {
+  text-decoration: line-through;
+  opacity: 0.55;
+  border-style: dashed;
+}
+.world-cell.out button {
+  color: var(--muted);
+}
 .worth-finding-out {
   margin-top: 18px;
 }

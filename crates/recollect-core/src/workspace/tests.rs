@@ -260,3 +260,47 @@ fn a_workspace_from_when_claude_had_to_propose_still_opens() {
     assert_eq!(config.name, "Old");
     assert_eq!(config.systems, vec!["plan".to_string()]);
 }
+
+fn var<'a>(v: &'a Value, name: &str) -> &'a Value {
+    v["worlds"]["vars"].as_array().unwrap().iter().find(|x| x["name"] == name).unwrap_or_else(|| panic!("no {name}"))
+}
+
+fn option<'a>(var: &'a Value, name: &str) -> &'a Value {
+    var["options"].as_array().unwrap().iter().find(|o| o["name"] == name).unwrap_or_else(|| panic!("no {name}"))
+}
+
+#[test]
+fn an_option_ruled_out_only_for_looking_is_left_out_of_every_world_and_saved_nowhere() {
+    let mut ws = open(sample_files("monty-hall").unwrap());
+    ws.take_writes();
+    let v = view(&mut ws);
+    let car = var(&v, "Where's the car?");
+    let (car_id, door2) = (car["id"].as_str().unwrap().to_string(), option(car, "Door[2]")["id"].as_str().unwrap().to_string());
+    let stick = var(&v, "Stick or switch?");
+    let (stick_id, sticking) = (stick["id"].as_str().unwrap().to_string(), option(stick, "Stick")["id"].as_str().unwrap().to_string());
+    let all: u64 = v["worlds"]["count"].as_str().unwrap().parse().unwrap();
+    let checks = v["checks"].clone();
+
+    // Something uncertain: it's known not to be there, so the other two are believed more.
+    let world = json!({ format!("!{car_id}/{door2}"): "out" });
+    let v = dispatch(&mut ws, "view", json!({ "world": world }), "t").unwrap().0;
+    let car = var(&v, "Where's the car?");
+    assert_eq!(option(car, "Door[2]")["chance"], 0.0);
+    assert!((option(car, "Door[1]")["chance"].as_f64().unwrap() - 0.5).abs() < 1e-9, "{car}");
+    assert!(v["worlds"]["count"].as_str().unwrap().parse::<u64>().unwrap() < all);
+    assert_eq!(v["checks"], checks, "what rules it out is read without complaint");
+    assert_eq!(v["worlds"]["constrained"], false, "looking isn't a puzzle's requirement");
+    let winning = |v: &Value| v["nodes"].as_array().unwrap().iter().find(|n| n["name"] == "Chance of winning").unwrap()["cells"]["value"].clone();
+    let before = winning(&dispatch(&mut ws, "view", json!({}), "t").unwrap().0);
+    assert_ne!(winning(&v), before, "and what's worked out from chances takes it in: {before}");
+
+    // A choice: the worlds where it's taken are only left out of what's looked at.
+    let world = json!({ format!("!{stick_id}/{sticking}"): "out" });
+    let v = dispatch(&mut ws, "view", json!({ "world": world }), "t").unwrap().0;
+    assert_eq!(v["worlds"]["count"].as_str().unwrap().parse::<u64>().unwrap() * 2, all);
+    assert!(!option(var(&v, "Stick or switch?"), "Stick")["possible"].as_bool().unwrap());
+    assert!(v["worlds"]["picks"].as_object().unwrap().is_empty(), "nothing is pinned");
+    assert!(!v["nodes"].as_array().unwrap().iter().any(|n| n["name"].is_null() && n["components"].as_array().unwrap().iter().any(|c| c["name"] == "found")), "what does it is never shown");
+
+    assert!(ws.take_writes().is_empty(), "and nothing is written");
+}

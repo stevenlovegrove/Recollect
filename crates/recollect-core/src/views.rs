@@ -268,8 +268,16 @@ fn looked_at(g: &Graph, world: &World) -> (Option<Graph>, Vec<QuantityPin>) {
         }
         pins.push(pin);
     }
-    let found: BTreeMap<String, String> = world.iter().filter(|(k, _)| !k.starts_with('=') && is_chance(g, k)).map(|(k, v)| (k.clone(), v.clone())).collect();
-    if said.is_empty() && found.is_empty() {
+    let found: BTreeMap<String, String> = world.iter().filter(|(k, _)| !k.starts_with('=') && !k.starts_with('!') && is_chance(g, k)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    // Ruling out what's uncertain is something known, so it's evidence, and what's worked out from chances
+    // takes it in. A choice that's someone's to make is only left out of the worlds looked at.
+    let unlikely: Vec<(Entity, Entity)> = plan::ruled_out(world)
+        .into_iter()
+        .filter(|(c, _)| is_chance(g, c))
+        .filter_map(|(c, o)| Some((c.parse::<Entity>().ok()?, o.parse::<Entity>().ok()?)))
+        .filter(|(c, o)| g.contains(*c) && g.contains(*o))
+        .collect();
+    if said.is_empty() && found.is_empty() && unlikely.is_empty() {
         return (None, pins);
     }
     let mut copy = g.fork();
@@ -295,6 +303,15 @@ fn looked_at(g: &Graph, world: &World) -> (Option<Graph>, Vec<QuantityPin>) {
     if !found.is_empty() {
         let f = copy.spawn();
         copy.add(f, FOUND).set(f, Found(found));
+    }
+    for (choice, option) in unlikely {
+        let known = copy.spawn();
+        copy.add(known, VALUE).add(known, EVIDENCE).add(known, FOUND);
+        for (name, to) in [("c", choice), ("o", option)] {
+            let edge = copy.link(known, to, LABEL);
+            copy.set(edge, Called(name.to_string()));
+        }
+        copy.set_formula(known, ValueCell::NAME, "!chose(c, o)");
     }
     // A range that's a matter of draws in some worlds and not in others isn't worked out, and one no draw
     // fits leaves nothing to read: either is said, and taken back.
@@ -558,7 +575,8 @@ impl Lens {
     fn new(g: &Graph, world: &World) -> Lens {
         let picks = plan::picks(g, world);
         // A draw that's several variables is pinned where whichever is in use lands there.
-        let found = (&plan::pinned(g, world) & &draws_found(world)).given(&picks);
+        // And whatever's ruled out, just for looking, is left out of every world.
+        let found = (&(&plan::pinned(g, world) & &draws_found(world)) & &plan::not_ruled_out(g, world)).given(&picks);
         // Whatever's known about draws is given to everything this reads.
         let reader = RefCell::new(Reader::given(known_draws(g)));
         let in_play = worlds_left(g, &picks, &found, &mut reader.borrow_mut());
@@ -727,8 +745,9 @@ struct Asked {
     lands: Vec<(String, Bool)>,
 }
 
-fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap<String, Var>, quantities: Vec<QuantityPin>) -> WorldsView {
-    let constrained = narrows(g);
+/// `constrained` is whether what's written rules worlds out, as a puzzle's requirements do, rather than
+/// only what's being looked at.
+fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap<String, Var>, quantities: Vec<QuantityPin>, constrained: bool) -> WorldsView {
     let in_play = &lens.in_play;
     // A decision whose options depend on other choices is several variables with its name, one for each
     // set of options that can be left, so it's asked where it lands rather than read off one of them.
@@ -975,7 +994,7 @@ pub fn view(o: &Workspace, world: &World) -> View {
     let constants = g.constants().into_iter().map(|(e, _)| node(e, recollect_systems::label_of(g, e))).collect();
     let edges = g.edges().filter(|(_, from, _)| !is_lens(g, *from)).map(|(e, from, to)| EdgeView { id: e, from, to, components: g.given(e).into_iter().collect(), cells: cells(g, e, &lens, &labels, &mut vars) }).collect();
     let refused: Vec<CheckView> = quantities.iter().filter_map(|q| Some(CheckView { severity: "notice", rule: "pin_not_applied".to_string(), on: if q.node == Entity::whole() { vec![] } else { vec![q.node] }, detail: format!("{} {} couldn't be pinned to {}: {}", labels.of(&q.node.to_string()), q.cell, q.text, q.refused.as_ref()?) })).collect();
-    let worlds = worlds(g, world, &lens, &labels, vars, quantities);
+    let worlds = worlds(g, world, &lens, &labels, vars, quantities, narrows(o.log.graph()));
     let ran = g.take_ran().into_iter().filter(|(_, c)| !internal(g, c)).map(|(node, cell)| RanView { node, cell }).collect();
     View {
         workspace: WorkspaceView { name: o.config.name.clone(), about: o.config.about.clone(), id: o.id.clone(), location: o.location.clone(), systems: o.built.names.clone(), sample: o.sample.clone() },

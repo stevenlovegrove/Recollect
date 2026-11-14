@@ -747,6 +747,35 @@ pub fn pinned(g: &Graph, world: &BTreeMap<String, String>) -> Bool {
     out
 }
 
+/// How a world says an option is ruled out, only for looking: `!choice/option`, beside the choices it
+/// pins. Nothing about it is saved, unlike ruling an option out on its edge.
+pub fn ruled_out_key(choice: &str, option: &str) -> String {
+    format!("!{choice}/{option}")
+}
+
+/// The options a world rules out, as (choice, option).
+pub fn ruled_out(world: &BTreeMap<String, String>) -> Vec<(String, String)> {
+    world.keys().filter_map(|k| k.strip_prefix('!')?.split_once('/').map(|(c, o)| (c.to_string(), o.to_string()))).collect()
+}
+
+/// The worlds a world's ruled-out options leave: those where none of them is what its choice lands on.
+pub fn not_ruled_out(g: &Graph, world: &BTreeMap<String, String>) -> Bool {
+    let out_of = ruled_out(world);
+    if out_of.is_empty() {
+        return Space::global().always();
+    }
+    let narrowed = narrowed(g).unwrap_or_default();
+    let mut left = Space::global().always();
+    for (choice, option) in out_of {
+        let lands = match narrowed.iter().find(|n| n.id.to_string() == choice) {
+            Some(n) => n.options.iter().find(|o| o.0.to_string() == option).map_or_else(|| Space::global().never(), |o| o.2.clone()),
+            None => Space::global().lands(&choice, &option),
+        };
+        left = &left & &!&lands;
+    }
+    left
+}
+
 /// Whether work is waiting on an open decision.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pressure {
