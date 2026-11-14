@@ -131,10 +131,11 @@ export function Hist({ d, wide }: { d: Dist; wide?: boolean }) {
           : bars.map((b, i) => <rect key={i} className={near === i ? "on" : undefined} x={i * each} y={h - (b / top) * h} width={Math.max(each - 0.5, 0.5)} height={(b / top) * h} />)}
         {zero !== null && <line x1={zero} x2={zero} y1={0} y2={h} className="hist-zero" />}
         {/* The whole height takes the pointer, so a short bar is as easy to point at as a tall one. */}
-        <rect x={0} y={0} width={w} height={h} fill="transparent" />
+        <rect className="hist-hit" x={0} y={0} width={w} height={h} />
       </svg>
+      {/* Centred on the pointer, except near an end, where it lines up with that end so it isn't cut off. */}
       {tip && (
-        <span className="hist-tip" style={{ left: Math.min(Math.max(at ?? 0, 0), w) }}>
+        <span className={`hist-tip ${(at ?? 0) < w * 0.3 ? "from-left" : (at ?? 0) > w * 0.7 ? "from-right" : ""}`} style={(at ?? 0) > w * 0.7 ? { right: 0 } : (at ?? 0) < w * 0.3 ? { left: 0 } : { left: at ?? 0 }}>
           {tip}
         </span>
       )}

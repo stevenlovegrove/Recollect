@@ -2155,6 +2155,11 @@ input.sheet-input {
 .hist rect.on {
   fill: var(--text);
 }
+/* Over the whole plot, to take the pointer: never painted. */
+.hist rect.hist-hit,
+.hist.drawn rect.hist-hit {
+  fill: transparent;
+}
 .hist-tip {
   position: absolute;
   bottom: calc(100% + 4px);
@@ -2168,6 +2173,10 @@ input.sheet-input {
   white-space: nowrap;
   pointer-events: none;
   z-index: 5;
+}
+.hist-tip.from-left,
+.hist-tip.from-right {
+  transform: none;
 }
 .hist-zero {
   stroke: var(--text);
