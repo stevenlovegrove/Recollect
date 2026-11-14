@@ -1006,7 +1006,7 @@ pub struct Chance {
     pub undefined: f64,
     pub exact: bool,
     pub draws: usize,
-    /// In how many of the draws it was true.
+    /// In how many of the draws it was true. Where it's several things, each drawn, that's of all their draws.
     pub hits: usize,
     /// How far out the chance could reasonably be: its standard error. 0 if it's exact.
     pub error: f64,
@@ -1311,7 +1311,7 @@ impl Reader {
     /// How likely a truth is, if it's each of these this much of the time.
     pub fn chance(&mut self, shares: &[Share]) -> Chance {
         let whole: f64 = shares.iter().map(|s| s.weight).sum();
-        let (mut yes, mut undefined, mut exact, mut hits) = (0.0, 0.0, true, 0);
+        let (mut yes, mut undefined, mut drawn, mut hits) = (0.0, 0.0, 0, 0);
         for share in shares.iter().filter(|s| s.weight > 0.0) {
             let w = share.weight / whole;
             match &share.value {
@@ -1328,14 +1328,17 @@ impl Reader {
                     yes += w * here as f64 / DRAWS as f64;
                     undefined += w * nan as f64 / DRAWS as f64;
                     hits += here;
-                    exact = false;
+                    drawn += 1;
                 }
                 Term::Undefined => undefined += w,
                 _ => {}
             }
         }
         let chance = if undefined < 1.0 { yes / (1.0 - undefined) } else { 0.0 };
-        Chance { chance, undefined, exact, draws: if exact { 0 } else { DRAWS }, hits, error: if exact { 0.0 } else { (chance * (1.0 - chance) / DRAWS as f64).sqrt() } }
+        // Each thing it could be that had to be drawn has its own draws, so "in every one" and "in none"
+        // are about all of them.
+        let exact = drawn == 0;
+        Chance { chance, undefined, exact, draws: drawn * DRAWS, hits, error: if exact { 0.0 } else { (chance * (1.0 - chance) / DRAWS as f64).sqrt() } }
     }
 }
 
@@ -1501,6 +1504,11 @@ mod tests {
         assert!(s.exact && s.mean == 12.5 && s.mid == 10.0, "{s:?}");
         let s = reader.summary(&[Share { weight: 1.0, value: normal("t/mix/a", 0.0, 1.0) }, Share { weight: 1.0, value: normal("t/mix/b", 10.0, 1.0) }]);
         assert!(s.law.is_none() && !s.exact && (s.mean - 5.0).abs() < 0.05, "{s:?}");
+        // True in every draw one way and in none the other is half the time, not "in every draw".
+        let (x, y) = (normal("t/mix/x", 0.0, 1.0), normal("t/mix/y", 0.0, 1.0));
+        let (always, never) = (bin(Op::Le, &n(0.0), &bin(Op::Mul, &bin(Op::Max, &x, &y), &bin(Op::Max, &x, &y))), bin(Op::Lt, &bin(Op::Mul, &bin(Op::Max, &x, &y), &bin(Op::Max, &x, &y)), &n(0.0)));
+        let c = reader.chance(&[Share { weight: 1.0, value: always }, Share { weight: 1.0, value: never }]);
+        assert!(!c.exact && c.chance == 0.5 && c.hits == DRAWS && c.draws == 2 * DRAWS, "{c:?}");
     }
 
     #[test]
