@@ -1,0 +1,17 @@
+id: 01a1d7b3-45a9-7372-9540-26b66aa2f181
+components:
+- notes
+cells:
+  body: |-
+    Two dice, and what they add up to. A die is a short list of outcomes, each as likely as the others, so it's held the way an uncertain decision is: every outcome, and the worlds where it lands there. Nothing here is drawn, and every chance is exact.
+
+    - **Total** has eleven answers, from 2 to 12, each with the worlds that give it.
+    - **A seven** and **Doubles** are each true in six of the thirty-six.
+    - **The higher of the two** is a six in eleven of them.
+
+    **Things to try**
+
+    - Open the **Worlds** tab: each die is something to find out, and pinning one is finding it out.
+    - Pin the first die to 6 in the bar at the top, and see what's left of the total.
+    - Select **A seven** and read when it's true: it lists the six ways.
+  name: About this example

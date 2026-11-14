@@ -1,0 +1,18 @@
+id: 01a1d7b3-4515-7793-b01a-86f0e1f55943
+components:
+- notes
+cells:
+  body: |-
+    A shelf has to go in an alcove. Both were measured with a tape, so neither is known to the millimetre.
+
+    - **Alcove** is `normal(1205, 2)`: about 1,205 mm, give or take 2.
+    - **Shelf** is `between(1198, 1204)`: nine times in ten, somewhere from 1,198 to 1,204.
+
+    **Clearance** is one less the other. Two bell curves that share nothing subtract to a bell curve, so it's held exactly, and so is **It fits**: a question a law answers.
+
+    **Things to try**
+
+    - Select **Clearance**: its histogram is solid, and it says which bell curve it is.
+    - Measure the shelf better: change it to `between(1200, 1202)` and see how much surer the fit is.
+    - Select **Clearance less itself**: one cell less itself is exactly nothing, because it's the same draw.
+  name: About this example

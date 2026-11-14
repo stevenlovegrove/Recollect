@@ -92,7 +92,7 @@ web/                      Vite, React, React Flow and ELK. `src/engine` runs the
 
 ## The samples
 
-The example problems are real workspaces in `examples/`, offered when nothing's open and under the workspace menu. Opening one makes a working copy, kept in the browser or, with `recollect serve`, in `~/.recollect/samples`, so the originals never change, and it can be started again. `tests/samples.rs` checks what's committed still means what it should: an invoice that totals 96, a budget over £200 exactly when `Stay=Hotel`, 92 queens, 288 grids, and the Japanese owning the zebra.
+The example problems are real workspaces in `examples/`, offered when nothing's open and under the workspace menu. Opening one makes a working copy, kept in the browser or, with `recollect serve`, in `~/.recollect/samples`, so the originals never change, and it can be started again. `tests/samples.rs` checks what's committed still means what it should: an invoice that totals 96, a budget over £200 exactly when `Stay=Hotel`, 92 queens, 288 grids, the Japanese owning the zebra, two dice totalling seven one time in six, and savings whose log is exactly a bell curve.
 
 ## What was dropped from the first version
 

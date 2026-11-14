@@ -1,0 +1,3 @@
+name = "Savings, give or take"
+about = "A table of years that grow by an uncertain amount. Growth drawn afresh each year averages out, and one rate drawn once compounds, so the same formula ends up far wider. Both are exact."
+systems = []

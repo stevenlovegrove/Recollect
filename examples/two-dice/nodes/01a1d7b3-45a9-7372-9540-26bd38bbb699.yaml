@@ -1,0 +1,20 @@
+id: 01a1d7b3-45a9-7372-9540-26bd38bbb699
+components:
+- notes
+- value
+cells:
+  body: 'Eleven in thirty-six: not twice one in six, because both can be.'
+  name: A six somewhere
+formulas:
+  value: a = 6 || b = 6
+links:
+- to: 01a1d7b3-45a9-7372-9540-26b7ddd63715
+  components:
+  - label
+  cells:
+    called: a
+- to: 01a1d7b3-45a9-7372-9540-26b821c91332
+  components:
+  - label
+  cells:
+    called: b

@@ -1478,6 +1478,17 @@ impl Reader {
                         });
                     }
                 }
+                // Two products of powers are in the order their logs are, and the gap between those is a sum.
+                if let (Some(left), Some(right)) = (self.forms(a).log, self.forms(b).log)
+                    && let Some(gap) = left.plus(&right.scaled(-1.0))
+                    && let Some(law) = Self::law_of_straight(&gap)
+                {
+                    return Some(match op {
+                        Op::Lt | Op::Le => law.below(0.0),
+                        Op::Eq => 0.0,
+                        _ => 1.0,
+                    });
+                }
                 match (plain(a), plain(b)) {
                     (None, Some(at)) if compares => Some(self.law_at(a, 0)?.mass(at, op == Op::Le)),
                     (Some(at), None) if compares => Some(1.0 - self.law_at(b, 0)?.mass(at, op == Op::Lt)),
@@ -1872,6 +1883,10 @@ mod tests {
         // Growing by an uncertain rate each year, compounded: still one law after any number of years.
         let years = (0..10).fold(n(1000.0), |balance, year| bin(Op::Mul, &balance, &un(Un::Exp, &normal(&format!("t/log/year{year}"), 0.05, 0.1))));
         near(law(years), 1000f64.ln() + 0.5, 0.1 * 10f64.sqrt());
+        // Which of two is the greater is which has the greater log, whatever they share.
+        let ahead = reader.chance(&one(&bin(Op::Lt, &bin(Op::Mul, &ea, &eb), &bin(Op::Mul, &n(2.0), &eb))));
+        assert!(ahead.exact && (ahead.chance - phi((2f64.ln() - 0.5) / 0.3)).abs() < 1e-12, "{ahead:?}");
+        let mut law = |t: Term| reader.law(&rand(&t));
         // And the log of one is a bell curve again.
         assert_eq!(law(un(Un::Ln, &bin(Op::Mul, &ea, &ea))), Some(Law::Normal { mean: 1.0, sd: 0.6 }));
         // Moved along it has no name of its own, and is still read exactly.

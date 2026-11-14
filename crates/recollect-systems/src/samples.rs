@@ -24,6 +24,9 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "handbook", title: "Publishing a handbook", about: "A first plan to read: a team publishing a handbook, with one decision held open.", group: "plan", systems: &["plan", "schedule"], build: handbook },
     Sample { name: "critical-path", title: "Critical path", about: "A plain schedule with no decisions: dates go forward over the dependencies, and slack comes from following them backward.", group: "plan", systems: &["plan", "schedule"], build: critical_path },
     Sample { name: "launch", title: "A launch, give or take", about: "A plan whose estimates are guesses with a least, a likeliest and a most: what they add up to, when it's likely to end, and how likely that is to be within a fortnight.", group: "plan", systems: &["plan", "schedule"], build: launch },
+    Sample { name: "savings", title: "Savings, give or take", about: "A table of years that grow by an uncertain amount. Growth drawn afresh each year averages out, and one rate drawn once compounds, so the same formula ends up far wider. Both are exact.", group: "sheet", systems: &[], build: savings },
+    Sample { name: "supplier", title: "Choosing a supplier", about: "Three quotes held three ways: a plain number, a three-point guess, and a price with extras. What each comes to with shipping, and how likely it is to be within budget.", group: "sheet", systems: &["plan"], build: supplier },
+    Sample { name: "shelf", title: "Will the shelf fit?", about: "Two measurements, each a little uncertain: how much clearance there is, and how likely there is to be any.", group: "sheet", systems: &[], build: shelf },
     Sample { name: "invoice", title: "Invoice", about: "Two lines, a subtotal, tax and a total. Edit a number and only what it reaches reruns.", group: "sheet", systems: &[], build: invoice },
     Sample { name: "trip-budget", title: "Trip budget", about: "A budget with decisions left open: the total is exact in every world, and so is what would put it over.", group: "sheet", systems: &["plan"], build: trip_budget },
     Sample { name: "choosing-a-car", title: "Choosing a car", about: "Petrol and electric cars as tables: what every car has, and what only petrol or electric cars have. What each costs a year over mileage you can only guess at, and which can get to Edinburgh without stopping.", group: "sheet", systems: &["plan"], build: choosing_a_car },
@@ -34,6 +37,7 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "sudoku", title: "4×4 sudoku", about: "A table of sixteen cells, each choosing a number, and a clue for each row, column and box: distinct(Cell[A1].chosen, Cell[A2].chosen, …). There are 288 grids.", group: "puzzle", systems: &[], build: sudoku },
     Sample { name: "knights-and-knaves", title: "Knights and knaves", about: "A says “we are both knaves”. Knights always tell the truth, and knaves always lie.", group: "puzzle", systems: &[], build: knights_and_knaves },
     Sample { name: "case-file", title: "The Vane watch", about: "A watch has gone missing: three suspects, conflicting accounts, and what's most worth finding out.", group: "reasoning", systems: &["plan"], build: case_file },
+    Sample { name: "two-dice", title: "Two dice", about: "A die is a short list, so everything worked out from two of them is exact: eleven totals, each with its chance, and what finding out one die says about the rest.", group: "reasoning", systems: &[], build: two_dice },
     Sample { name: "monty-hall", title: "Monty Hall", about: "Three doors and one car: should you switch after Monty opens a door?", group: "reasoning", systems: &["plan"], build: monty_hall },
     Sample { name: "medical-test", title: "The positive test", about: "A positive result from a test that's 90% accurate: how likely is it that you have the condition?", group: "reasoning", systems: &["plan"], build: medical_test },
     Sample { name: "bertrands-box", title: "Bertrand's box", about: "You draw a gold coin from one of three boxes: how likely is the other coin in it to be gold?", group: "reasoning", systems: &["plan"], build: bertrands_box },
@@ -46,7 +50,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "26";
+pub const FORMAT: &str = "27";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -246,6 +250,109 @@ A histogram that's solid is exact. A paler one was read from 4,096 draws, and ho
     b.formula(end, "goal.finish").label(end, goal, "goal").note(end, "When the goal is finished, which is when the last of its parts is. The build waits for the design, and the review for the build and the copy, so this is the later of two chains.");
     let soon = "Done within a fortnight";
     b.formula(soon, "end <= 14").label(soon, end, "end").note(soon, "True in some draws and false in others, so what it says is how likely. It was read from draws, and says so.");
+}
+
+fn savings(b: &mut Build) {
+    about(b, r#"£1,000 left to grow for ten years, at about 5% a year, give or take 10%. Two tables work it out with the same formula, and differ only in where the uncertain growth is written.
+
+- **Year** has a column, `growth`, that says `normal(0.05, 0.1)`. A column's formula runs for each row, so each year has a draw of its own, and good years and bad ones partly cancel.
+- **Steady** reads one cell, **Rate**, which says the same thing once. Every year reads the same draw, so a bad rate is bad ten times over.
+
+Each year multiplies the last by `exp` of its growth, and a product of those is a lognormal, whatever it shares. So both ends are held exactly, with solid histograms: nothing here is read from draws.
+
+**Things to try**
+
+- Compare **After 10 years** with **Steady after 10 years**: the same middle, and three times the spread.
+- Open the **Table** tab and pick the Year table to see each year's balance widen.
+- Change the spread of **Rate** and watch only the Steady side move."#);
+    b.formula_on("Year", "growth", "normal(0.05, 0.1)").formula_on("Year", "balance", "prev.balance * exp(self.growth)");
+    b.put("Year[0]", "balance", json!(1000.0));
+    b.formula("Rate", "normal(0.05, 0.1)").note("Rate", "One uncertain rate, written once. Everything that reads this cell reads the same draw.");
+    b.formula_on("Steady", "balance", "prev.balance * exp(rate)").label("Steady", "Rate", "rate");
+    b.put("Steady[0]", "balance", json!(1000.0));
+    b.formula("After 10 years", "Year[10].balance").note("After 10 years", "Ten years' growth, each drawn afresh. Its log is a sum of ten bell curves, so it's a lognormal, exactly.");
+    b.formula("Steady after 10 years", "Steady[10].balance").note("Steady after 10 years", "Ten years at one rate, drawn once. The same middle as the other, and far wider: nothing averages out.");
+    let doubled = "Doubled in ten years";
+    b.formula(doubled, "after >= 2000").label(doubled, "After 10 years", "after").note(doubled, "A question a law answers, so how likely it is is exact.");
+    let steady_doubled = "Steady doubled in ten years";
+    b.formula(steady_doubled, "after >= 2000").label(steady_doubled, "Steady after 10 years", "after").note(steady_doubled, "The same question of the wider one. More spread means more chance of the extremes, either way.");
+    let ahead = "Year by year comes out ahead";
+    b.formula(ahead, "varied > steady").label(ahead, "After 10 years", "varied").label(ahead, "Steady after 10 years", "steady");
+    b.note(ahead, "Which of two products is the greater is which has the greater log, and the gap between two logs is a bell curve. So this is exact too, and it's a half: they have the same middle.");
+}
+
+fn supplier(b: &mut Build) {
+    about(b, r#"Three suppliers have quoted for the same job, and each quote is a different kind of thing.
+
+- **Fixed price** is a number.
+- **Day rate** is a guess with a least, a likeliest and a most: `triangular(3000, 3800, 6000)`.
+- **Fixed with extras** is a price plus extras nobody can name yet, which are usually small and occasionally not: `3600 + exponential(400)`.
+
+Which to take is yours to choose, so nothing averages over it: **Cost** shows what it comes to for each, held as whatever it is. Shipping is uncertain too, and it's one cell, so it's the same draw whichever you choose.
+
+**Things to try**
+
+- Select **Cost** to see the three side by side. The fixed price with shipping is exact. The other two are a sum of unlike things, which has no law, so they're read from draws and say so.
+- Select **Within budget**: certain for one, and a chance for the others.
+- Pin a supplier in the bar at the top to see only that one."#);
+    let which = "Which supplier?";
+    b.add(which, DECISION).note(which, "Yours to choose, so what depends on it shows one answer for each, and never an average over them.");
+    b.put("Fixed price", "quote", json!(4200.0)).option("Fixed price", which, None).note("Fixed price", "A number: no more to say.");
+    b.formula_on("Day rate", "quote", "triangular(3000, 3800, 6000)").option("Day rate", which, None).note("Day rate", "Probably cheaper, and it could run to much more.");
+    b.formula_on("Fixed with extras", "quote", "3600 + exponential(400)").option("Fixed with extras", which, None).note("Fixed with extras", "Never below 3,600, usually a few hundred over, and now and then a lot.");
+    b.formula("Shipping", "uniform(100, 300)").note("Shipping", "Anywhere from 100 to 300, and the same whoever supplies.");
+    b.formula("Cost", "supplier.chosen.quote + shipping").label("Cost", which, "supplier").label("Cost", "Shipping", "shipping");
+    b.note("Cost", "The quote of whichever is chosen, plus shipping. Each answer is held as what it is.");
+    b.value("Budget", 4500.0);
+    b.formula("Within budget", "cost <= budget").label("Within budget", "Cost", "cost").label("Within budget", "Budget", "budget");
+    b.note("Within budget", "Always, for the fixed price: at most 4,200 and 300. For the others it's a chance.");
+}
+
+fn shelf(b: &mut Build) {
+    about(b, r#"A shelf has to go in an alcove. Both were measured with a tape, so neither is known to the millimetre.
+
+- **Alcove** is `normal(1205, 2)`: about 1,205 mm, give or take 2.
+- **Shelf** is `between(1198, 1204)`: nine times in ten, somewhere from 1,198 to 1,204.
+
+**Clearance** is one less the other. Two bell curves that share nothing subtract to a bell curve, so it's held exactly, and so is **It fits**: a question a law answers.
+
+**Things to try**
+
+- Select **Clearance**: its histogram is solid, and it says which bell curve it is.
+- Measure the shelf better: change it to `between(1200, 1202)` and see how much surer the fit is.
+- Select **Clearance less itself**: one cell less itself is exactly nothing, because it's the same draw."#);
+    b.formula("Alcove", "normal(1205, 2)").note("Alcove", "The width of the gap, in millimetres, as well as the tape could say.");
+    b.formula("Shelf", "between(1198, 1204)").note("Shelf", "Nine times in ten between the two, which is a bell curve about 1,201.");
+    b.formula("Clearance", "alcove - shelf").label("Clearance", "Alcove", "alcove").label("Clearance", "Shelf", "shelf");
+    b.note("Clearance", "How much room there is. A bell curve, exactly, because the two measurements share nothing.");
+    b.formula("It fits", "clearance > 0").label("It fits", "Clearance", "clearance").note("It fits", "How likely there's any room at all. Exact, because clearance has a law.");
+    b.formula("A snug fit", "clearance > 0 && clearance < 3").label("A snug fit", "Clearance", "clearance").note("A snug fit", "Room, and less than 3 mm of it: two limits on one number, which a law also answers.");
+    let same = "Clearance less itself";
+    b.formula(same, "clearance - clearance").label(same, "Clearance", "clearance").note(same, "Exactly nothing. A cell read twice is the same draw both times, which a histogram of each could never say.");
+}
+
+fn two_dice(b: &mut Build) {
+    about(b, r#"Two dice, and what they add up to. A die is a short list of outcomes, each as likely as the others, so it's held the way an uncertain decision is: every outcome, and the worlds where it lands there. Nothing here is drawn, and every chance is exact.
+
+- **Total** has eleven answers, from 2 to 12, each with the worlds that give it.
+- **A seven** and **Doubles** are each true in six of the thirty-six.
+- **The higher of the two** is a six in eleven of them.
+
+**Things to try**
+
+- Open the **Worlds** tab: each die is something to find out, and pinning one is finding it out.
+- Pin the first die to 6 in the bar at the top, and see what's left of the total.
+- Select **A seven** and read when it's true: it lists the six ways."#);
+    b.formula("First die", "integers(1, 6)").note("First die", "Each whole number from 1 to 6, equally. Written once, so everything that reads it reads the same roll.");
+    b.formula("Second die", "integers(1, 6)").note("Second die", "The same formula in another cell is another die.");
+    for name in ["Total", "A seven", "Doubles", "The higher of the two", "A six somewhere"] {
+        b.label(name, "First die", "a").label(name, "Second die", "b");
+    }
+    b.formula("Total", "a + b").note("Total", "Eleven totals, and 7 the likeliest: six of the thirty-six ways.");
+    b.formula("A seven", "a + b = 7").note("A seven", "One time in six, whatever the first die shows: pin it and see.");
+    b.formula("Doubles", "a = b").note("Doubles", "Also one time in six.");
+    b.formula("The higher of the two", "max(a, b)").note("The higher of the two", "A six eleven times in thirty-six, and a one only once.");
+    b.formula("A six somewhere", "a = 6 || b = 6").note("A six somewhere", "Eleven in thirty-six: not twice one in six, because both can be.");
 }
 
 fn invoice(b: &mut Build) {

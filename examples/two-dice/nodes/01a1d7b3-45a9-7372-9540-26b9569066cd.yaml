@@ -1,0 +1,20 @@
+id: 01a1d7b3-45a9-7372-9540-26b9569066cd
+components:
+- notes
+- value
+cells:
+  body: 'Eleven totals, and 7 the likeliest: six of the thirty-six ways.'
+  name: Total
+formulas:
+  value: a + b
+links:
+- to: 01a1d7b3-45a9-7372-9540-26b7ddd63715
+  components:
+  - label
+  cells:
+    called: a
+- to: 01a1d7b3-45a9-7372-9540-26b821c91332
+  components:
+  - label
+  cells:
+    called: b

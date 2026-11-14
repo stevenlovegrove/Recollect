@@ -1,0 +1,15 @@
+id: 01a1d7b3-4515-7793-b01a-86f579666b47
+components:
+- notes
+- value
+cells:
+  body: 'Room, and less than 3 mm of it: two limits on one number, which a law also answers.'
+  name: A snug fit
+formulas:
+  value: clearance > 0 && clearance < 3
+links:
+- to: 01a1d7b3-4515-7793-b01a-86f3a7759ef3
+  components:
+  - label
+  cells:
+    called: clearance

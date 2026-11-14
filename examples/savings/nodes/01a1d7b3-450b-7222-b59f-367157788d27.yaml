@@ -1,0 +1,18 @@
+id: 01a1d7b3-450b-7222-b59f-367157788d27
+components:
+- notes
+cells:
+  body: |-
+    £1,000 left to grow for ten years, at about 5% a year, give or take 10%. Two tables work it out with the same formula, and differ only in where the uncertain growth is written.
+
+    - **Year** has a column, `growth`, that says `normal(0.05, 0.1)`. A column's formula runs for each row, so each year has a draw of its own, and good years and bad ones partly cancel.
+    - **Steady** reads one cell, **Rate**, which says the same thing once. Every year reads the same draw, so a bad rate is bad ten times over.
+
+    Each year multiplies the last by `exp` of its growth, and a product of those is a lognormal, whatever it shares. So both ends are held exactly, with solid histograms: nothing here is read from draws.
+
+    **Things to try**
+
+    - Compare **After 10 years** with **Steady after 10 years**: the same middle, and three times the spread.
+    - Open the **Table** tab and pick the Year table to see each year's balance widen.
+    - Change the spread of **Rate** and watch only the Steady side move.
+  name: About this example

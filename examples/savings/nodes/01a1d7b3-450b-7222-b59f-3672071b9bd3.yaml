@@ -1,0 +1,6 @@
+id: 01a1d7b3-450b-7222-b59f-3672071b9bd3
+cells:
+  name: Year
+formulas:
+  balance: prev.balance * exp(self.growth)
+  growth: normal(0.05, 0.1)

@@ -231,3 +231,107 @@ fn the_launch_is_likely_within_a_fortnight_and_says_how_it_knows() {
     let fails = soon.at(&BTreeMap::from([(format!("~{changes}/value#0"), "true".to_string())]));
     assert!(reader.chance(&one(fails)).chance < c.chance, "and it's less likely if changes are asked for");
 }
+
+/// What a sample's node comes to, where that's one uncertain thing.
+fn uncertain(o: &Opened, name: &str) -> recollect_graph::chance::Rand {
+    let value = o.get::<ValueCell>(name).0.0;
+    match value.cases().as_slice() {
+        [(_, Val::Rand(r))] => *r,
+        other => panic!("{name} isn't one uncertain thing: {other:?}"),
+    }
+}
+
+#[test]
+fn savings_drawn_each_year_average_out_and_one_rate_compounds() {
+    use recollect_graph::chance::{Law, Reader, Share, Term, phi};
+    let o = open("savings");
+    let mut reader = Reader::new();
+    let lognormal = |law: Option<Law>| match law {
+        Some(Law::Lognormal { mu, sigma }) => (mu, sigma),
+        other => panic!("{other:?} isn't a lognormal"),
+    };
+    // Ten years' growth of about 5%: the same middle either way, and a tenth as much spread squared.
+    let (mu, sigma) = lognormal(reader.law(&uncertain(&o, "After 10 years")));
+    assert!((mu - (1000f64.ln() + 0.5)).abs() < 1e-9 && (sigma - 0.1 * 10f64.sqrt()).abs() < 1e-9, "{mu} {sigma}");
+    let (steady_mu, steady_sigma) = lognormal(reader.law(&uncertain(&o, "Steady after 10 years")));
+    assert!((steady_mu - mu).abs() < 1e-9 && (steady_sigma - 1.0).abs() < 1e-9, "{steady_mu} {steady_sigma}");
+
+    let mut sure = |name: &str| {
+        let c = reader.chance(&[Share { weight: 1.0, value: Term::Rand(uncertain(&o, name)) }]);
+        assert!(c.exact, "{name}: {c:?}");
+        c.chance
+    };
+    let over = |sigma: f64| 1.0 - phi((2000f64.ln() - mu) / sigma);
+    assert!((sure("Doubled in ten years") - over(sigma)).abs() < 1e-9 && (sure("Steady doubled in ten years") - over(1.0)).abs() < 1e-9);
+    assert!(sure("Doubled in ten years") < sure("Steady doubled in ten years"), "more spread, more chance of the extremes");
+    assert!((sure("Year by year comes out ahead") - 0.5).abs() < 1e-9);
+}
+
+#[test]
+fn each_suppliers_cost_is_held_as_what_it_is() {
+    use recollect_graph::chance::{Law, Reader, Share, Term};
+    let o = open("supplier");
+    let which = o.id("Which supplier?").to_string();
+    let at = |option: &str| BTreeMap::from([(which.clone(), o.id(option).to_string())]);
+    let cost = o.get::<ValueCell>("Cost").0.0;
+    assert_eq!(cost.len(), 3);
+    let mut reader = Reader::new();
+    let mut summary = |option: &str| {
+        let Val::Rand(r) = cost.at(&at(option)) else { panic!("{option}'s cost is uncertain, if only for the shipping") };
+        (reader.law(r), reader.summary(&[Share { weight: 1.0, value: Term::Rand(*r) }]))
+    };
+    // A plain quote and uncertain shipping is the shipping, moved along.
+    let (law, fixed) = summary("Fixed price");
+    assert_eq!(law, Some(Law::Uniform { from: 4300.0, to: 4500.0 }));
+    assert!(fixed.exact && fixed.mean == 4400.0);
+    // The others are sums of unlike things, which have no law, so they're read from draws.
+    let (law, day) = summary("Day rate");
+    assert!(law.is_none() && !day.exact && (day.mean - (12_800.0 / 3.0 + 200.0)).abs() < 3.0 * day.error, "{day:?}");
+    let (law, extras) = summary("Fixed with extras");
+    assert!(law.is_none() && !extras.exact && extras.least == Some(3700.0) && (extras.mean - 4200.0).abs() < 3.0 * extras.error, "{extras:?}");
+
+    let within = o.get::<ValueCell>("Within budget").0.0;
+    assert_eq!(within.at(&at("Fixed price")), &Val::Bool(true), "at most 4,200 and 300");
+    let Val::Rand(r) = within.at(&at("Day rate")) else { panic!("a chance") };
+    let c = reader.chance(&[Share { weight: 1.0, value: Term::Rand(*r) }]);
+    assert!(!c.exact && c.chance > 0.5 && c.chance < 0.8, "{c:?}");
+}
+
+#[test]
+fn the_shelf_probably_fits_and_how_likely_is_exact() {
+    use recollect_graph::chance::{Law, Reader, Share, Term, phi};
+    let o = open("shelf");
+    let mut reader = Reader::new();
+    // Nine times in ten between 1,198 and 1,204 is a spread of 3 over 1.645.
+    let sd = (4.0 + (3.0f64 / 1.6448536269514722).powi(2)).sqrt();
+    let Some(Law::Normal { mean, sd: found }) = reader.law(&uncertain(&o, "Clearance")) else { panic!("clearance is a bell curve") };
+    assert!((mean - 4.0).abs() < 1e-9 && (found - sd).abs() < 1e-9, "{mean} {found}");
+    let mut sure = |name: &str| {
+        let c = reader.chance(&[Share { weight: 1.0, value: Term::Rand(uncertain(&o, name)) }]);
+        assert!(c.exact, "{name}: {c:?}");
+        c.chance
+    };
+    assert!((sure("It fits") - phi(4.0 / sd)).abs() < 1e-9);
+    assert!((sure("A snug fit") - (phi(-1.0 / sd) - phi(-4.0 / sd))).abs() < 1e-9);
+    assert_eq!(o.get::<ValueCell>("Clearance less itself").0.0.cases()[0].1, &Val::Num(0.0));
+}
+
+#[test]
+fn two_dice_have_their_known_chances() {
+    let o = open("two-dice");
+    let total = o.get::<ValueCell>("Total").0.0;
+    assert_eq!(total.len(), 11);
+    for (when, v) in total.cases() {
+        let Val::Num(n) = v else { panic!("{v:?}") };
+        assert!((when.prob() - (6.0 - (n - 7.0).abs()) / 36.0).abs() < 1e-12, "{n}");
+    }
+    let chance = |name: &str| truth(&o.get::<ValueCell>(name)).prob();
+    assert!((chance("A seven") - 1.0 / 6.0).abs() < 1e-12 && (chance("Doubles") - 1.0 / 6.0).abs() < 1e-12 && (chance("A six somewhere") - 11.0 / 36.0).abs() < 1e-12);
+    let higher = o.get::<ValueCell>("The higher of the two").0.0;
+    assert!((higher.holds(|v| *v == Val::Num(6.0)).prob() - 11.0 / 36.0).abs() < 1e-12 && (higher.holds(|v| *v == Val::Num(1.0)).prob() - 1.0 / 36.0).abs() < 1e-12);
+    // Finding out the first die leaves a seven as likely as it was, and makes a total of two impossible.
+    let first = format!("~{}/value#0", o.id("First die"));
+    let picks = Space::global().picks(&BTreeMap::from([(first, "6".to_string())]));
+    assert!((truth(&o.get::<ValueCell>("A seven")).given(&picks).prob() - 1.0 / 6.0).abs() < 1e-12);
+    assert_eq!(total.given(&picks).len(), 6);
+}

@@ -1,0 +1,20 @@
+id: 01a1d7b3-450b-7222-b59f-367bbb15cd6d
+components:
+- notes
+- value
+cells:
+  body: 'Which of two products is the greater is which has the greater log, and the gap between two logs is a bell curve. So this is exact too, and it''s a half: they have the same middle.'
+  name: Year by year comes out ahead
+formulas:
+  value: varied > steady
+links:
+- to: 01a1d7b3-450b-7222-b59f-36773b55f818
+  components:
+  - label
+  cells:
+    called: varied
+- to: 01a1d7b3-450b-7222-b59f-367856f8f073
+  components:
+  - label
+  cells:
+    called: steady

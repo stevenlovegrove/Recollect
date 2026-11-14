@@ -1,0 +1,9 @@
+id: 01a1d7b3-45a9-7372-9540-26b7ddd63715
+components:
+- notes
+- value
+cells:
+  body: Each whole number from 1 to 6, equally. Written once, so everything that reads it reads the same roll.
+  name: First die
+formulas:
+  value: integers(1, 6)

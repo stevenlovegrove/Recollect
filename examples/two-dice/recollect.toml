@@ -1,0 +1,3 @@
+name = "Two dice"
+about = "A die is a short list, so everything worked out from two of them is exact: eleven totals, each with its chance, and what finding out one die says about the rest."
+systems = []

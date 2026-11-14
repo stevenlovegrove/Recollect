@@ -1,0 +1,9 @@
+id: 01a1d7b3-450b-7222-b59f-367494d5f56d
+components:
+- notes
+- value
+cells:
+  body: One uncertain rate, written once. Everything that reads this cell reads the same draw.
+  name: Rate
+formulas:
+  value: normal(0.05, 0.1)

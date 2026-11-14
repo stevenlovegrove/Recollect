@@ -1,0 +1,11 @@
+id: 01a1d7b3-450b-7222-b59f-3675730d8ff9
+cells:
+  name: Steady
+formulas:
+  balance: prev.balance * exp(rate)
+links:
+- to: 01a1d7b3-450b-7222-b59f-367494d5f56d
+  components:
+  - label
+  cells:
+    called: rate

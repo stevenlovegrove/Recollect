@@ -1,0 +1,19 @@
+id: 01a1d7b3-450f-76df-82c8-a4e1090073d8
+components:
+- notes
+cells:
+  body: |-
+    Three suppliers have quoted for the same job, and each quote is a different kind of thing.
+
+    - **Fixed price** is a number.
+    - **Day rate** is a guess with a least, a likeliest and a most: `triangular(3000, 3800, 6000)`.
+    - **Fixed with extras** is a price plus extras nobody can name yet, which are usually small and occasionally not: `3600 + exponential(400)`.
+
+    Which to take is yours to choose, so nothing averages over it: **Cost** shows what it comes to for each, held as whatever it is. Shipping is uncertain too, and it's one cell, so it's the same draw whichever you choose.
+
+    **Things to try**
+
+    - Select **Cost** to see the three side by side. The fixed price with shipping is exact. The other two are a sum of unlike things, which has no law, so they're read from draws and say so.
+    - Select **Within budget**: certain for one, and a chance for the others.
+    - Pin a supplier in the bar at the top to see only that one.
+  name: About this example

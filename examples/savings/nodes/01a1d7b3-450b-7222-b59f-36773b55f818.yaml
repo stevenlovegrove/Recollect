@@ -1,0 +1,9 @@
+id: 01a1d7b3-450b-7222-b59f-36773b55f818
+components:
+- notes
+- value
+cells:
+  body: Ten years' growth, each drawn afresh. Its log is a sum of ten bell curves, so it's a lognormal, exactly.
+  name: After 10 years
+formulas:
+  value: Year[10].balance

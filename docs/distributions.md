@@ -1,6 +1,6 @@
 # Distributions
 
-**Status:** the first two steps are built, and the rest isn't: [Order of building](#order-of-building) says which is which, and [What's built](#whats-built) what those leave out. The engine's part is `crates/recollect-graph/src/chance.rs`, the formula language's is in `expr.rs` and `formulas.rs`, and the tests are `tests/chance.rs` in `recollect-systems`. The "A launch, give or take" sample is a plan written this way. For the worlds this extends, see [components.md](components.md#worlds-on-top), and for formulas, [expressions.md](expressions.md).
+**Status:** the first two steps are built, and the rest isn't: [Order of building](#order-of-building) says which is which, and [What's built](#whats-built) what those leave out. The engine's part is `crates/recollect-graph/src/chance.rs`, the formula language's is in `expr.rs` and `formulas.rs`, and the tests are `tests/chance.rs` in `recollect-systems`. Five samples are written this way: see [The samples](#the-samples). For the worlds this extends, see [components.md](components.md#worlds-on-top), and for formulas, [expressions.md](expressions.md).
 
 ## Why
 
@@ -160,19 +160,36 @@ Files don't change: a distribution is a formula, and only its text is saved.
 
 ## What's built
 
-**Simplifying.** Plain arithmetic is done there and then. Adding nothing, multiplying by one, and a number less itself go. `max` and `min` go where one side can't be the other. A comparison is settled where the two sides' limits don't meet, two limits on one number with nothing between them are never, and two that leave nothing out are always. Each of these changes nothing in any draw, which the core property checks.
+**Simplifying.** Each of these changes nothing in any draw, which the core property checks on random formulas:
 
-**Laws.** A number that's a plain number plus so much of each of some draws is tracked as that, whatever the draws are shared with, so:
+- plain arithmetic is done there and then, and adding nothing, multiplying by one, and a number less or over itself go;
+- `max` and `min` go where one side can't be the other;
+- a comparison is settled where the two sides' limits don't meet;
+- two limits on one number with nothing between them are never, and two that leave nothing out are always, as are something and its opposite;
+- not below is at or above, and a choice on the opposite, or on at-or-below, is the same choice the other way round, so each is held one way.
 
-- any sum of bell curves, each scaled and shifted however, is a `normal`;
-- a `uniform` or an `exponential`, scaled and shifted, is still one;
-- `exp` of a bell curve is a `lognormal`, and a `triangular` with plain ends is itself.
+Most of these need both sides to be defined in every draw, and are left alone where they might not be.
+
+**Laws.** What a number is exactly, where that can be said:
+
+| What | Is |
+|---|---|
+| Any sum of bell curves, each scaled and shifted however, whatever they share | A `normal` |
+| A `uniform`, an `exponential` or a `triangular`, scaled and shifted | Still one |
+| A product, quotient, power or root of things whose logs are bell curves, whatever they share | A `lognormal`: ten years of `exp(normal(…))` growth is one |
+| The log of one of those | A `normal` again |
+| The later, or the earlier, of things that share no draw, each with a law or a plain number | A law of its own, written `max(…)` or `min(…)`. With a plain number among them, some of its weight is on that number: `max(x, 0)` is exactly 0 half the time |
+| Any of those moved or stretched by a plain number, where that has no name | Itself, moved: `10 - exponential(2)` |
+| Each of several laws or plain numbers some of the time | Their mixture, which is what a cell that differs over chance comes to taken together |
+
+A law says how much of its weight is below any point, and everything else is read from that. One with a name has formulas for its mean and spread. The later-of and earlier-of have none, so theirs are summed between a few hundred points, and are right to about nine figures.
 
 **A chance from a law.** A truth is read exactly where a law answers it:
 
-- one number against another, where the gap between them has a law, as `a < b` for two bell curves does;
-- a number with a law against a plain one, as `estimate < 3` for a `triangular`;
+- one number against another, where the gap between them has a law, as `a < b` for two bell curves does, or where each is a product whose log is a bell curve;
+- a number with a law against a plain one, including whether it's exactly that number: `max(x, 0) = 0`;
 - two limits on one such number, between them or outside them;
+- two such questions about things that share no draw, both or either;
 - and the opposite of any of those.
 
 Anything else is read from 4,096 draws. Each draw's values are spread evenly, one to each 4,096th, in an order that comes from its name.
@@ -185,7 +202,8 @@ Anything else is read from 4,096 draws. Each draw's values are spread evenly, on
 - **A truth is only ever shown always or never by simplifying.** `x > 1 || x <= 1` simplifies to always. `abs(x) >= 0` doesn't, so it's true in every draw and reads "all 4,096 draws", not "always".
 - **An uncertain condition can only choose between numbers, or between truths.** Choosing between text or nodes is an error in the cell.
 - **`done`, `dropped` and a weight can't be uncertain.** Each is an error that says so.
-- **A normal estimate can be negative,** and a task can't end before it starts, so dates worked out from one go through `max(…, 0)` and have no law. Estimates that can't go below nothing, such as `triangular`, add up as themselves.
+- **A sum of unlike things has no law.** Two `triangular` estimates added, or a `triangular` and a `uniform`, are read from draws. So are a later-of plus anything uncertain, and anything through an `if` on an uncertain condition.
+- **A law is only looked for so far down.** Past 48 things each made of the last it's read from draws, which is always right.
 - **A person's own data as a distribution, a fan down a table's rows, a slider to pin with, and a sweep by putting a value in** aren't built.
 - **A tree is never swapped for columns,** however big it gets, and a formula's size is still capped as it was.
 
@@ -199,3 +217,15 @@ Anything else is read from 4,096 draws. Each draw's values are spread evenly, on
 | **Without anything uncertain, nothing changed** | Every test and sample from before |
 | **Drawing is repeatable** | The same graph, built twice, gives the same histogram |
 | **The lens is honest** | Pinning a quantity then reading equals typing it in through a real commit, then reading |
+
+## The samples
+
+| Sample | Shows |
+|---|---|
+| **A launch, give or take** | A plan whose estimates are three-point guesses: what they add up to, when it ends, and how likely that is to be within a fortnight. One thing in it is a coin toss, so what depends on it shows both answers and what they come to together |
+| **Savings, give or take** | The same formula down two tables. Growth drawn afresh each year averages out, and one rate drawn once compounds. Both ends are lognormals, exactly |
+| **Choosing a supplier** | A choice over quotes held three ways: a plain number, a three-point guess, and a price with extras. One is exact and two are read from draws |
+| **Will the shelf fit?** | Two measurements subtracted, which is a bell curve, and questions a law answers. A cell less itself is exactly nothing |
+| **Two dice** | Short lists: eleven totals with exact chances, and what finding out one die says about the rest |
+
+`tests/samples.rs` checks each says what it claims.

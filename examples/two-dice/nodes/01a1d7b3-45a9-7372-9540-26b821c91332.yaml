@@ -1,0 +1,9 @@
+id: 01a1d7b3-45a9-7372-9540-26b821c91332
+components:
+- notes
+- value
+cells:
+  body: The same formula in another cell is another die.
+  name: Second die
+formulas:
+  value: integers(1, 6)

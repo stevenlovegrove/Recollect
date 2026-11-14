@@ -1,0 +1,9 @@
+id: 01a1d7b3-450b-7222-b59f-367856f8f073
+components:
+- notes
+- value
+cells:
+  body: 'Ten years at one rate, drawn once. The same middle as the other, and far wider: nothing averages out.'
+  name: Steady after 10 years
+formulas:
+  value: Steady[10].balance
