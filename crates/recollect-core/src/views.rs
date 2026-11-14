@@ -3,9 +3,10 @@
 //! consistent with those picks, worked out here by the same code, so a what-if and the real thing
 //! can't disagree.
 
-use std::cell::Cell as StdCell;
+use std::cell::{Cell as StdCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use recollect_graph::chance::{Rand, Reader, Share, Term};
 use recollect_graph::worlds::{Bool, Picks, Space, Var};
 use recollect_graph::{Backed, CellDef, ComponentDef, ComponentType, Entity, Error, Event, Graph, Log, Named, On, Op, Origin, Shown, Source, Stored, Violation};
 use recollect_systems::formulas::{CHOICE, LABEL, shown_free};
@@ -48,6 +49,11 @@ pub struct CellView {
     /// most, over the ways those could go. They aren't averaged over, since nobody rolls a die for them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub over: Option<Over>,
+    /// Where it's uncertain and differs only over what's a matter of chance: what it comes to with all
+    /// of that taken together, each answer counting as much as it's believed. Written as an uncertain
+    /// value is: see `present`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mix: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -293,7 +299,19 @@ impl Labels {
     }
 
     fn of(&self, s: &str) -> String {
-        self.0.get(s).cloned().unwrap_or_else(|| s.to_string())
+        if let Some(name) = self.0.get(s) {
+            return name.clone();
+        }
+        // A draw is called by where it's written, so it reads as that node, and its cell unless it's its value.
+        match recollect_systems::draw_site(s) {
+            Some((node, cell, which)) => {
+                let node = self.0.get(node).cloned().unwrap_or_else(|| node.to_string());
+                let cell = if cell == "value" { String::new() } else { format!(" {cell}") };
+                let which = if which == "0" { String::new() } else { format!(" #{}", which.parse::<u32>().map_or(0, |n| n + 1)) };
+                format!("{node}{cell}{which}")
+            }
+            None => s.to_string(),
+        }
     }
     /// What went wrong, in words. A row nobody wrote only exists once something has asked for it, which
     /// may be after these labels were gathered, so it's named here.
@@ -329,10 +347,72 @@ fn describe_error(e: &Error, labels: &Labels) -> String {
     }
 }
 
-fn show(s: &Shown, labels: &Labels, in_play: &Bool) -> ShownView {
+/// An uncertain value, if that's what this is.
+fn rand_of(v: &Value) -> Option<Rand> {
+    let o = v.as_object()?;
+    (o.len() == 1 && o.contains_key("rand")).then(|| serde_json::from_value(v.clone()).ok()).flatten()
+}
+
+/// A value for reading. An uncertain number is what it comes to, `{"dist": …}`: its middle, its spread,
+/// a histogram, and whether those are exact or were read from draws. An uncertain truth is how likely it
+/// is, `{"chance": …}`, with the same. Wherever one is, in a list or a record too.
+fn present(v: &Value, reader: &RefCell<Reader>) -> Value {
+    if let Some(r) = rand_of(v) {
+        let one = [Share { weight: 1.0, value: Term::Rand(r) }];
+        let mut reader = reader.borrow_mut();
+        return if r.is_truth() { json!({ "chance": reader.chance(&one) }) } else { json!({ "dist": reader.summary(&one) }) };
+    }
+    match v {
+        Value::Array(items) => Value::Array(items.iter().map(|i| present(i, reader)).collect()),
+        Value::Object(fields) => Value::Object(fields.iter().map(|(k, v)| (k.clone(), present(v, reader))).collect()),
+        other => other.clone(),
+    }
+}
+
+/// What an uncertain value comes to with every answer to what's a matter of chance taken together, each
+/// counting as much as it's believed among the worlds in play. Nothing, unless something in it is
+/// uncertain and it's numbers throughout, or truths throughout.
+fn mixed(s: &Shown, in_play: &Bool, reader: &RefCell<Reader>) -> Option<Value> {
+    let Shown::Cond(c) = s else { return None };
+    let cases = c.cases();
+    if cases.len() < 2 || !cases.iter().any(|(_, v)| rand_of(v).is_some()) {
+        return None;
+    }
+    let held = in_play.prob();
+    let shares: Vec<Share> = cases
+        .iter()
+        .map(|(when, v)| {
+            let value = match v {
+                Value::Null => Term::Undefined,
+                Value::Bool(b) => Term::Flag(*b),
+                Value::Number(n) => Term::Num(n.as_f64()?),
+                other => Term::Rand(rand_of(other)?),
+            };
+            Some(Share { weight: if held > 0.0 { (when & in_play).prob() / held } else { 0.0 }, value })
+        })
+        .collect::<Option<_>>()?;
+    let truth = |t: &Term| match t {
+        Term::Flag(_) => Some(true),
+        Term::Num(_) => Some(false),
+        Term::Rand(r) => Some(r.is_truth()),
+        Term::Undefined => None,
+    };
+    let kinds: Vec<bool> = shares.iter().filter_map(|s| truth(&s.value)).collect();
+    let mut reader = reader.borrow_mut();
+    if kinds.iter().all(|t| *t) {
+        Some(json!({ "chance": reader.chance(&shares) }))
+    } else if kinds.iter().all(|t| !*t) {
+        Some(json!({ "dist": reader.summary(&shares) }))
+    } else {
+        None
+    }
+}
+
+fn show(s: &Shown, labels: &Labels, lens: &Lens) -> ShownView {
+    let in_play = &lens.in_play;
     match s {
         Shown::Bool(b) => ShownView::Bool(labels.read(b, in_play)),
-        Shown::Cond(c) => ShownView::Cond { cases: c.cases().into_iter().map(|(g, v)| CaseView { when: labels.read(&g, in_play), value: v.clone() }).collect() },
+        Shown::Cond(c) => ShownView::Cond { cases: c.cases().into_iter().map(|(g, v)| CaseView { when: labels.read(&g, in_play), value: present(v, &lens.reader) }).collect() },
         Shown::Named(items) => ShownView::Named { items: items.iter().map(|(e, b)| NamedView { node: *e, when: labels.read(b, in_play) }).collect() },
     }
 }
@@ -345,6 +425,8 @@ struct Lens {
     found: Bool,
     /// The worlds that are left once these picks are made, and whatever rules worlds out has.
     in_play: Bool,
+    /// What reads anything uncertain. One for everything this looks at, so what's shared is drawn once.
+    reader: RefCell<Reader>,
 }
 
 impl Lens {
@@ -352,7 +434,7 @@ impl Lens {
         let picks = plan::picks(g, world);
         let found = plan::pinned(g, world).given(&picks);
         let ruled = g.registry().constrained(g).map_or_else(|| Space::global().always(), |c| c.given(&picks));
-        Lens { in_play: &ruled & &found, picks, found }
+        Lens { in_play: &ruled & &found, picks, found, reader: RefCell::new(Reader::new()) }
     }
 
     /// A value as it reads through this.
@@ -395,7 +477,8 @@ fn cell_view(g: &Graph, e: Entity, c: &str, lens: &Lens, labels: &Labels, vars: 
     };
     let beneath = g.kind_beneath(e, c);
     let over = StdCell::new(None);
-    let cell = |value, shown, open: Vec<String>, varies, error| CellView { source, kind, beneath, formula: formula.clone(), value, shown, vars: open, varies, over: over.take(), error };
+    let mix = StdCell::new(None);
+    let cell = |value: Option<Value>, shown, open: Vec<String>, varies, error| CellView { source, kind, beneath, formula: formula.clone(), value: value.map(|v| present(&v, &lens.reader)), shown, vars: open, varies, over: over.take(), mix: mix.take(), error };
     if let Some(shown) = shown_of(g, e, c) {
         return match shown {
             Ok(None) => None,
@@ -420,7 +503,11 @@ fn cell_view(g: &Graph, e: Entity, c: &str, lens: &Lens, labels: &Labels, vars: 
                 if !open.is_empty() {
                     over.set(over_choices(g, &narrowed, in_play));
                 }
-                Some(cell(value, Some(show(&narrowed, labels, in_play)), open, !s.vars().is_empty(), None))
+                // Averaging over a choice that's still someone's to make means nothing, so only over chance.
+                if !narrowed.vars().iter().any(|v| is_own(g, v)) {
+                    mix.set(mixed(&narrowed, in_play, &lens.reader));
+                }
+                Some(cell(value, Some(show(&narrowed, labels, lens)), open, !s.vars().is_empty(), None))
             }
         };
     }
@@ -431,14 +518,19 @@ fn cell_view(g: &Graph, e: Entity, c: &str, lens: &Lens, labels: &Labels, vars: 
     }
 }
 
+/// A choice that's someone's to make, where the rest are matters of chance: something uncertain, a
+/// puzzle's unknown, or a draw.
+fn is_own(g: &Graph, v: &Var) -> bool {
+    v.name().parse::<Entity>().is_ok_and(|e| g.has(e, plan::DECISION) && !g.has(e, UNCERTAIN) && !g.has(e, plan::NARROWED))
+}
+
 /// How likely something is for each way the open choices it differs over could go, where those are
 /// someone's to make: the least and the most. Nothing, if it doesn't differ over any, or over too many.
 fn over_choices(g: &Graph, s: &Shown, in_play: &Bool) -> Option<Over> {
     /// The most ways the choices could go that this looks at.
     const MOST: usize = 64;
     let Shown::Bool(b) = s else { return None };
-    let own = |v: &Var| v.name().parse::<Entity>().is_ok_and(|e| g.has(e, plan::DECISION) && !g.has(e, UNCERTAIN) && !g.has(e, plan::NARROWED));
-    let mut choices: Vec<Var> = b.vars().into_iter().filter(own).collect();
+    let mut choices: Vec<Var> = b.vars().into_iter().filter(|v| is_own(g, v)).collect();
     choices.sort_by_key(Var::name);
     choices.dedup_by_key(|v| v.name());
     if choices.is_empty() || choices.iter().map(|v| v.options().len()).product::<usize>() > MOST {
@@ -550,7 +642,8 @@ fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap
                 OptionView { id: o.clone(), name: labels.of(o), weight: weights[i], gap: gaps[i], possible, picked: picked == Some(o), chance }
             })
             .collect();
-        let uncertain = id.parse::<Entity>().is_ok_and(|e| g.has(e, UNCERTAIN));
+        // A draw from a short list is a matter of chance by being one, as an uncertain decision is by saying so.
+        let uncertain = recollect_systems::is_draw(id) || id.parse::<Entity>().is_ok_and(|e| g.has(e, UNCERTAIN));
         views.push(VarView { id: id.clone(), name: labels.of(id), options: views_options, uncertain, sure: None, clues: Vec::new() });
     }
     for n in &narrowed {
@@ -754,7 +847,7 @@ pub fn try_formula(o: &Workspace, e: Entity, text: &str, world: &World) -> Tried
         Ok((value, expansion)) => {
             let lens = Lens::new(g, world);
             let narrowed = lens.narrow(&Shown::cond(&value));
-            Tried { shown: Some(show(&narrowed, &labels, &lens.in_play)), expansion: Some(relabel(&expansion, &labels).replace(['“', '”'], "")), error: None }
+            Tried { shown: Some(show(&narrowed, &labels, &lens)), expansion: Some(relabel(&expansion, &labels).replace(['“', '”'], "")), error: None }
         }
         Err(err) => Tried { shown: None, expansion: None, error: Some(describe_error(&err, &labels)) },
     }

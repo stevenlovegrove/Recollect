@@ -74,3 +74,18 @@ pub fn label_of(g: &Graph, e: Entity) -> String {
     }
 }
 
+
+/// Whether a variable is a draw from a short list, such as a die, rather than a choice: see
+/// `docs/distributions.md`. A draw is called by where it's written, starting with `~`.
+pub fn is_draw(var: &str) -> bool {
+    var.starts_with('~')
+}
+
+/// Where a draw is written, from what it's called: the node, the cell, and which of that cell's draws.
+pub fn draw_site(var: &str) -> Option<(&str, &str, &str)> {
+    let (node, rest) = var.strip_prefix('~')?.split_once('/')?;
+    let (cell, which) = rest.split_once('#')?;
+    // What follows the number says which ends it had, where those differ between worlds.
+    let digits = which.find(|c: char| !c.is_ascii_digit()).unwrap_or(which.len());
+    Some((node, cell, &which[..digits]))
+}

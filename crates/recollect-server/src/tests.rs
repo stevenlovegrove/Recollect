@@ -1216,3 +1216,71 @@ async fn a_weight_that_differs_between_worlds_is_an_error() {
     let why = cell(&c.view(json!({})).await, "Who took it?", "chosen")["error"].as_str().unwrap_or_default().to_string();
     assert!(why.contains("differs between worlds"), "{why}");
 }
+
+/// Uncertain numbers, written with data alone: estimates that are distributions, what they add up to,
+/// a die, and something that differs over a choice as well as by chance. What comes back says what each
+/// is, and whether that's exact or was read from draws.
+#[tokio::test]
+async fn held_out_estimates_that_are_distributions() {
+    let c = Client::new();
+    let dir = tempfile::tempdir().unwrap();
+    c.post("/api/workspaces/new", json!({ "path": dir.path().join("uncertain"), "name": "Uncertain", "systems": ["plan", "schedule"] })).await;
+    let task = |id: &str, name: &str, days: &str| json!({ "op": "add_node", "id": id, "name": name, "components": ["task"], "cells": { "estimate": { "formula": days } }, "links": [{ "to": "new:whole", "component": "part_of" }] });
+    c.post("/api/call/apply", json!({ "ops": [
+        { "op": "add_node", "id": "new:whole", "name": "Whole" },
+        task("new:design", "Design", "normal(3, 1)"),
+        task("new:build", "Build", "normal(5, 2)"),
+        task("new:test", "Test", "normal(2, 2)"),
+        { "op": "add_node", "id": "new:effort", "name": "Effort", "cells": { "value": { "formula": "effort()" } } },
+        { "op": "add_node", "id": "new:late", "name": "Later of two", "cells": { "value": { "formula": "max(a.estimate, b.estimate)", "labels": { "a": "new:design", "b": "new:build" } } } },
+        { "op": "add_node", "id": "new:tight", "name": "Under a fortnight", "cells": { "value": { "formula": "e < 14", "labels": { "e": "new:effort" } } } },
+        { "op": "add_node", "id": "new:die", "name": "Die", "cells": { "value": { "formula": "integers(1, 6)" } } },
+        { "op": "add_node", "id": "new:six", "name": "A six", "cells": { "value": { "formula": "d = 6", "labels": { "d": "new:die" } } } },
+        { "op": "add_node", "id": "new:rain", "name": "Rain", "cells": { "value": { "formula": "bernoulli(0.25)" } } },
+        { "op": "add_node", "id": "new:trip", "name": "Trip", "cells": { "value": { "formula": "if(r, normal(50, 5), 30)", "labels": { "r": "new:rain" } } } },
+    ] })).await;
+    let v = c.view(json!({})).await;
+
+    let estimate = &cell(&v, "Design", "estimate")["value"]["dist"];
+    assert_eq!((estimate["law"].as_str(), estimate["exact"].as_bool(), estimate["mean"].as_f64(), estimate["sd"].as_f64()), (Some("normal(3, 1)"), Some(true), Some(3.0), Some(1.0)), "{estimate}");
+    assert_eq!(estimate["hist"]["bars"].as_array().unwrap().len(), 32);
+
+    // Three unrelated bell curves add to one, exactly: 3 + 5 + 2, and the root of 1 + 4 + 4.
+    let effort = &cell(&v, "Effort", "value")["value"]["dist"];
+    assert_eq!((effort["law"].as_str(), effort["exact"].as_bool(), effort["draws"].as_u64()), (Some("normal(10, 3)"), Some(true), Some(0)), "{effort}");
+
+    // The later of two has no name, so it's read from draws, and says so.
+    let late = &cell(&v, "Later of two", "value")["value"]["dist"];
+    assert_eq!((late["law"].as_str(), late["exact"].as_bool(), late["draws"].as_u64()), (None, Some(false), Some(4096)), "{late}");
+    assert!(late["mean"].as_f64().unwrap() > 5.0 && late["error"].as_f64().unwrap() > 0.0, "{late}");
+
+    // A truth about something uncertain is a chance, here of a bell curve being under 1⅓ spreads above its middle.
+    let tight = &cell(&v, "Under a fortnight", "value")["value"]["chance"];
+    assert_eq!(tight["exact"], false, "{tight}");
+    assert!((tight["chance"].as_f64().unwrap() - 0.9088).abs() < 3.0 * tight["error"].as_f64().unwrap(), "{tight}");
+
+    // A die is a short list, so what's worked out from it is exact, and it's a matter of chance, not a choice.
+    let six = cell(&v, "A six", "value");
+    assert_eq!(six["shown"]["when"], "Die=6");
+    assert!((six["shown"]["prob"].as_f64().unwrap() - 1.0 / 6.0).abs() < 1e-12, "{six}");
+    let die = v["worlds"]["vars"].as_array().unwrap().iter().find(|x| x["name"] == "Die").unwrap_or_else(|| panic!("{}", v["worlds"]["vars"]));
+    assert_eq!((die["uncertain"].as_bool(), die["options"].as_array().unwrap().len()), (Some(true), 6), "{die}");
+
+    // Over a matter of chance, it's also what it comes to taken together: 30 three times in four.
+    let trip = cell(&v, "Trip", "value");
+    assert_eq!(trip["shown"]["cases"].as_array().unwrap().len(), 2, "{trip}");
+    let mix = &trip["mix"]["dist"];
+    assert!((mix["mean"].as_f64().unwrap() - 35.0).abs() < 0.05 && mix["mid"] == 30.0 && mix["exact"] == false, "{mix}");
+
+    // Finding out that it rained leaves the one answer, which is a bell curve again.
+    let rain = die["id"].as_str().unwrap().replace(&id(&v, "Die"), &id(&v, "Rain"));
+    let wet = c.view(json!({ rain: "true" })).await;
+    let trip = cell(&wet, "Trip", "value");
+    assert_eq!(trip["value"]["dist"]["law"], "normal(50, 5)", "{trip}");
+    assert!(trip.get("mix").is_none());
+
+    // Requiring something that's a matter of chance is refused, and says why.
+    let (status, refused) = c.call("POST", "/api/call/apply", Some(json!({ "ops": [{ "op": "add", "id": id(&v, "Under a fortnight"), "component": "requires" }] }))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert!(refused["error"].as_str().unwrap().contains("requires_something_uncertain"), "{refused}");
+}
