@@ -2,7 +2,11 @@
 
 **Status:** for discussion. Nothing here is built. It comes from using Recollect to model the architecture of `kept`, a Rust crate for versioning and collaboration, in three layers: the conceptual data model, then data exchange, then implementation interfaces. An agent and a person work on it together over MCP and in the app.
 
-The first draft was discussed, and these were agreed: "in play" moves out of `plan`; relation kinds are nodes; leaning is a component and nothing more; what you're looking at is a formula, which can be named and saved; a read says what it wants and gets it in one batch, in YAML or JSON; and gaps are a standing list rather than warnings on a commit. What's still open is at the end.
+The first draft was discussed, and these were agreed: "in play" moves out of `plan`; relation kinds are nodes; leaning is a component and nothing more; what you're looking at is a formula; a read says what it wants and gets it in one batch, in YAML or JSON; MCP is redesigned with no overlapping tools; and gaps are a standing list rather than warnings on a commit. Saved scenarios are left out for now.
+
+**No backward compatibility.** Nobody uses MCP yet, and the examples are the only workspaces, so formats, names and tools change freely, and the examples are changed with the engine. Nothing reads an old form.
+
+What's still open is at the end.
 
 ## In short
 
@@ -51,28 +55,29 @@ Agreed: a structure system owns the arranging edges, `alternative`, `decision` a
 ```yaml
 nodes: { kind: Concept }            # or names, handles, a component, a pattern such as "Delta*"
 cells: [name, body, "layer*"]       # or components: [notes]; by default, what was written
-edges: { components: [contains, names], cells: true }
+edges: { components: [part_of, names], cells: true }
 worked_out: false                   # true adds evaluated values, and where each came from
 history: 0                          # how many recent events, each seq, author, why and op count
-world: current intent               # a scenario (R7), or a formula
+where: "all(d in with.leaning: d.chosen = d.leaning)"   # narrows the worlds (R7)
 format: yaml                        # or json
 ```
 
-- **By default, a node reads as about the size of its file:** what was written, and the name of the node at the other end of each edge. Nothing worked out, no history and no world, unless asked for.
-- **Its shape is the file's**, with names beside handles, and what's worked out in a section of its own when asked for, so what someone wrote is never confused with what was worked out. Today's `NodeDetail` isn't shaped like a file, with `outgoing` and `incoming` lists, cells wrapped in `source`, `value` and `shown`, and history attached. So this needs a view struct shaped like the file, which either format then serialises.
+- **By default, a node reads as about the size of its file:** what was written, and the name of the node at the other end of each edge. Nothing worked out, no history and no world, unless asked for. Size matters less than shape: the aim is that nothing comes back that wasn't asked for.
+- **Its shape is the file's**, with what's worked out in a section of its own when asked for, so what someone wrote is never confused with what was worked out. Today's `NodeDetail` isn't shaped like a file, with `outgoing` and `incoming` lists, cells wrapped in `source`, `value` and `shown`, and history attached. So this needs a view struct shaped like the file, which either format then serialises.
+- **Every reference is a full handle with the name beside it**, such as `to: 01a1dce9-2879-7010-b5c0-5126c9abb977` and `to_name: Deltas`. The handle is what `apply` takes, so an agent copies it rather than looking it up; the name is what it reasons with. Short handles would be one more thing to resolve, and names alone aren't unique.
 - **YAML or JSON is a choice at the MCP boundary.** The views are `Serialize`, the workspace already uses `serde_yaml_ng` for its files, and the engine doesn't care which. YAML is the default for an agent, since it reads and writes the same shape as the files.
 - **A value the same in every world is one value.** Where it differs, it's said once, as now, with the worlds it holds in.
-- `get_node`, `list_nodes` and `search_nodes` become shorthands for common specifications.
+- **It replaces the reading tools.** MCP is redesigned around it with no overlapping tools, and what doesn't fit is deleted: `get_node`, `list_nodes`, `search_nodes`, `get_tree`, `read_world`, `get_decisions` and `get_work` all become specifications of one `read`. The proposed set is in the open questions.
 
 **R3. The overview shows the workspace's own vocabulary.** Beside what systems provide, and before it:
 
 - its own cells, on nodes and on edges, each with how many entities use it and an example value;
 - its kinds and relation kinds (R6), each with how many instances and the cells it gives them;
-- its tables, and its saved scenarios (R7).
+- its tables.
 
 What systems provide can be shorter, or behind a flag, since it's the same in every workspace.
 
-**R4. Instructions for a model, not just a plan or a puzzle.** The server's instructions should be layered: a short core, then a section for each sort of workspace, so an agent reads what applies. The core says that an edge can carry cells of the workspace's own, like a node, and how to write them. The modelling section says how to model a design: kinds for each sort of thing, the structure edge (R1), relation kinds (R6), open decisions with leanings (R7), realising across layers (R8), and reading with a specification (R2). It says which tools are only for plans (`get_work`).
+**R4. Instructions for a model, not just a plan or a puzzle.** The server's instructions should be layered: a short core, then a section for each sort of workspace, so an agent reads what applies. The core says that an edge can carry cells of the workspace's own, like a node, and how to write them. The modelling section says how to model a design: kinds for each sort of thing, the structure edge (R1), relation kinds (R6), open decisions with leanings (R7), realising across layers (R8), and reading with a specification (R2). It says which specifications are only for plans, such as work and blocking.
 
 **R5. No silent wrong answers.** `x.in.component` and `x.out.component` either work, going over the edges of `x` rather than `self`, or are refused when written. A `true` or `false` cell has a `value`. Refusals name nodes as well as handles.
 
@@ -87,7 +92,7 @@ What systems provide can be shorter, or behind a flag, since it's the same in ev
 
 Then `link {kind: "names"}` works, an edge shows its kind on the Map, and a formula can say `in.names`. That needs the engine to index edges by their kind as it does by component. Since it's a node, defining one is in History, can be undone, and is in the files.
 
-On the way, views and MCP can treat a `role` cell on `relates` as the edge's kind, so kept's existing edges read sensibly before the engine knows about relation kinds.
+There's no interim step reading `role` on `relates`: with no backward compatibility, kept's edges are rewritten once relation kinds exist.
 
 **R7. Leaning, and looking through a formula.**
 
@@ -100,7 +105,7 @@ On the way, views and MCP can treat a `role` cell on `relates` as the edge's kin
 - What the worlds chip pins and rules out is the same thing, built by clicking.
 - Narrowing to something uncertain is supposing it's been found out, as pinning is now, so beliefs are shared out again among the worlds left.
 
-*A formula can be named and saved*, as a scenario, in the workspace rather than the browser, so the person and the agent can both say "read this in *current intent*", and git keeps it. Any read that takes a world takes a scenario's name or a formula.
+Any read takes such a formula as `where` (R2), and the app can take one too. Saving formulas by name, as scenarios, is left out for now: a leaning and a formula are enough to begin with.
 
 How this differs from what narrows worlds now:
 
@@ -108,13 +113,13 @@ How this differs from what narrows worlds now:
 |---|---|---|---|
 | `requires` | your choices, for good | the graph | no |
 | `evidence` | what's uncertain, for good, and never a choice of yours | the graph | yes |
-| a scenario | both, only while looking | the workspace, beside the graph | yes, as pinning does now |
+| a `where` formula | both, only while looking | the read, or the view | yes, as pinning does now |
 
-The engine needs nothing new. The work is in views, a place to keep scenarios, and the `world` parameter.
+The engine needs nothing new. The work is in views and the `where` parameter.
 
 **R8. Realising across layers.** A built-in `realises` edge says a format or a trait realises a concept, as distinct from being part of it. With it comes a **coverage view**: a row for each concept and a column for each later layer, each cell naming what realises that concept in that layer, such as *Delta wire format* under exchange and *trait DeltaStore* under implementation. Blank cells are the gaps: what's still only an idea. It's the to-do list for going from one layer to the next. Layers stay a cell on kinds, such as `layer`, which the coverage view and the Map's lanes (R13) group by, rather than something the engine knows.
 
-**R9. Reading by kind and by relation.** R2's specification can select by kind, and `get_tree` follows any arranging relation, with the first line of each node's notes. A formula can go over a kind's instances directly, such as `instances(Concept)`, without a label for each.
+**R9. Reading by kind and by relation.** R2's specification can select by kind, and a read as a tree follows any arranging relation, with the first line of each node's notes. A formula can go over a kind's instances directly, such as `instances(Concept)`, without a label for each.
 
 **R10. A kind's notes aren't its instances'.** A kind's `body` describes the kind. An instance without notes of its own doesn't show it, and isn't found by searching for it. Either `body` is per entity, as `name` and `value` are, or a kind's description is a cell of its own.
 
@@ -122,7 +127,7 @@ The engine needs nothing new. The work is in views, a place to keep scenarios, a
 
 ### P2: working together
 
-**R12. What changed since I last looked.** `get_changes {since: seq}` gives the nodes and edges touched, with what was written before and after, in R2's shape. An agent can then see what the person did in the app between turns without rereading the graph.
+**R12. What changed since I last looked.** `changes {since: seq}` gives the nodes and edges touched, with what was written before and after, in R2's shape. An agent can then see what the person did in the app between turns without rereading the graph.
 
 **R13. A map you can read at this size.** Lanes for a cell's values, such as `layer`, so each layer is a band. Focus on a node and what's within one or two edges. Collapse anything below a chosen depth. Show an edge's kind as its label.
 
@@ -136,7 +141,7 @@ The engine needs nothing new. The work is in views, a place to keep scenarios, a
 
 It costs nothing on a commit, since it's worked out when asked for.
 
-**R15. Model and prose together.** Export a subtree as markdown, in the shape of a design document: each concept's notes, its parts, its relations, its decisions with their options, leaning and reasons, read through a scenario such as *current intent*. Optionally, `sources` that point at a section of a file, with a notice when that section has changed since. Kept's `DESIGN.md` and its workspace could then be kept in step.
+**R15. Model and prose together.** Export a subtree as markdown, in the shape of a design document: each concept's notes, its parts, its relations, its decisions with their options, leaning and reasons, read through a formula such as *current intent*. Optionally, `sources` that point at a section of a file, with a notice when that section has changed since. Kept's `DESIGN.md` and its workspace could then be kept in step.
 
 **R16. Decision records.** For each decision: the arguments for and against each option, as `supports` and `contradicts` edges to the options; the leaning; the reasons any option was ruled out; and, once decided, why. Export as an ADR.
 
@@ -152,49 +157,64 @@ It costs nothing on a commit, since it's worked out when asked for.
 
 | Question | Decided | Why |
 |---|---|---|
-| Structure that isn't a plan | `need` and the arranging edges move into a structure system, under `plan` | "Needed in these worlds" is what a design needs from a plan. A `contains` edge in `notes` wouldn't dim what's under an option, and a profile that hides plan things would only hide the problem |
+| Structure that isn't a plan | `need` and the arranging edges move into a structure system, under `plan` | "Needed in these worlds" is what a design needs from a plan. A new edge in `notes` wouldn't dim what's under an option, and a profile that hides plan things would only hide the problem |
+| What the structure edge is called | `part_of`, kept | See below |
 | Relation kinds | A relation kind is a node, which edges refer to | Kinds already showed that a definition as a node works and stays undoable. Components declared by data would mean rebuilding the registry while a workspace is open |
 | Leaning | A component requiring `decision`, holding one option | One by construction, as `chosen` is. `weight` is belief, for what's uncertain, so it can't mean a preference |
-| Looking at a design as intended | A formula combined into what a view narrows by, which can be saved by name | General: leaning is one use of it, and the worlds chip's pins are another. Nothing about leaning is built into worlds or views |
+| Looking at a design as intended | A formula combined into what a view narrows by | General: leaning is one use of it, and the worlds chip's pins are another. Nothing about leaning is built into worlds or views |
+| Saved scenarios | Not now | A leaning and a formula are enough to start with |
 | Realising | A built-in `realises` edge | The coverage view and checks need to find it by name |
 | Format of reads | YAML or JSON, chosen per read, in the files' shape | The engine doesn't care, and an agent reads and writes one shape |
+| References in reads | Full handles, with names beside them | Size isn't the aim. A handle is what `apply` takes, so it's copied, never looked up |
+| MCP tools | Redesigned, with no overlapping tools, and what doesn't fit deleted | Nobody uses MCP yet |
+| Compatibility | None. The examples change with the engine | They're the only workspaces |
 | Gaps | A standing list of what's unresolved | Everyone sees it, it lasts until fixed, and it costs nothing on a commit |
+
+**Why `part_of` and not `contains`.** The first draft suggested `contains`, but only to get away from plans, and that isn't needed. What makes kept's concepts plan parts is that `part_of` today requires the `part` component at both ends, and `part` carries `done`, `dropped` and blocking. Once the structure system owns `part_of` and `need`, the edge requires only that, and `part` is what `plan` adds for work. And `part_of` points the right way for the files: it goes from the child to its parent, so each node's file says where it sits, a node has one parent, and moving it changes one file. `contains` would go from the parent, putting every child in the parent's file.
 
 ## Open questions
 
 **Structure**
 
-1. **What is the structure edge called?** If the structure system owns it and `plan` builds on it, it could stay `part_of`, with the badge saying "Part" only where there's work, or be renamed `contains` everywhere, with `part_of` read from older files. One edge for both keeps plans and models one graph.
-2. **Can a relation kind arrange?** If *names* is declared as arranging, a model could be laid out by its own edges rather than the structure edge. That's general, but two arranging edges between the same nodes in opposite directions would make a loop on the Map.
-3. **Can a relation kind have a kind?** "*names by hash* is a kind of *names*" would follow kinds' lookup. Worth it, or not until it's needed?
+Each has a suggested answer and the reason for it.
 
-**Scenarios**
+**MCP**
 
-4. **Where are scenarios kept,** and are saving and changing them in History? A `scenarios.yaml` beside `recollect.toml` keeps them out of the graph. In the graph, as nodes with a formula, they'd have History, undo and reasons for free, and the agent could write them with `apply`. That makes them data, which is what you flinched at for leaning, but they'd be data about looking rather than about the design.
-5. **What does a scenario do where its formula is undefined?** Probably it rules nothing out there, so a scenario never hides a world because of a gap.
-6. **Is the worlds chip's state an unsaved scenario?** If so, "save this view" is one click, and a saved scenario can be opened, changed by clicking, and saved again.
-7. **Can a scenario mention what's uncertain?** Supposing something's found out changes beliefs, which is right for "what if the backup is old", but could surprise someone who only meant to narrow their own choices.
+1. **Which tools are there?** Suggested: five.
+   - `overview`: the vocabulary (R3), and the instructions that apply (R4).
+   - `read`: the specification (R2), covering what `get_node`, `list_nodes`, `search_nodes`, `get_tree`, `read_world`, `get_decisions` and `get_work` do now.
+   - `apply`: ops, as now.
+   - `changes`: history, and what changed since a seq (R12), replacing `get_history`.
+   - `checks`: what's unresolved and what fails (R11, R14), replacing `find_checks`.
 
-**Reads**
+   *Why:* each answers a different question (what words exist, what's there, change it, what happened, what's wrong), so an agent never has two ways to do one thing. Decisions and work are reads of particular components with what's worked out, so they don't need tools of their own; a few named specifications in the instructions, such as "decisions" or "work", cover the common cases.
+2. **Should the app read through the same specification?** Suggested: yes, inside the engine, but not yet in the app's API. *Why:* one read path means the app and the agent can't disagree about a value. But the app wants the whole graph at once for the Map, so it gains nothing until it reads less; the engine function can be shared now and the app moved onto it later.
 
-8. **Does the read specification replace `get_node`, `list_nodes`, `search_nodes` and `get_tree`,** or sit beside them as the general form? Fewer tools are easier for an agent to choose between, but a plain `get_node` is the obvious first call.
-9. **Names or handles?** Handles are 36 characters, and most of the size of a small read. Names are readable but not unique. Short handles, such as the last eight characters where they're unique in the workspace, would help both.
-10. **Should the app use the same read specification,** so there's one read path rather than the full `View` and the MCP reads?
+**Structure**
+
+3. **Can a relation kind arrange the Map and Outline?** Suggested: yes, if its node says so, with a notice when two arranging edges make a loop. *Why:* a data model is naturally laid out by its own relations, such as a header beneath what it names, and `ComponentDef.arranges` already lets more than one edge arrange.
+4. **Can a relation kind have a kind?** Suggested: not yet. *Why:* nothing in kept needs "*names by hash* is a kind of *names*" so far, and adding it later wouldn't change any file already written.
+
+**Looking through a formula**
+
+5. **What does a `where` formula do in a world where it's undefined,** such as a cell missing in that world? Suggested: it keeps the world and says it couldn't decide there. *Why:* dropping it would hide a design because of a gap in the data, which is a silent wrong answer (R5).
+6. **Can a `where` formula mention something uncertain?** Suggested: yes, and the read says it's supposing that. *Why:* "what if the backup is old" is a useful question and pinning already works this way; saying so is what stops it surprising someone who only meant to narrow their own choices.
+7. **Is the worlds chip a formula editor?** Suggested: yes, the chip builds a formula, and it can show and take one as text. *Why:* then clicking and typing are one mechanism, and what someone sees in the app can be pasted into a read.
 
 **Leaning and decisions**
 
-11. **Does a leaning need a reason cell,** or is the reason in the log enough? The log's reason is lost between sessions unless git keeps it, so a short `why` beside the leaning may be worth having.
-12. **Should open decisions in a model make worlds at all?** Two decisions are four worlds, which is useful: they're the four designs still possible. Twenty are a million, and the worlds chip would say so. *Current intent* makes that manageable, but does a model want the count shown at all?
+8. **Does a leaning need its own `why` cell?** Suggested: yes, optional. *Why:* a leaning is the choice most likely to be revisited, and the log's reason isn't in the files, so it's lost unless the history is kept; a `why` beside the leaning travels with it and shows in reads.
+9. **Should a model show how many worlds there are?** Suggested: show how many open decisions there are, and the worlds only when asked. *Why:* "four designs still possible" helps, but "a million worlds" for twenty decisions alarms without helping; open decisions is the number someone acts on.
 
 **Kept**
 
-13. **One workspace, or one per layer?** One keeps `realises` inside it and lets the Map show lanes. This assumes one.
-14. **When is kept's workspace rewritten,** and by which session? Once R1, R6 and R7 exist: concepts as instances of `Concept`, the structure edge in place of plan parts, relation kinds in place of `relates` with `role`, and leanings on its two decisions.
+10. **One workspace, or one per layer?** Suggested: one. *Why:* `realises` crosses layers, and there are no references between workspaces; lanes (R13) give each layer its own band.
+11. **When is kept's workspace rewritten, and by which session?** Suggested: once R1, R6 and R7 are built, by the kept session that owns its design, not the one changing the engine. *Why:* the rewrite is design work (which concepts, which relations, which leanings), and with no backward compatibility it has to happen in the same step as those changes land, or kept's workspace stops opening.
 
 ## Suggested order
 
-1. R5, R2, R3, R4: correctness and reads, with no model changes.
+1. R5, R2, R3, R4: correctness, and MCP redesigned around one read, with no model changes.
 2. R1 and R10: structure without work, and kinds that don't leak notes.
-3. R7: leaning, then views narrowing by a formula, then saved scenarios.
-4. R8 and R6, starting with views reading `role`, then relation kinds as nodes.
+3. R7: leaning, then views narrowing by a formula.
+4. R6 and R8: relation kinds as nodes, then `realises` and the coverage view.
 5. R14, R11 and R12, then the rest, as kept's work shows which matter.
