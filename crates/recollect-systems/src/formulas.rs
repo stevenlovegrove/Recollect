@@ -2625,14 +2625,22 @@ puzzle, make a table for each kind of thing and write each clue as a formula nam
 rows by its name and `Left[v.row]` the row with the same key as one being gone over. Write a whole table with one op: {op: table, name: \
 \"Year\", columns: {balance: {formula: \"prev.balance * (1 + rate)\", labels: {rate: \"Rate\"}}}, range: [0, 10], rows: [{key: 0, \
 balance: 1000}]}, with `is_a` for a table that's a kind of another, `components` for what every row is, and `alternative_of` to make \
-every row an option of a decision.\n\
+every row an option of a decision. `csv: \"<the file's text>\"` in place of `rows` reads them from a CSV whose first line names the \
+columns, numbered from 1 unless `key` names the column of keys. `one_of(Runners.rows)` is one row, each as likely (any group of nodes \
+will do), as a short list, so `pick.value.t5k` and `pick.value.t10k` are the same row's and move together. See docs/data.md.\n\
 \n\
 A node with `requires` and a true-or-false value is a demand on choices: only the ways they could go that make it true count. Where it \
 depends on chance, its `at_least` cell says how surely, from 0 to 1. A node with `evidence` is something known to be true: it rules out \
 the worlds, and the draws, where it's false, and never a choice. Use `evidence` for what was observed and `requires` for what's wanted.\n\
 \n\
+What was seen, with how likely it was: `y ~ normal(m * x + c, sigma)` says y was drawn from that, and as evidence each world and draw \
+counts as much as it makes y likely, so `m` and `c` are found out. The right of `~` is one of normal, lognormal, between, uniform, \
+exponential, triangular, bernoulli, integers or one_of. Combine with `&&` or `all(r in T.rows: …)`, never `||` or `!`, and never as a \
+requirement. Over short lists it's exact. Over draws, they're weighted, or moved to fit what's seen where weighting leaves too few, and \
+what's read says which, and how much drawing adds to its error: say so. See docs/inference.md.\n\
+\n\
 A number can be uncertain: normal(mean, sd), lognormal(mean, sd), uniform(low, high), triangular(low, likely, high), exponential(mean), \
-between(low, high) for about that nine times in ten, integers(low, high) and bernoulli(p). Each place one is written is its own draw, and \
+between(low, high) for about that nine times in ten, integers(low, high), bernoulli(p) and one_of(group). Each place one is written is its own draw, and \
 a cell read twice is the same one. chance(x) is how likely x is, and mean(x) what it comes to on average, over everything that's a matter \
 of chance and never over a choice, so `requires` can say chance(cost < 4000) >= 0.9.\n\
 \n\
