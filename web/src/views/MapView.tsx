@@ -408,7 +408,18 @@ const FIT_MS = 450;
 const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
 /** How this map is laid out, per workspace and per browser. It's fine if it can't be remembered. */
-type LayoutPref = { direction: Direction; layoutBy: Record<string, boolean>; /** Draw an option of several questions on each of them, not as a card. */ fold?: boolean; /** The column each table's card has a line for each value of, by the table's name. */ groupBy?: Record<string, string> };
+type LayoutPref = {
+  direction: Direction;
+  layoutBy: Record<string, boolean>;
+  /** Draw an option of several questions on each of them, not as a card. */
+  fold?: boolean;
+  /** The column each table's card has a line for each value of, by the table's name. */
+  groupBy?: Record<string, string>;
+  /** A cell whose values are bands across the map, in the order they first appear, such as `layer`. */
+  lanes?: string;
+  /** Show only this many levels beneath the top, over the links that lay the map out. */
+  depth?: number;
+};
 
 function loadLayoutPref(dir: string): LayoutPref {
   try {
@@ -961,10 +972,30 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
       }
       ids = near;
     }
+    // Only so many levels beneath the top, over the links that lay the map out.
+    if (layoutPref.depth) {
+      const parentOf = (e: MapLink) => (ws.info(e.kind)?.reversed ?? ws.view!.relations.find((r) => r.name === e.kind)?.reversed ? { parent: e.from, child: e.to } : { parent: e.to, child: e.from });
+      const shaping = links.filter((e) => shapes(relOf(e)) && e.kind !== "label");
+      const hasParent = new Set(shaping.map((e) => parentOf(e).child));
+      const level = new Map<string, number>([...ids].filter((id) => !hasParent.has(id)).map((id) => [id, 0]));
+      let frontier = [...level.keys()];
+      while (frontier.length) {
+        const next: string[] = [];
+        for (const e of shaping) {
+          const { parent, child } = parentOf(e);
+          if (frontier.includes(parent) && !level.has(child)) {
+            level.set(child, level.get(parent)! + 1);
+            next.push(child);
+          }
+        }
+        frontier = next;
+      }
+      ids = new Set([...ids].filter((id) => (level.get(id) ?? 0) <= layoutPref.depth!));
+    }
     // A table's card is there when any question that lands on its rows is.
     for (const t of tables) if (links.some((e) => e.from === t.id && ids.has(e.to))) ids.add(t.id);
     return ids;
-  }, [g.nodes, links, tables, standsFor, folded, hiddenFacts, showDead, focus, selectedNode]);
+  }, [g.nodes, links, tables, standsFor, folded, hiddenFacts, showDead, focus, selectedNode, layoutPref.depth, shapes, ws]);
 
   const q = query.trim().toLowerCase();
   const matches = (n: GraphNode) => !q || `${n.id} ${n.name}`.toLowerCase().includes(q);
@@ -1028,10 +1059,37 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
         layoutEdges.map((e) => [e.from, e.to, e.kind]),
         g.nodes.filter((n) => visible.has(n.id)).map((n) => [n.name.length, badgesOf(n).length, cardOptions.get(n.id)?.length ?? 0, freeNote(n)?.length ?? 0]),
         layoutPref.direction,
+        layoutPref.lanes,
         tables.map((t) => [t.id, t.lines.length]),
       ]),
-    [visible, layoutEdges, g.nodes, layoutPref.direction, tables],
+    [visible, layoutEdges, g.nodes, layoutPref.direction, layoutPref.lanes, tables],
   );
+  // The bands a cell's values make, in the order they first appear, with anything without one last.
+  const lanes = useMemo(() => {
+    if (!layoutPref.lanes) return null;
+    const of = (n: GraphNode) => {
+      const v = n.cells[layoutPref.lanes!]?.value;
+      return typeof v === "string" ? v : v === undefined || v === null ? null : JSON.stringify(v);
+    };
+    const order: string[] = [];
+    for (const n of g.nodes) {
+      const v = of(n);
+      if (v !== null && !order.includes(v)) order.push(v);
+    }
+    return { order, of };
+  }, [g.nodes, layoutPref.lanes]);
+  // The cells worth banding by: the workspace's own, with a few values, each on more than one node.
+  const laneCells = useMemo(() => {
+    const values = new Map<string, Set<string>>();
+    const counts = new Map<string, number>();
+    for (const n of g.nodes)
+      for (const [c, cell] of Object.entries(n.cells)) {
+        if (ws.cellInfo(c) || typeof cell.value !== "string") continue;
+        values.set(c, (values.get(c) ?? new Set()).add(cell.value));
+        counts.set(c, (counts.get(c) ?? 0) + 1);
+      }
+    return [...values].filter(([c, v]) => v.size > 1 && v.size <= 8 && (counts.get(c) ?? 0) > v.size).map(([c]) => c);
+  }, [g.nodes, ws]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1048,8 +1106,14 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
           "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
           "elk.separateConnectedComponents": "true",
           "elk.spacing.componentComponent": "60",
+          // Each lane a band, the first nearest the top.
+          ...(lanes ? { "elk.partitioning.activate": "true", "elk.separateConnectedComponents": "false" } : {}),
         },
-        children: [...nodes.filter((n) => !freeNote(n)).map((n) => ({ id: n.id, width: W, height: cardHeight(n) })), ...tables.filter((t) => visible.has(t.id)).map((t) => ({ id: t.id, width: TABLE_W, height: tableHeight(t.lines.length) }))],
+        children: [...nodes.filter((n) => !freeNote(n)).map((n) => {
+          const band = lanes ? lanes.of(n) : null;
+          const at = band === null ? lanes?.order.length ?? 0 : lanes!.order.indexOf(band);
+          return { id: n.id, width: W, height: cardHeight(n), ...(lanes ? { layoutOptions: { "elk.partitioning.partition": String((lanes.order.length) - at) } } : {}) };
+        }), ...tables.filter((t) => visible.has(t.id)).map((t) => ({ id: t.id, width: TABLE_W, height: tableHeight(t.lines.length) }))],
         edges: layoutEdges.map((e, i) => {
           const { parent, child } = ws.info(e.kind)?.reversed ? { parent: e.from, child: e.to } : { parent: e.to, child: e.from };
           return { id: `s${i}`, sources: [child], targets: [parent] };
@@ -1409,6 +1473,29 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
             ))}
             <div className="dd-note muted">Hiding links never moves nodes. Only the layout ticks do.</div>
           </Dropdown>
+          {laneCells.length > 0 && (
+            <label className="toggle" title="Lay the map out in bands, one for each value of a cell, such as each layer">
+              lanes
+              <select value={layoutPref.lanes ?? ""} onChange={(e) => setLayoutPref({ ...layoutPref, lanes: e.target.value || undefined })}>
+                <option value="">off</option>
+                {laneCells.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="toggle" title="Show only so many levels beneath the top">
+            depth
+            <select value={layoutPref.depth ?? 0} onChange={(e) => setLayoutPref({ ...layoutPref, depth: Number(e.target.value) || undefined })}>
+              <option value={0}>all</option>
+              <option value={1}>1</option>
+              <option value={2}>2</option>
+              <option value={3}>3</option>
+              <option value={4}>4</option>
+            </select>
+          </label>
           <label className="toggle" title="Show only the neighbourhood of the selected node">
             focus
             <select value={focus} onChange={(e) => setFocus(Number(e.target.value))}>

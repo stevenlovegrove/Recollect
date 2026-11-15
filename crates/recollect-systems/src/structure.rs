@@ -75,7 +75,15 @@ pub fn install(reg: &mut Registry) {
     reg.edge(EXCLUDES, "Whatever that choice lands on isn't an option here, so this comes after it.").arranges().reversed().source_has(NARROWED).target_has(CHOICE);
 
     reg.component(LEANING, "Leans towards one option for now, without deciding.").icon("↗").requires(DECISION).per_entity();
-    reg.cell::<Leans>(LEANING, "The option preferred for now. Name one, as {\"ref\": handle}.").validate(formulas::one_node).summary().per_entity();
+    reg.cell::<Leans>(LEANING, "The option preferred for now. Name one, as {\"ref\": handle}.")
+        .validate(formulas::one_node)
+        // It reads as the option it names, as chosen does.
+        .shown(|l| match l.0.get("ref").and_then(|r| r.as_str()).and_then(|r| r.parse::<recollect_graph::Entity>().ok()) {
+            Some(o) => Shown::Named(vec![(o, recollect_graph::worlds::Space::global().always())]),
+            None => Shown::Cond(recollect_graph::worlds::Space::global().pure(l.0.clone())),
+        })
+        .summary()
+        .per_entity();
     reg.cell::<LeaningWhy>(LEANING, "Why it leans that way.").initial(json!("")).per_entity();
 
     checks(reg);
