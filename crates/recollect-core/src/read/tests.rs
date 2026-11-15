@@ -337,3 +337,58 @@ fn a_leaning_is_data_and_current_intent_is_a_formula_over_it() {
     let bad = dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "set", "id": how, "cell": "leaning", "value": "By hash" }] }), "t");
     assert!(bad.is_err(), "a leaning names a node, as chosen does");
 }
+
+/// The design, with a relation of its own: a header names its delta, many of them, by hash.
+fn with_names() -> Workspace {
+    let mut ws = design();
+    let ops = json!([
+        { "op": "add_node", "id": "new:names", "name": "names", "components": ["relation"], "body": "Refers to by identity.", "cells": { "many": true, "arranges": false, "from_kind": { "ref": "Concept" } } },
+        { "op": "link", "from": "Header", "to": "Delta", "kind": "new:names", "cells": { "by": "hash" } },
+        { "op": "add_node", "id": "new:count", "name": "Named by", "cells": { "value": { "formula": "count(d.in.names)", "labels": { "d": "Delta" } } } },
+        { "op": "add_node", "id": "new:many", "name": "All many", "cells": { "value": { "formula": "all(x in d.in.names: x.via.many)", "labels": { "d": "Delta" } } } }
+    ]);
+    let done = dispatch(&mut ws, "apply", json!({ "ops": ops }), "t");
+    assert!(done.is_ok(), "{done:?}");
+    ws
+}
+
+fn value_of(ws: &mut Workspace, name: &str) -> Value {
+    let v = read_json(ws, json!({ "nodes": { "ids": [name] }, "cells": ["value"], "worked_out": true }));
+    node(&v, name)["worked_out"]["value"]["value"].clone()
+}
+
+#[test]
+fn an_edge_of_a_relation_takes_its_cells_and_is_followed_by_its_name() {
+    let mut ws = with_names();
+    let v = read_json(&mut ws, json!({ "nodes": { "ids": ["Header"] }, "edges": { "components": ["relates"] } }));
+    let link = &node(&v, "Header")["links"][0];
+    let names = handle(&mut ws, "names");
+    assert_eq!(link["cells"]["kind"], json!({ "ref": names }), "{link}");
+    assert_eq!(link["cells"]["by"], "hash");
+    assert!(link["cells"].get("many").is_none(), "what it takes from its relation isn't written on it");
+    assert_eq!(value_of(&mut ws, "Named by"), json!(1.0), "in.names follows edges of that relation");
+    assert_eq!(value_of(&mut ws, "All many"), json!(true), "and the edge has the relation's cells");
+
+    // Changing the relation changes every edge of it.
+    dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "set", "id": names, "cell": "many", "value": false }] }), "t").unwrap();
+    assert_eq!(value_of(&mut ws, "All many"), json!(false), "an edge takes it from its relation as it is now");
+    // Renaming the relation renames what follows it.
+    dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "set", "id": names, "cell": "name", "value": "cites" }] }), "t").unwrap();
+    assert_eq!(value_of(&mut ws, "Named by"), json!(0.0), "nothing is called names now");
+}
+
+#[test]
+fn an_edge_that_doesnt_fit_its_relation_is_a_notice() {
+    let mut ws = with_names();
+    let checks = |ws: &Workspace| serde_json::to_value(views::view(ws, &World::new()).checks).unwrap().as_array().unwrap().iter().map(|c| c["rule"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    assert!(!checks(&ws).contains(&"edge_of_the_wrong_kinds".to_string()), "Header is a Concept: {:?}", checks(&ws));
+    dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "link", "from": "By hash", "to": "Delta", "kind": "names" }] }), "t").unwrap();
+    assert!(checks(&ws).contains(&"edge_of_the_wrong_kinds".to_string()), "By hash isn't a Concept");
+
+    let names = handle(&mut ws, "names");
+    dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "set", "id": names, "cell": "arranges", "value": true }, { "op": "link", "from": "Delta", "to": "Header", "kind": "names" }] }), "t").unwrap();
+    assert!(checks(&ws).contains(&"arranging_loop".to_string()), "Header names Delta names Header: {:?}", checks(&ws));
+
+    let bad = dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "link", "from": "Header", "to": "Payload", "kind": "nothing" }] }), "t");
+    assert!(bad.is_err(), "a kind has to be a node");
+}

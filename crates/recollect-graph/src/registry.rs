@@ -312,6 +312,9 @@ pub struct Registry {
     free: Option<Compile>,
     /// The edge from a node to its kind, if nodes can take what they don't say from one.
     pub(crate) inherits_through: Option<String>,
+    /// The cell on an edge naming its kind, `{ref: node}`, if edges can have one: the edge takes the cells
+    /// it doesn't say from that node, and can be followed by that node's name.
+    pub(crate) edge_kind: Option<String>,
     advice: Vec<AdviceFn>,
     build: String,
     current: String,
@@ -459,6 +462,17 @@ impl Registry {
     pub fn inherit_through(&mut self, edge: &str) -> &mut Self {
         self.inherits_through = Some(edge.to_string());
         self
+    }
+
+    /// Edges take what they don't say from the node this cell of theirs names, as a node does from its kind.
+    pub fn edge_kind_cell(&mut self, cell: &str) -> &mut Self {
+        self.edge_kind = Some(cell.to_string());
+        self
+    }
+
+    /// The cell on an edge that names its kind, if there is one.
+    pub fn edge_kind(&self) -> Option<&str> {
+        self.edge_kind.as_deref()
     }
 
     pub fn advice(&mut self, f: AdviceFn) -> &mut Self {

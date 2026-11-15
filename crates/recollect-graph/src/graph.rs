@@ -506,6 +506,10 @@ impl Graph {
         if !self.given.get(&edge).is_some_and(|g| g.contains(component)) {
             return self;
         }
+        if let Some(kind) = self.edge_kind_name(edge) {
+            self.touch(Dep::Into(to, kind.clone()));
+            self.touch(Dep::From(from, kind));
+        }
         self.change(&[edge, from, to], |g| {
             let left = g.given.get_mut(&edge).expect("checked above");
             left.remove(component);
@@ -559,6 +563,7 @@ impl Graph {
     }
 
     fn back(&mut self, e: Entity, cell: &str, b: Option<Backing>) {
+        let kind_before = if self.registry.edge_kind.as_deref() == Some(cell) { self.edge_kind_name(e) } else { None };
         let old = self.cells.get(&e).and_then(|c| c.get(cell));
         let unchanged = match (&b, old) {
             (Some(new), Some(old)) => new.same(old),
@@ -587,6 +592,15 @@ impl Graph {
         });
         if cell == Name::NAME {
             self.touch(Dep::Names);
+        }
+        // An edge that changes kind leaves the edges of one kind and joins another's.
+        if self.registry.edge_kind.as_deref() == Some(cell)
+            && let Some((from, to)) = self.edges.get(&e).copied()
+        {
+            for name in [kind_before, self.edge_kind_name(e)].into_iter().flatten() {
+                self.touch(Dep::Into(to, name.clone()));
+                self.touch(Dep::From(from, name));
+            }
         }
     }
 
@@ -775,7 +789,33 @@ impl Graph {
     /// made.
     pub fn edges_into(&self, e: Entity, component: &str) -> Vec<(Entity, Entity)> {
         let edges = self.into.get(&e).into_iter().flatten();
-        let mut out: Vec<(Entity, Entity)> = edges.filter(|x| self.given.get(x).is_some_and(|g| g.contains(component))).map(|x| (self.edges[x].0, *x)).collect();
+        let mut out: Vec<(Entity, Entity)> = edges.filter(|x| self.edge_is(**x, component)).map(|x| (self.edges[x].0, *x)).collect();
+        out.sort();
+        out
+    }
+
+    /// Whether an edge has this component, or is of a kind with this name.
+    fn edge_is(&self, edge: Entity, said: &str) -> bool {
+        self.given.get(&edge).is_some_and(|g| g.contains(said)) || (self.registry.component_def(said).is_none() && self.edge_kind_name(edge).as_deref() == Some(said))
+    }
+
+    /// The node an edge's kind cell names, if it has one and that node is there.
+    pub fn edge_kind_of(&self, edge: Entity) -> Option<Entity> {
+        let cell = self.registry.edge_kind.as_ref()?;
+        match self.cells.get(&edge)?.get(cell)? {
+            Backing::Value(v) => v.get("ref")?.as_str()?.parse().ok().filter(|k| self.nodes.contains(k)),
+            _ => None,
+        }
+    }
+
+    /// The name of an edge's kind, if it has one.
+    pub fn edge_kind_name(&self, edge: Entity) -> Option<String> {
+        self.edge_kind_of(edge).and_then(|k| self.names.of.get(&k).cloned())
+    }
+
+    /// The edges of a kind, wherever they are.
+    pub fn edges_of_kind(&self, kind: Entity) -> Vec<Entity> {
+        let mut out: Vec<Entity> = self.edges.keys().copied().filter(|e| self.edge_kind_of(*e) == Some(kind)).collect();
         out.sort();
         out
     }
@@ -783,7 +823,7 @@ impl Graph {
     /// The edges with this component leaving a node, each with its target, in the order those were made.
     pub fn edges_from(&self, e: Entity, component: &str) -> Vec<(Entity, Entity)> {
         let edges = self.out.get(&e).into_iter().flatten();
-        let mut out: Vec<(Entity, Entity)> = edges.filter(|x| self.given.get(x).is_some_and(|g| g.contains(component))).map(|x| (self.edges[x].1, *x)).collect();
+        let mut out: Vec<(Entity, Entity)> = edges.filter(|x| self.edge_is(**x, component)).map(|x| (self.edges[x].1, *x)).collect();
         out.sort();
         out
     }
@@ -1063,6 +1103,10 @@ impl Graph {
 
     /// What a node is directly a kind of: what it links to by `is_a`, and the table it's a row of.
     fn kinds_of(&self, n: Entity) -> Vec<Entity> {
+        // An edge's kind is what its kind cell names.
+        if self.edges.contains_key(&n) {
+            return self.edge_kind_of(n).into_iter().collect();
+        }
         let mut out = match &self.registry.inherits_through {
             Some(through) => self.targets_of(n, through),
             None => Vec::new(),
@@ -1129,6 +1173,9 @@ impl Graph {
             out.extend(lock(&self.implicit).iter().filter(|(_, i)| matches!(i, Implicit::Row(r) if r.table == *name)).map(|(e, _)| *e));
         }
         out.extend(self.parts(k));
+        if self.registry.edge_kind.is_some() {
+            out.extend(self.edges_of_kind(k));
+        }
         out
     }
 
@@ -1515,8 +1562,14 @@ impl Cx<'_> {
 
     /// The edges with this component arriving here, each with its source.
     pub fn incoming(&self, component: &str) -> Vec<(Entity, Entity)> {
-        self.s.note(Dep::Into(self.id, component.to_string()));
-        self.s.g.edges_into(self.id, component)
+        self.incoming_at(self.id, component)
+    }
+
+    /// Following edges by the name of their kind depends on what's called that.
+    fn note_kind_name(&self, said: &str) {
+        if self.s.g.registry.component_def(said).is_none() && self.s.g.registry.edge_kind.is_some() {
+            self.s.note(Dep::Names);
+        }
     }
 
     /// The edges with this component leaving here, each with its target.
@@ -1537,12 +1590,14 @@ impl Cx<'_> {
     /// The edges with this component leaving another entity, each with its target.
     pub fn outgoing_at(&self, at: Entity, component: &str) -> Vec<(Entity, Entity)> {
         self.s.note(Dep::From(at, component.to_string()));
+        self.note_kind_name(component);
         self.s.g.edges_from(at, component)
     }
 
     /// The edges with this component arriving at another entity, each with its source.
     pub fn incoming_at(&self, at: Entity, component: &str) -> Vec<(Entity, Entity)> {
         self.s.note(Dep::Into(at, component.to_string()));
+        self.note_kind_name(component);
         self.s.g.edges_into(at, component)
     }
 

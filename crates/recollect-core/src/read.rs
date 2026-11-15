@@ -568,8 +568,11 @@ impl<'a> Reader<'a> {
         }
         let reg = self.g.registry();
         let mut below: Vec<Entity> = Vec::new();
-        for c in reg.components().filter(|c| c.arranges) {
-            let next = if c.reversed { self.g.targets_of(e, &c.name) } else { self.g.sources_of(e, &c.name) };
+        // Every edge that arranges, whether a system's or a relation of the workspace's own that says it does.
+        let mut ways: Vec<(String, bool)> = reg.components().filter(|c| c.arranges).map(|c| (c.name.clone(), c.reversed)).collect();
+        ways.extend(views::relations(self.g).into_iter().filter(|r| r.arranges).map(|r| (r.name, r.reversed)));
+        for (name, reversed) in ways {
+            let next = if reversed { self.g.targets_of(e, &name) } else { self.g.sources_of(e, &name) };
             for n in next {
                 if !below.contains(&n) {
                     below.push(n);

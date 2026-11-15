@@ -559,7 +559,9 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
     const out: MapLink[] = [];
     for (const e of g.edges) {
       if (at(e.from) === at(e.to)) continue;
-      const kind = e.components.find((c) => ws.arranging.includes(c)) ?? e.components[0];
+      // An edge of a relation the workspace defines is called by that relation's name, as `names`.
+      const relation = e.kind ? view.relations.find((r) => r.id === e.kind)?.name : undefined;
+      const kind = relation ?? e.components.find((c) => ws.arranging.includes(c)) ?? e.components[0];
       out.push({ from: at(e.from), to: at(e.to), kind, value: e.cells.called?.value, key: edgeKey(e.id), holds: edgeText(e) });
     }
     const byId = new Map(g.nodes.map((n) => [n.id, n]));
@@ -1244,7 +1246,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
           const hot = isSel || selected === e.from || selected === e.to;
           const arranges = ws.arranging.includes(e.kind);
           // Into what reads it or holds it, as the edge's leading component says.
-          const ends = ws.info(e.kind)?.reversed ? { parent: e.from, child: e.to } : { parent: e.to, child: e.from };
+          const ends = (ws.info(e.kind)?.reversed ?? ws.view!.relations.find((r) => r.name === e.kind)?.reversed) ? { parent: e.from, child: e.to } : { parent: e.to, child: e.from };
           return {
             id: key,
             source: ends.child,

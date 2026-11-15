@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use recollect_graph::{Backed, CellType, Entity, Graph, Name, Op};
 use recollect_systems::formulas::{Called, IS_A, LABEL};
-use recollect_systems::notes::{Body, NOTES};
+use recollect_systems::notes::{Body, EdgeKind, NOTES, RELATES};
 use recollect_systems::plan::ALTERNATIVE;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
@@ -131,6 +131,13 @@ impl Resolver<'_> {
         if let Some(labels) = what.remove("labels") {
             let id = on.get("id").cloned().ok_or("only a node's formula can have labels")?;
             self.labels(&id, cell, labels, out)?;
+        }
+        // A node named in a value, as {"ref": ..}, can be named by its name, as anywhere else in an op.
+        if let Some(Value::Object(v)) = what.get_mut("value")
+            && v.len() == 1
+            && let Some(r) = v.get_mut("ref")
+        {
+            self.node(r)?;
         }
         for field in ["value", "formula"] {
             if let Some(v) = what.remove(field) {
@@ -241,8 +248,24 @@ impl Resolver<'_> {
             "link" => {
                 self.nodes_in(&mut op)?;
                 let (from, to) = (op.get("from").cloned().ok_or("link needs a from")?, op.get("to").cloned().ok_or("link needs a to")?);
-                let component = op.get("component").cloned().ok_or("link needs a component")?;
+                // A link of a kind the workspace defines is a `relates` edge naming that relation.
+                let kind = op.remove("kind");
+                let component = match (op.get("component").cloned(), &kind) {
+                    (Some(c), _) => c,
+                    (None, Some(_)) => json!(RELATES),
+                    (None, None) => return Err("link needs a component, or a kind".to_string()),
+                };
                 out.push(json!({ "op": "link", "from": from, "to": to, "component": component }));
+                if let Some(mut kind) = kind {
+                    self.node(&mut kind).map_err(|e| format!("a link's kind is a relation: {e}"))?;
+                    if component != json!(RELATES) {
+                        out.push(json!({ "op": "link", "from": from, "to": to, "component": RELATES }));
+                    }
+                    let mut on = Map::new();
+                    on.insert("from".to_string(), from.clone());
+                    on.insert("to".to_string(), to.clone());
+                    self.set(on, EdgeKind::NAME, written(json!({ "ref": kind })), out)?;
+                }
                 if let Some(Value::Object(cells)) = op.remove("cells") {
                     for (c, v) in cells {
                         let mut on = Map::new();

@@ -154,19 +154,24 @@ export function useWorkspace(): Workspace {
   // Rows nobody wrote that something reads can be looked up too, though they're not in `nodes`.
   const byId = useMemo(() => new Map([...(view?.nodes ?? []), ...(view?.unwritten ?? []), ...(view?.constants ?? [])].map((n) => [n.id, n])), [view]);
   const edgeById = useMemo(() => new Map((view?.edges ?? []).map((e) => [e.id, e])), [view?.edges]);
-  const arranging = useMemo(() => (view?.components ?? []).filter((c) => c.arranges).map((c) => c.name), [view?.components]);
+  // What lays the graph out: a system's edges that do, and the workspace's own relations that say they do.
+  const arranging = useMemo(() => [...(view?.components ?? []).filter((c) => c.arranges).map((c) => c.name), ...(view?.relations ?? []).filter((r) => r.arranges).map((r) => r.name)], [view?.components, view?.relations]);
   const reversed = useMemo(() => (view?.components ?? []).filter((c) => c.reversed).map((c) => c.name), [view?.components]);
   const partKind = arranging.includes("part_of") ? "part_of" : arranging.find((k) => !reversed.includes(k));
   // An edge goes the way its first component that gives a graph its shape says, so a name a formula uses
   // points into what reads it.
+  // A relation of the workspace's own can lay the graph out too, when it says so.
+  const relationOf = useMemo(() => new Map((view?.relations ?? []).map((r) => [r.id, r])), [view?.relations]);
   const ends = useCallback(
     (e: Edge) => {
-      const lead = e.components.find((c) => arranging.includes(c)) ?? e.components[0];
-      return reversed.includes(lead) ? { parent: e.from, child: e.to } : { parent: e.to, child: e.from };
+      const lead = e.components.find((c) => arranging.includes(c));
+      const relation = e.kind ? relationOf.get(e.kind) : undefined;
+      if (!lead && relation?.arranges) return relation.reversed ? { parent: e.from, child: e.to } : { parent: e.to, child: e.from };
+      return reversed.includes(lead ?? e.components[0]) ? { parent: e.from, child: e.to } : { parent: e.to, child: e.from };
     },
-    [arranging, reversed],
+    [arranging, reversed, relationOf],
   );
-  const shape = useCallback((e: Edge) => (e.components.some((c) => arranging.includes(c)) ? ends(e) : null), [arranging, ends]);
+  const shape = useCallback((e: Edge) => (e.components.some((c) => arranging.includes(c)) || (e.kind && relationOf.get(e.kind)?.arranges) ? ends(e) : null), [arranging, ends, relationOf]);
   const infoMap = useMemo(() => new Map((view?.components ?? []).map((c) => [c.name, c])), [view?.components]);
   const info = useCallback((name: string) => infoMap.get(name), [infoMap]);
   const cellMap = useMemo(() => new Map((view?.cells ?? []).map((c) => [c.name, c])), [view?.cells]);

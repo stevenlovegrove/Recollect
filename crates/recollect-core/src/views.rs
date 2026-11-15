@@ -142,6 +142,9 @@ pub struct EdgeView {
     pub from: Entity,
     pub to: Entity,
     pub components: Vec<String>,
+    /// The relation it's of, for an edge of a kind the workspace defines.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<Entity>,
     pub cells: BTreeMap<String, CellView>,
 }
 
@@ -424,12 +427,42 @@ pub struct View {
     /// what lands on one can name it.
     pub constants: Vec<NodeView>,
     pub edges: Vec<EdgeView>,
+    /// The kinds of edge the workspace defines, and whether each lays the graph out.
+    pub relations: Vec<RelationView>,
     pub components: Vec<ComponentDef>,
     pub cells: Vec<CellInfo>,
     pub worlds: WorldsView,
     pub checks: Vec<CheckView>,
     /// The cells that actually ran to answer this, since the last time anyone asked.
     pub ran: Vec<RanView>,
+}
+
+/// A kind of edge the workspace defines.
+#[derive(Debug, Serialize)]
+pub struct RelationView {
+    pub id: Entity,
+    pub name: String,
+    /// Its edges lay the map and the outline out, as part_of's do.
+    pub arranges: bool,
+    /// What its edges point at goes beneath, not above.
+    pub reversed: bool,
+    /// How many edges are of it.
+    pub edges: usize,
+}
+
+/// Every relation in a graph.
+pub fn relations(g: &Graph) -> Vec<RelationView> {
+    use recollect_systems::notes::{Arranges, RELATION, Reversed};
+    g.having(RELATION)
+        .into_iter()
+        .map(|r| RelationView {
+            id: r,
+            name: recollect_systems::label_of(g, r),
+            arranges: g.get::<Arranges>(r).ok().flatten().is_some_and(|a| a.0),
+            reversed: g.get::<Reversed>(r).ok().flatten().is_some_and(|a| a.0),
+            edges: g.edges_of_kind(r).len(),
+        })
+        .collect()
 }
 
 pub(crate) struct Labels(HashMap<String, String>);
@@ -1086,7 +1119,7 @@ fn view_at(o: &Workspace, world: &World, at: Option<u128>, w: Option<&Where>) ->
         .collect();
     // These are made as choices are worked out, so only now are they all there.
     let constants = g.constants().into_iter().map(|(e, _)| node(e, recollect_systems::label_of(g, e))).collect();
-    let edges = g.edges().filter(|(_, from, _)| !is_lens(g, *from)).map(|(e, from, to)| EdgeView { id: e, from, to, components: g.given(e).into_iter().collect(), cells: cells(g, e, &lens, &labels, &mut vars) }).collect();
+    let edges = g.edges().filter(|(_, from, _)| !is_lens(g, *from)).map(|(e, from, to)| EdgeView { id: e, from, to, components: g.given(e).into_iter().collect(), kind: g.edge_kind_of(e), cells: cells(g, e, &lens, &labels, &mut vars) }).collect();
     let refused: Vec<CheckView> = quantities.iter().filter_map(|q| Some(CheckView { severity: "notice", rule: "pin_not_applied".to_string(), on: if q.node == Entity::whole() { vec![] } else { vec![q.node] }, detail: format!("{} {} couldn't be pinned to {}: {}", labels.of(&q.node.to_string()), q.cell, q.text, q.refused.as_ref()?) })).collect();
     let worlds = worlds(g, world, &lens, &labels, vars, quantities, narrows(o.log.graph()), at);
     let ran = g.take_ran().into_iter().filter(|(_, c)| !internal(g, c)).map(|(node, cell)| RanView { node, cell }).collect();
@@ -1099,6 +1132,7 @@ fn view_at(o: &Workspace, world: &World, at: Option<u128>, w: Option<&Where>) ->
         unwritten,
         constants,
         edges,
+        relations: relations(g),
         // Every system's, so anything can be given to a node: using one takes its system on.
         components: recollect_systems::everything().components().cloned().collect(),
         cells: recollect_systems::everything().cells().filter(|c| !c.internal).map(cell_info).collect(),
@@ -1298,6 +1332,8 @@ pub struct Overview {
 pub struct Vocabulary {
     pub cells: Vec<OwnCell>,
     pub kinds: Vec<KindView>,
+    /// Its own kinds of edge.
+    pub relations: Vec<RelationView>,
     pub tables: Vec<TableBrief>,
 }
 
@@ -1419,7 +1455,7 @@ fn vocabulary(g: &Graph) -> Vocabulary {
             *tables.entry(row.table.clone()).or_default() += 1;
         }
     }
-    Vocabulary { cells, kinds, tables: tables.into_iter().map(|(name, rows)| TableBrief { name, rows }).collect() }
+    Vocabulary { cells, kinds, relations: relations(g), tables: tables.into_iter().map(|(name, rows)| TableBrief { name, rows }).collect() }
 }
 
 /// An example short enough to glance at.

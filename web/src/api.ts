@@ -130,6 +130,8 @@ export interface Edge {
   from: string;
   to: string;
   components: string[];
+  /** The relation it's of, for an edge of a kind the workspace defines. */
+  kind?: string;
   cells: Record<string, Cell>;
 }
 
@@ -239,6 +241,8 @@ export interface View {
   /** The undo redo would take back. */
   redo: number | null;
   nodes: GraphNode[];
+  /** The kinds of edge the workspace defines, and whether each lays the graph out. */
+  relations: { id: string; name: string; arranges: boolean; reversed: boolean; edges: number }[];
   /** Rows nobody wrote that a node reads, so a map can show them. They aren't nodes anywhere else. */
   unwritten: GraphNode[];
   /** Nodes nobody wrote that are only what they say, such as a puzzle choice's options. */
