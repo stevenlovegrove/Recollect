@@ -21,7 +21,7 @@ import { ViewIcon } from "./ViewNav";
 import { DdItemButton, Dropdown } from "./Dropdown";
 import { Start, Welcome } from "./Welcome";
 import { isDropped, label } from "./theme";
-import { AskHost, askSure, askWhy } from "./Ask";
+import { AskHost, askSure, askText, askWhy } from "./Ask";
 import { BottomNav } from "./ViewNav";
 import { useRoute } from "./route";
 
@@ -58,6 +58,7 @@ export function App() {
   const route = useRoute(ws);
   const [focusDecision, setFocusDecision] = useState<{ id: string; n: number } | null>(null);
   const [focusTable, setFocusTable] = useState<{ name: string; n: number } | null>(null);
+  const csvInput = useRef<HTMLInputElement>(null);
   const view = ws.view;
 
   // What this workspace holds makes worth looking at: decisions once there's one, work once there's
@@ -259,7 +260,33 @@ export function App() {
                   {counts[t] ? <span className={hot(t) ? "badge hot" : "badge"}>{counts[t]}</span> : null}
                 </DdItemButton>
               ))}
+              <DdItemButton onClick={() => csvInput.current?.click()}>
+                <ViewIcon name="table" />
+                <span className="dd-label">Import a CSV as a table…</span>
+              </DdItemButton>
             </Dropdown>
+            <input
+              ref={csvInput}
+              type="file"
+              accept=".csv,text/csv"
+              hidden
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                // A name a formula can say, as Shop_sales.rows: one word, starting with a letter.
+                const words = file.name.replace(/\.[^.]*$/, "").split(/[^\p{L}\p{N}]+/u).filter(Boolean).join("_");
+                const suggested = /^\p{L}/u.test(words) ? words[0].toUpperCase() + words.slice(1) : words ? `Data_${words}` : "Data";
+                const name = await askText(`What should the table from “${file.name}” be called? Its first line names the columns, and each line after it is a row. Formulas call it by its name, as ${suggested}.rows, so one word is best.`, suggested, "Import");
+                if (!name) return;
+                try {
+                  await ws.apply([{ op: "table", name, csv: await file.text() }], `imported ${file.name}`);
+                  showTable(name);
+                } catch (err) {
+                  alert(err instanceof Error ? err.message : String(err));
+                }
+              }}
+            />
           </span>
         {/* The worlds, by adding to them: what's shown and what can be done to it, on the right. */}
         <div className="topbar-worlds">

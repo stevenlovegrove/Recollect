@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
-type Question = { text: string; placeholder?: string; confirm: string; danger?: boolean; needsReason: boolean; resolve: (answer: string | null) => void };
+type Question = { text: string; placeholder?: string; initial?: string; confirm: string; danger?: boolean; needsReason: boolean; resolve: (answer: string | null) => void };
+
+/** Ask for a word or two, starting from a suggestion. `null` means they thought better of it. */
+export function askText(text: string, initial: string, confirm: string): Promise<string | null> {
+  return new Promise((resolve) => show({ text, initial, confirm, needsReason: true, resolve }));
+}
 
 let show: (q: Question) => void = () => {};
 
@@ -20,11 +25,11 @@ export function AskHost() {
   const [text, setText] = useState("");
   const input = useRef<HTMLTextAreaElement>(null);
   show = (next) => {
-    setText("");
+    setText(next.initial ?? "");
     setQ(next);
   };
   useEffect(() => {
-    if (q) input.current?.focus();
+    if (q) input.current?.select();
   }, [q]);
   if (!q) return null;
   const answer = (a: string | null) => {

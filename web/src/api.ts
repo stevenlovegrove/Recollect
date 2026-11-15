@@ -396,7 +396,8 @@ export type Op =
   | { op: "link"; from: string; to: string; component: string; cells?: Record<string, Written> }
   | { op: "link"; from: string; to: string; kind: string; cells?: Record<string, Written> }
   | { op: "unlink"; from: string; to: string; component: string }
-  | { op: "delete_node"; id: string };
+  | { op: "delete_node"; id: string }
+  | { op: "table"; name: string; csv: string; key?: string };
 
 export const isNothingOpen = (e: unknown) => e instanceof ApiError && e.status === 409;
 
