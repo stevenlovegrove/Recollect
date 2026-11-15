@@ -6,7 +6,7 @@
 use std::cell::{Cell as StdCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use recollect_graph::chance::{Rand, Reader, Share, Term};
+use recollect_graph::chance::{Known, Rand, Reader, Share, Term};
 use recollect_graph::worlds::{Bool, DrawGroup, Picks, Var};
 use recollect_graph::{Backed, CellDef, CellType, ComponentDef, Entity, Error, Event, Graph, Log, On, Op, Origin, Shown, Source, Stored, Violation};
 use recollect_systems::formulas::{CHOICE, Called, EVIDENCE, FOUND, Found, LABEL, VALUE, ValueCell, draws_found, is_chance, known_draws, narrows, shown_free, worlds_left};
@@ -537,6 +537,15 @@ fn rand_of(v: &Value) -> Option<Rand> {
 /// a histogram, and whether those are exact or were read from draws. An uncertain truth is how likely it
 /// is, `{"chance": …}`, with the same. Wherever one is, in a list or a record too.
 fn present(v: &Value, reader: &RefCell<Reader>) -> Value {
+    // Something seen, whose likelihood depends on draws: how many of them it'd leave worth reading,
+    // known on its own, which is how much it would say.
+    if let Some(o) = v.as_object()
+        && o.len() == 1
+        && let Some(r) = o.get("likely").and_then(|l| serde_json::from_value::<Rand>(l.clone()).ok())
+    {
+        let mut alone = Reader::given(Known { truth: None, log_weight: Some(r) });
+        return json!({ "seen": { "draws": alone.effective_draws(), "of": recollect_graph::chance::DRAWS } });
+    }
     if let Some(r) = rand_of(v) {
         let one = [Share { weight: 1.0, value: Term::Rand(r) }];
         let mut reader = reader.borrow_mut();
@@ -821,7 +830,9 @@ fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap
         if narrowed.iter().any(|n| n.id.to_string() == *id) {
             continue;
         }
-        if var.group().is_some() {
+        // The chance something seen was seen is kept by evidence, and isn't a question: it's how what was seen
+        // weighs the rest.
+        if var.group().is_some() || recollect_systems::is_seen(id) {
             unpicked.push(var.clone());
             continue;
         }
@@ -883,7 +894,7 @@ fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap
         }
         views.push(VarView { id: id.clone(), name: labels.of(&id), options: views_options, uncertain: g.has(n.id, UNCERTAIN), sure: None, clues: Vec::new(), leaning: None, leaning_why: None });
     }
-    for group in &groups {
+    for group in groups.iter().filter(|g| !recollect_systems::is_seen(&g.name)) {
         let options = group.options();
         let picked = world.get(&group.name).filter(|p| options.contains(p));
         let lands: Vec<(String, Bool)> = options.iter().map(|o| (o.clone(), group.lands(o).given(&lens.picks))).collect();

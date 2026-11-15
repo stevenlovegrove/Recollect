@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use recollect_graph::table::Key;
-use recollect_graph::chance::{self, Num, Rand, Reader, Share, Std, Term};
+use recollect_graph::chance::{self, Known, Num, Rand, Reader, Share, Std, Term};
 use recollect_graph::worlds::{Bool, Cond, Picks, Space, Var, Worldly};
 use recollect_graph::{Advice, Backed, Cell, CellType, Compile, Computed, Cx, Entity, Error, Graph, Registry, Severity, Shown, cell};
 use serde_json::{Value, json};
@@ -91,33 +91,44 @@ pub fn is_chance(g: &Graph, var: &str) -> bool {
 /// The worlds a piece of evidence leaves: those where it's true. Where it's a matter of draws it says
 /// nothing about which world this is, and what it says about the draws is `known_draws`.
 fn evidence_worlds(v: &ValueCell) -> Bool {
-    v.0.0.holds(|v| matches!(v, Val::Bool(true) | Val::Rand(_)))
+    v.0.0.holds(|v| matches!(v, Val::Bool(true) | Val::Rand(_) | Val::Likely(_)))
 }
 
-/// Everything known that's a matter of draws, together: each piece of evidence whose value is an
-/// uncertain truth. `Term::Flag(false)` if they can't all hold.
-fn known_term(g: &Graph) -> Option<Term> {
-    let mut all: Option<Term> = None;
-    for e in g.having(EVIDENCE) {
-        let Ok(Some(v)) = g.get::<ValueCell>(e) else { continue };
-        if let [(_, Val::Rand(r))] = v.0.0.cases().as_slice()
-            && r.is_truth()
-        {
-            all = Some(match all {
-                None => Term::Rand(*r),
-                Some(so_far) => chance::bin(chance::Op::And, &so_far, &Term::Rand(*r)),
-            });
+/// Everything known that's a matter of draws, together: the uncertain truths, `Term::Flag(false)` if they
+/// can't all hold, and the log of how likely what was seen is, where that depends on draws.
+fn known_terms(values: impl Iterator<Item = ValueCell>) -> (Option<Term>, Option<Term>) {
+    let (mut truth, mut weight): (Option<Term>, Option<Term>) = (None, None);
+    let join = |so_far: Option<Term>, op: chance::Op, r: Rand| Some(match so_far {
+        None => Term::Rand(r),
+        Some(so_far) => chance::bin(op, &so_far, &Term::Rand(r)),
+    });
+    for v in values {
+        match v.0.0.cases().as_slice() {
+            [(_, Val::Rand(r))] if r.is_truth() => truth = join(truth, chance::Op::And, *r),
+            [(_, Val::Likely(r))] => weight = join(weight, chance::Op::Add, *r),
+            _ => {}
         }
     }
-    all
+    (truth, weight)
+}
+
+fn known_term(g: &Graph) -> Option<Term> {
+    known_terms(g.having(EVIDENCE).into_iter().filter_map(|e| g.get::<ValueCell>(e).ok().flatten())).0
+}
+
+/// A reader's `Known`, from the truth and the weight `known_terms` gives. A truth that can't hold is
+/// left out here: what can't all hold is said where it's found.
+fn known_of((truth, weight): (Option<Term>, Option<Term>)) -> Known {
+    let rand = |t: Option<Term>| match t {
+        Some(Term::Rand(r)) => Some(r),
+        _ => None,
+    };
+    Known { truth: rand(truth), log_weight: rand(weight) }
 }
 
 /// What's known as a matter of draws, for a `Reader` to be given.
-pub fn known_draws(g: &Graph) -> Option<Rand> {
-    match known_term(g) {
-        Some(Term::Rand(r)) => Some(r),
-        _ => None,
-    }
+pub fn known_draws(g: &Graph) -> Known {
+    known_of(known_terms(g.having(EVIDENCE).into_iter().filter_map(|e| g.get::<ValueCell>(e).ok().flatten())))
 }
 
 /// What a view has found out about matters of chance by pinning them: each, and the option it landed on.
@@ -139,6 +150,8 @@ struct Over {
     error: Cond<Option<f64>>,
     /// How many draws the most read was read from, if any were.
     draws: usize,
+    /// Those draws were weighted by what was seen.
+    weighted: bool,
 }
 
 fn over_chance(what: &Cond<Val>, known: &Bool, reader: &mut Reader, chancy: &dyn Fn(&str) -> bool, mean: bool) -> Result<Over, Error> {
@@ -147,7 +160,7 @@ fn over_chance(what: &Cond<Val>, known: &Bool, reader: &mut Reader, chancy: &dyn
     // Summed over the cases: the value, how far out it could be, and where it's undefined, each weighted
     // by how likely that case is for each way the choices could go.
     let (mut sum, mut err, mut lost) = (space.pure(0.0), space.pure(Some(0.0)), space.pure(0.0));
-    let mut draws = 0;
+    let (mut draws, mut weighted) = (0, false);
     for (when, v) in what.cases() {
         // What this case comes to, how far out that could be, and how much of it is undefined.
         let (value, error, undefined): (f64, Option<f64>, f64) = match (v, mean) {
@@ -157,16 +170,19 @@ fn over_chance(what: &Cond<Val>, known: &Bool, reader: &mut Reader, chancy: &dyn
             (Val::Rand(r), false) if r.is_truth() => {
                 let c = reader.chance(&[Share { weight: 1.0, value: Term::Rand(*r) }]);
                 draws = draws.max(c.draws);
+                weighted |= c.weighted;
                 // Undefined isn't true.
                 (c.chance * (1.0 - c.undefined), Some(c.error), 0.0)
             }
             (Val::Rand(r), true) if !r.is_truth() => {
                 let s = reader.summary(&[Share { weight: 1.0, value: Term::Rand(*r) }]);
                 draws = draws.max(s.draws);
+                weighted |= s.weighted;
                 (s.mean, Some(s.error), s.undefined)
             }
             (Val::Estimate(e), true) => {
                 draws = draws.max(e.draws);
+                weighted |= e.weighted;
                 (e.value, e.error, 0.0)
             }
             (other, false) => return failed(format!("chance needs true or false, not {}", Type::of(other).word())),
@@ -181,7 +197,7 @@ fn over_chance(what: &Cond<Val>, known: &Bool, reader: &mut Reader, chancy: &dyn
     // What isn't true isn't undefined, so for a chance only the mean can be lost.
     let value = sum.zip(&lost, |s, l| (*s, *l)).zip(&possible, |(s, l), p| if *p <= 0.0 || (mean && *l > 1e-12) { None } else { Some(s / p) });
     let error = err.zip(&possible, |e, p| if *p > 0.0 { e.map(|e| e / p) } else { Some(0.0) });
-    Ok(Over { value, error, draws })
+    Ok(Over { value, error, draws, weighted })
 }
 
 /// A value from `Over`: a number where it's exact, an estimate where it was read from draws, and undefined
@@ -190,27 +206,21 @@ fn over_values(over: &Over) -> Cond<Val> {
     over.value.zip(&over.error, |v, e| match (v, e) {
         (None, _) => Val::Undefined,
         (Some(v), Some(e)) if *e == 0.0 => Val::num(*v),
-        (Some(v), e) => Val::Estimate(Estimate { value: *v, error: *e, draws: over.draws }),
+        (Some(v), e) => Val::Estimate(Estimate { value: *v, error: *e, draws: over.draws, weighted: over.weighted }),
     })
 }
 
 /// What's known, as anything a cell reads: the worlds evidence leaves, what it says about draws, and what's
 /// been found out by pinning, which only a view's copy of the graph has.
-fn known_by(cx: &Cx) -> Result<(Bool, Option<Term>, Picks, BTreeMap<String, String>), Error> {
+fn known_by(cx: &Cx) -> Result<(Bool, (Option<Term>, Option<Term>), Picks, BTreeMap<String, String>), Error> {
     let mut known = Space::global().always();
-    let mut draws: Option<Term> = None;
+    let mut values = Vec::new();
     for e in cx.scan(EVIDENCE) {
         let Some(v) = cx.get::<ValueCell>(e)? else { continue };
         known = &known & &evidence_worlds(&v);
-        if let [(_, Val::Rand(r))] = v.0.0.cases().as_slice()
-            && r.is_truth()
-        {
-            draws = Some(match draws {
-                None => Term::Rand(*r),
-                Some(so_far) => chance::bin(chance::Op::And, &so_far, &Term::Rand(*r)),
-            });
-        }
+        values.push(v);
     }
+    let draws = known_terms(values.into_iter());
     let mut found = BTreeMap::new();
     for e in cx.scan(FOUND) {
         if let Some(Found(f)) = cx.get::<Found>(e)? {
@@ -237,12 +247,11 @@ pub fn draws_found(found: &BTreeMap<String, String>) -> Bool {
 /// that are someone's to make could go. Never over one of those.
 fn expect(cx: &Cx, mean: bool, of: &Ev) -> Result<Cond<Val>, Error> {
     let (known, draws, picks, found) = known_by(cx)?;
-    let reader_known = match &draws {
-        Some(Term::Rand(r)) => Some(*r),
-        // What's known can't all be true, so nothing can be said given it.
-        Some(_) => return Ok(pure(Val::Undefined)),
-        None => None,
-    };
+    // What's known can't all be true, so nothing can be said given it.
+    if matches!(draws.0, Some(Term::Flag(false))) {
+        return Ok(pure(Val::Undefined));
+    }
+    let reader_known = known_of(draws);
     let whole = of.data();
     // A draw that's several variables is found out where whichever is in use lands on what it was found to be.
     let known = &known & &draws_found(&found);
@@ -564,6 +573,11 @@ enum Part {
     Expect { mean: bool, of: Id },
     /// One of these nodes, each as likely.
     OneOf(Vec<Entity>, u32),
+    /// `what ~ family(args…)`: what was seen, and how likely each way things could be makes it. Where
+    /// that's the same in every draw it's a chance of its own, written at `site`. See `docs/inference.md`.
+    Seen { family: String, what: Id, args: Vec<Id>, site: u32 },
+    /// `what ~ one_of(group)`.
+    SeenOneOf { what: Id, nodes: Vec<Entity>, site: u32 },
 }
 
 impl Part {
@@ -583,12 +597,16 @@ impl Part {
             Part::Integers(a, b, site) => Part::Integers(to[a], to[b], site),
             Part::Bernoulli(p, site) => Part::Bernoulli(to[p], site),
             Part::Expect { mean, of } => Part::Expect { mean, of: to[of] },
+            Part::Seen { family, what, args, site } => Part::Seen { family, what: to[what], args: args.into_iter().map(|a| to[a]).collect(), site },
+            Part::SeenOneOf { what, nodes, site } => Part::SeenOneOf { what: to[what], nodes, site },
             other => other,
         }
     }
 
     fn parts(&self) -> Vec<Id> {
         match self {
+            Part::Seen { what, args, .. } => std::iter::once(*what).chain(args.iter().copied()).collect(),
+            Part::SeenOneOf { what, .. } => vec![*what],
             Part::Lit(_) | Part::Read { .. } | Part::Has(..) | Part::Chose(..) | Part::Draw(..) | Part::OneOf(..) => vec![],
             Part::Field(a, _) | Part::Not(a) | Part::Neg(a) | Part::Defined(a) | Part::Floor(a) | Part::Ceil(a) | Part::Math(_, a) | Part::Bernoulli(a, _) | Part::Expect { of: a, .. } => vec![*a],
             Part::Bin(_, a, b) | Part::Round(a, b) | Part::Integers(a, b, _) => vec![*a, *b],
@@ -891,6 +909,7 @@ impl<'c, 'a> Expander<'c, 'a> {
             }
             Expr::Fold { func, var, group, body, start } => self.fold(func, var, group, body, start.as_deref(), scope),
             Expr::Call(name, args) => self.call(name, args, scope),
+            Expr::Seen { what, family, args } => self.seen(what, family, args, scope),
         })
     }
 
@@ -1045,6 +1064,29 @@ impl<'c, 'a> Expander<'c, 'a> {
             }
             _ => unreachable!("the parser only makes folds of these"),
         }
+    }
+
+    /// `what ~ family(args…)`. The right side isn't drawn: it's the distribution what was seen is said to
+    /// come from, so its arguments are read as they are.
+    fn seen(&self, what: &Expr, family: &str, args: &[Expr], scope: &Scope) -> Result<Id, Error> {
+        let what = self.expand(what, scope)?;
+        if family == "one_of" {
+            let [group] = args else { return failed(format!("one_of takes one group and was given {}", args.len())) };
+            return match self.binding(group, scope)? {
+                Binding::Group(nodes) => Ok(self.add(Part::SeenOneOf { what, nodes, site: self.site() })),
+                _ => failed("one_of needs a group of nodes, such as the rows of a table: one_of(Runners.rows)"),
+            };
+        }
+        let wants = match family {
+            "exponential" | "bernoulli" => 1,
+            "triangular" => 3,
+            _ => 2,
+        };
+        if args.len() != wants {
+            return failed(format!("{family} takes {wants} and was given {}", args.len()));
+        }
+        let args = args.iter().map(|a| self.expand(a, scope)).collect::<Result<Vec<_>, _>>()?;
+        Ok(self.add(Part::Seen { family: family.to_string(), what, args, site: self.site() }))
     }
 
     fn call(&self, name: &str, args: &[Expr], scope: &Scope) -> Result<Id, Error> {
@@ -1293,6 +1335,21 @@ fn type_of(cx: &Cx, part: &Part, types: &[Type]) -> Result<Type, Error> {
         }
         Part::Draw(..) => Ok(Type::Number),
         Part::OneOf(..) => Ok(Type::Ref),
+        Part::Seen { family, what, args, .. } => {
+            let what = &types[*what];
+            let fits = if family == "bernoulli" { boolish(what) } else { numberish(what) };
+            if !fits {
+                return failed(format!("what's seen to be drawn from {family} is {}, not {}", if family == "bernoulli" { "true or false" } else { "a number" }, what.word()));
+            }
+            match args.iter().find(|a| !numberish(&types[**a])) {
+                None => Ok(Type::Seen),
+                Some(a) => failed(format!("{family} needs numbers, not {}", types[*a].word())),
+            }
+        }
+        Part::SeenOneOf { what, .. } => match &types[*what] {
+            Type::Ref | Type::Any | Type::Undefined => Ok(Type::Seen),
+            other => failed(format!("what's seen to be one of a group is a node, not {}", other.word())),
+        },
         Part::Tri(_, a, b, c) => match [a, b, c].into_iter().find(|x| !numberish(&types[**x])) {
             None => Ok(Type::Number),
             Some(x) => failed(format!("triangular needs numbers, not {}", types[*x].word())),
@@ -1323,9 +1380,13 @@ fn type_of(cx: &Cx, part: &Part, types: &[Type]) -> Result<Type, Error> {
                 BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                     if numberish(ta) && numberish(tb) { Ok(Type::Bool) } else { failed(format!("{sym} needs numbers, not {} and {}", ta.word(), tb.word())) }
                 }
+                // Two things seen are both seen, and something seen with a truth is seen where that holds.
+                BinOp::And if (*ta == Type::Seen || boolish(ta)) && (*tb == Type::Seen || boolish(tb)) && (*ta == Type::Seen || *tb == Type::Seen) => Ok(Type::Seen),
+                BinOp::Or if *ta == Type::Seen || *tb == Type::Seen => failed("|| can't say one of two things was seen and not which: what's seen goes together with &&"),
                 BinOp::And | BinOp::Or => {
                     if boolish(ta) && boolish(tb) { Ok(Type::Bool) } else { failed(format!("{sym} needs true or false, not {} and {}", ta.word(), tb.word())) }
                 }
+                BinOp::Eq | BinOp::Ne if *ta == Type::Seen || *tb == Type::Seen => failed(format!("{sym} can't compare something seen")),
                 BinOp::Eq | BinOp::Ne => {
                     if ta.join(tb).is_none() {
                         return failed(format!("{sym} can't compare {} with {}", ta.word(), tb.word()));
@@ -1442,6 +1503,11 @@ fn any_rand(c: &Cond<Val>) -> bool {
     c.cases().iter().any(|(_, v)| is_rand(v))
 }
 
+/// Something seen whose likelihood depends on draws is in it somewhere.
+fn any_likely(e: &Ev) -> bool {
+    matches!(e, Ev::Data(c) if c.cases().iter().any(|(_, v)| matches!(v, Val::Likely(_))))
+}
+
 /// Something uncertain is in it somewhere, so it can't be held as diagrams alone.
 fn uncertain(e: &Ev) -> bool {
     matches!(e, Ev::Data(c) if any_rand(c))
@@ -1456,10 +1522,10 @@ fn pairs(a: &Cond<Val>, b: &Cond<Val>) -> Result<Cond<(Val, Val)>, Error> {
 }
 
 /// A number, if it's a plain one or an estimate of one, with how far out it could be and from how many draws.
-fn estimated(v: &Val) -> Option<(f64, Option<f64>, usize)> {
+fn estimated(v: &Val) -> Option<(f64, Option<f64>, usize, bool)> {
     match v {
-        Val::Num(n) => Some((*n, Some(0.0), 0)),
-        Val::Estimate(e) => Some((e.value, e.error, e.draws)),
+        Val::Num(n) => Some((*n, Some(0.0), 0, false)),
+        Val::Estimate(e) => Some((e.value, e.error, e.draws, e.weighted)),
         _ => None,
     }
 }
@@ -1469,8 +1535,8 @@ fn estimated(v: &Val) -> Option<(f64, Option<f64>, usize)> {
 /// still says it's an estimate, and no longer how far out. A comparison is only true or false where the
 /// two are further apart than they could be out by, and otherwise undefined, since it can't be called.
 fn estimate_op(a: &Val, b: &Val, op: chance::Op, f: &dyn Fn(f64, f64) -> Val) -> Val {
-    let (Some((x, ex, dx)), Some((y, ey, dy))) = (estimated(a), estimated(b)) else { return Val::Undefined };
-    let draws = dx.max(dy);
+    let (Some((x, ex, dx, wx)), Some((y, ey, dy, wy))) = (estimated(a), estimated(b)) else { return Val::Undefined };
+    let (draws, weighted) = (dx.max(dy), wx || wy);
     let error = match op {
         chance::Op::Add | chance::Op::Sub => ex.zip(ey).map(|(p, q)| p + q),
         chance::Op::Mul if ey == Some(0.0) => ex.map(|e| e * y.abs()),
@@ -1486,7 +1552,7 @@ fn estimate_op(a: &Val, b: &Val, op: chance::Op, f: &dyn Fn(f64, f64) -> Val) ->
         _ => None,
     };
     match f(x, y) {
-        Val::Num(v) => Val::Estimate(Estimate { value: v, error, draws }),
+        Val::Num(v) => Val::Estimate(Estimate { value: v, error, draws, weighted }),
         other => other,
     }
 }
@@ -1520,7 +1586,7 @@ fn number(a: &Val, op: chance::Un, f: impl Fn(f64) -> f64, wrong: &StdCell<bool>
         Val::Undefined => Val::Undefined,
         Val::Rand(r) if !r.is_truth() => val(chance::un(op, &Term::Rand(*r))),
         Val::Estimate(e) => match Val::num(f(e.value)) {
-            Val::Num(v) => Val::Estimate(Estimate { value: v, error: if op == chance::Un::Neg { e.error } else { None }, draws: e.draws }),
+            Val::Num(v) => Val::Estimate(Estimate { value: v, error: if op == chance::Un::Neg { e.error } else { None }, draws: e.draws, weighted: e.weighted }),
             other => other,
         },
         _ => {
@@ -1579,7 +1645,12 @@ fn integers(cx: &Cx, low: &Cond<Val>, high: &Cond<Val>, site: u32) -> Result<Con
 /// True this often. A plain chance is a variable with two outcomes, so it's exact. An uncertain one is
 /// a draw falling under it.
 fn bernoulli(cx: &Cx, p: &Cond<Val>, site: u32) -> Result<Cond<Val>, Error> {
-    let name = draw_name(cx, site);
+    bernoulli_called(&draw_name(cx, site), p)
+}
+
+/// The same, as a variable with this name.
+fn bernoulli_called(name: &str, p: &Cond<Val>) -> Result<Cond<Val>, Error> {
+    let name = name.to_string();
     let several = p.len() > 1;
     let mut out = pure(Val::Undefined);
     for (when, p) in p.cases() {
@@ -1821,7 +1892,131 @@ fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
         Part::Expect { mean, of } => Ev::Data(expect(cx, *mean, &values[*of])?),
         Part::Bin(op, a, b) => binary(*op, &values[*a], &values[*b])?,
         Part::OneOf(rows, site) => Ev::Data(one_of(cx, rows, *site)?),
+        Part::Seen { family, what, args, site } => {
+            let mut together = values[*what].data().map(|v| vec![v.clone()]);
+            for a in args {
+                let a = values[*a].data();
+                if together.len().saturating_mul(a.len()) > MOST_PAIRS {
+                    return failed(format!("what {family} is given differs too many ways across worlds to work out"));
+                }
+                together = together.zip(&a, |so_far, v| {
+                    let mut all = so_far.clone();
+                    all.push(v.clone());
+                    all
+                });
+            }
+            let wrong = StdCell::new(false);
+            // What's seen is a truth for bernoulli and a number for the rest, and what it's drawn from takes numbers.
+            let fits = |vs: &Vec<Val>| (if family == "bernoulli" { truth_like(&vs[0]) } else { number_like(&vs[0]) }) && vs[1..].iter().all(number_like);
+            let logs = together.map(|vs| match vs.iter().map(term).collect::<Option<Vec<Term>>>() {
+                Some(ts) if fits(vs) => log_likely(family, &ts[0], &ts[1..]),
+                _ => {
+                    wrong.set(true);
+                    Term::Undefined
+                }
+            });
+            if wrong.get() {
+                return failed(if family == "bernoulli" { "what's seen to be drawn from bernoulli is true or false, and its chance a number".to_string() } else { format!("what's seen to be drawn from {family}, and what it's drawn from, are numbers") });
+            }
+            Ev::Data(seen_value(cx, &logs, matches!(family.as_str(), "bernoulli" | "integers"), *site)?)
+        }
+        Part::SeenOneOf { what, nodes, site } => {
+            let n = nodes.len() as f64;
+            let logs = values[*what].data().map(|v| match v {
+                Val::Ref(e) if nodes.contains(e) => Term::Num(-n.ln()),
+                _ => Term::Undefined,
+            });
+            Ev::Data(seen_value(cx, &logs, true, *site)?)
+        }
     })
+}
+
+/// The log of how likely a distribution makes what was seen: its density, or its probability for a
+/// short list. Undefined where what was seen couldn't come from it, or where it isn't a distribution, as
+/// with a spread below nothing: either way, what was seen weighs nothing there. Each is written as
+/// arithmetic, so it's the same whether what goes in is plain or uncertain.
+fn log_likely(family: &str, x: &Term, args: &[Term]) -> Term {
+    use chance::{Op, Un};
+    let n = |v: f64| Term::Num(v);
+    let bin = |op: Op, a: &Term, b: &Term| chance::bin(op, a, b);
+    let un = |op: Un, a: &Term| chance::un(op, a);
+    let only = |ok: &Term, v: &Term| chance::pick(ok, v, &Term::Undefined);
+    let normal = |x: &Term, mean: &Term, sd: &Term| {
+        let z = bin(Op::Div, &bin(Op::Sub, x, mean), sd);
+        let log = bin(Op::Sub, &bin(Op::Mul, &n(-0.5), &bin(Op::Mul, &z, &z)), &bin(Op::Add, &un(Un::Ln, sd), &n(0.5 * (2.0 * std::f64::consts::PI).ln())));
+        only(&bin(Op::Lt, &n(0.0), sd), &log)
+    };
+    match (family, args) {
+        ("normal", [mean, sd]) => normal(x, mean, sd),
+        ("lognormal", [mean, sd]) => {
+            let log_x = un(Un::Ln, x);
+            bin(Op::Sub, &normal(&log_x, mean, sd), &log_x)
+        }
+        ("between", [low, high]) => {
+            let mean = bin(Op::Div, &bin(Op::Add, low, high), &n(2.0));
+            let sd = bin(Op::Div, &bin(Op::Sub, high, low), &n(2.0 * 1.6448536269514722));
+            normal(x, &mean, &sd)
+        }
+        ("uniform", [low, high]) => {
+            let inside = bin(Op::And, &bin(Op::Le, low, x), &bin(Op::Le, x, high));
+            only(&bin(Op::And, &inside, &bin(Op::Lt, low, high)), &un(Un::Neg, &un(Un::Ln, &bin(Op::Sub, high, low))))
+        }
+        ("exponential", [mean]) => {
+            let ok = bin(Op::And, &bin(Op::Le, &n(0.0), x), &bin(Op::Lt, &n(0.0), mean));
+            only(&ok, &un(Un::Neg, &bin(Op::Add, &un(Un::Ln, mean), &bin(Op::Div, x, mean))))
+        }
+        ("triangular", [low, likely, high]) => {
+            let width = bin(Op::Sub, high, low);
+            let rising = un(Un::Ln, &bin(Op::Div, &bin(Op::Mul, &n(2.0), &bin(Op::Sub, x, low)), &bin(Op::Mul, &width, &bin(Op::Sub, likely, low))));
+            let falling = un(Un::Ln, &bin(Op::Div, &bin(Op::Mul, &n(2.0), &bin(Op::Sub, high, x)), &bin(Op::Mul, &width, &bin(Op::Sub, high, likely))));
+            let shaped = bin(Op::And, &bin(Op::Le, low, likely), &bin(Op::And, &bin(Op::Le, likely, high), &bin(Op::Lt, low, high)));
+            let inside = bin(Op::And, &bin(Op::Le, low, x), &bin(Op::Le, x, high));
+            only(&bin(Op::And, &shaped, &inside), &chance::pick(&bin(Op::Lt, x, likely), &rising, &falling))
+        }
+        ("bernoulli", [p]) => {
+            let ok = bin(Op::And, &bin(Op::Le, &n(0.0), p), &bin(Op::Le, p, &n(1.0)));
+            only(&ok, &chance::pick(x, &un(Un::Ln, p), &un(Un::Ln, &bin(Op::Sub, &n(1.0), p))))
+        }
+        ("integers", [low, high]) => {
+            let whole = |t: &Term| bin(Op::Eq, t, &un(Un::Floor, t));
+            let ok = bin(Op::And, &bin(Op::And, &whole(x), &bin(Op::And, &whole(low), &whole(high))), &bin(Op::And, &bin(Op::Le, low, x), &bin(Op::Le, x, high)));
+            only(&ok, &un(Un::Neg, &un(Un::Ln, &bin(Op::Add, &bin(Op::Sub, high, low), &n(1.0)))))
+        }
+        _ => Term::Undefined,
+    }
+}
+
+/// What something seen comes to, from how likely it was in each world, as a log. Where that's the same
+/// in every draw, it's what learning that a coin came up heads is, with a chance of how likely it was in
+/// each world: a chance of its own, exact, which evidence then keeps the heads of, so the worlds are
+/// weighed by Bayes' rule with nothing new. For a density, the chances are each how likely relative to
+/// the likeliest world, which changes nothing evidence does. Where it depends on draws, it's the log of
+/// how likely, in each draw, for a reader to weigh them by.
+fn seen_value(cx: &Cx, logs: &Cond<Term>, probability: bool, site: u32) -> Result<Cond<Val>, Error> {
+    let plain = |t: &Term| match t {
+        Term::Num(n) => Some(*n),
+        Term::Undefined => Some(f64::NAN),
+        _ => None,
+    };
+    let most = logs.cases().iter().filter_map(|(_, t)| plain(t)).filter(|l| l.is_finite()).fold(f64::NEG_INFINITY, f64::max);
+    let scale = if probability || !most.is_finite() { 0.0 } else { most };
+    let chances = logs.map(|t| match (plain(t), t) {
+        (Some(l), _) if l.is_finite() => Val::num((l - scale).exp().min(1.0)),
+        (Some(_), _) => Val::Num(0.0),
+        // Placeholders, replaced just below.
+        (None, _) => Val::Undefined,
+    });
+    // Called for where it's written, and marked as the chance something was seen, so it isn't asked.
+    let coins = bernoulli_called(&format!("{}seen", draw_name(cx, site)), &chances)?;
+    let mut out = pure(Val::Undefined);
+    for (when, t) in logs.cases() {
+        let here = match t {
+            Term::Rand(r) => pure(Val::Likely(*r)),
+            _ => coins.clone(),
+        };
+        out = Cond::when(&when, &here, &out);
+    }
+    Ok(out)
 }
 
 /// One of a group of nodes, each as likely, such as a row of a table: a variable with a node for each
@@ -1841,6 +2036,39 @@ fn one_of(cx: &Cx, rows: &[Entity], site: u32) -> Result<Cond<Val>, Error> {
 fn binary(op: BinOp, a: &Ev, b: &Ev) -> Result<Ev, Error> {
     let sym = op.symbol();
     match op {
+        BinOp::Or if any_likely(a) || any_likely(b) => failed("|| can't say one of two things was seen and not which: what's seen goes together with &&"),
+        // Both seen: how likely both are is one times the other, and something seen where a truth holds
+        // is seen only there.
+        BinOp::And if any_likely(a) || any_likely(b) => {
+            let wrong = StdCell::new(false);
+            let likely = |t: Term| match t {
+                Term::Rand(r) => Val::Likely(r),
+                // How likely, the same in every draw, says nothing about the draws.
+                Term::Num(_) => Val::Bool(true),
+                _ => Val::Bool(false),
+            };
+            let out = zip(&a.data(), &b.data(), |x, y| match (x, y) {
+                (Val::Likely(p), Val::Likely(q)) => likely(chance::bin(chance::Op::Add, &Term::Rand(*p), &Term::Rand(*q))),
+                (Val::Likely(p), t) | (t, Val::Likely(p)) => match t {
+                    Val::Bool(true) => Val::Likely(*p),
+                    Val::Bool(false) => Val::Bool(false),
+                    Val::Undefined => Val::Undefined,
+                    Val::Rand(r) if r.is_truth() => likely(chance::pick(&Term::Rand(*r), &Term::Rand(*p), &Term::Undefined)),
+                    _ => {
+                        wrong.set(true);
+                        Val::Undefined
+                    }
+                },
+                _ => {
+                    wrong.set(true);
+                    Val::Undefined
+                }
+            })?;
+            if wrong.get() {
+                return failed("&& goes with something seen only with true or false, or something else seen");
+            }
+            Ok(Ev::Data(out))
+        }
         // With something uncertain on either side it's still three-valued, in every draw.
         BinOp::And | BinOp::Or if uncertain(a) || uncertain(b) => {
             let wrong = StdCell::new(false);
@@ -2115,6 +2343,8 @@ fn render(closed: &Closed) -> String {
             Part::Integers(a, b, _) => format!("integers({}, {})", out[*a], out[*b]),
             Part::Bernoulli(p, _) => format!("bernoulli({})", out[*p]),
             Part::Expect { mean, of } => format!("{}({})", if *mean { "mean" } else { "chance" }, out[*of]),
+            Part::Seen { family, what, args, .. } => format!("({} ~ {family}({}))", out[*what], args.iter().map(|a| out[*a].clone()).collect::<Vec<_>>().join(", ")),
+            Part::SeenOneOf { what, nodes, .. } => format!("({} ~ one_of({} nodes))", out[*what], nodes.len()),
         };
         out.push(if text.len() > LONGEST { "…".to_string() } else { text });
     }
@@ -2277,13 +2507,21 @@ pub fn install(reg: &mut Registry) {
 
     reg.component(REQUIRES, "Demanded of your choices: only the ways they could go that make this node's value true, as surely as it says, count.").icon("✦").requires(VALUE);
     reg.cell::<AtLeast>(REQUIRES, "How surely it has to be met, from 0 to 1, where what it depends on is a matter of chance. 1 is always.").validate(a_chance).initial(json!(1.0));
-    reg.component(EVIDENCE, "Known to be true: only the worlds, and the draws, where this node's value is true count. It never restricts a choice of yours.").icon("◉").requires(VALUE).constraint(|g, e| Ok(g.get::<ValueCell>(e)?.map(|v| evidence_worlds(&v))));
+    // A demand is met or it isn't, so what's seen, which is how likely, isn't one.
+    reg.check(REQUIRES, "requirement_is_seen", Severity::Invariant, |cx| {
+        Ok(match cx.own::<ValueType>() {
+            Ok(Some(ValueType(Type::Seen))) => vec!["a requirement is met or it isn't, and something seen with how likely it was is evidence instead: see docs/inference.md".to_string()],
+            _ => vec![],
+        })
+    });
+    reg.component(EVIDENCE, "What's been seen: a truth, and only the worlds and draws where it's true count, or something seen with how likely it was, y ~ normal(…), and each counts as much as it makes that likely. It never restricts a choice of yours.").icon("◉").requires(VALUE).constraint(|g, e| Ok(g.get::<ValueCell>(e)?.map(|v| evidence_worlds(&v))));
     // Known in some worlds as a matter of draws and in others not is neither one thing nor the other,
     // and isn't worked out, so it says so rather than quietly meaning less than it reads.
     reg.check(EVIDENCE, "evidence_partly_a_matter_of_draws", Severity::Invariant, |cx| {
         // A value that can't be worked out says so itself, and isn't this check's to refuse.
         let Some(v) = cx.own::<ValueCell>().ok().flatten() else { return Ok(vec![]) };
-        let mixed = any_rand(&v.0.0) && v.0.0.len() > 1;
+        let drawn = v.0.0.cases().iter().any(|(_, v)| matches!(v, Val::Rand(_) | Val::Likely(_)));
+        let mixed = drawn && v.0.0.len() > 1;
         Ok(if mixed { vec!["what's known is an uncertain truth in some worlds and not in others, which isn't worked out yet: see docs/distributions.md".to_string()] } else { vec![] })
     });
     reg.advice(judging);

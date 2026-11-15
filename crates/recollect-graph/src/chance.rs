@@ -1254,6 +1254,9 @@ pub struct Summary {
     /// The numbers here are exactly right. Otherwise they were read from `draws` draws.
     pub exact: bool,
     pub draws: usize,
+    /// The draws were weighted by how likely each makes what was seen, so `draws` is how many they're worth.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub weighted: bool,
     /// How far out the mean could reasonably be: its standard error. 0 if it's exact.
     pub error: f64,
 }
@@ -1262,7 +1265,7 @@ impl Summary {
     /// What a number comes to where there's nothing it could be: undefined, all of the time. Its numbers are
     /// 0 rather than nothing, so whatever reads them never has to ask, and `undefined` says not to.
     pub fn nothing() -> Summary {
-        Summary { mean: 0.0, sd: 0.0, low: 0.0, mid: 0.0, high: 0.0, least: None, most: None, undefined: 1.0, hist: Hist { from: 0.0, to: 0.0, bars: vec![] }, below0: None, points: None, law: None, exact: true, draws: 0, error: 0.0 }
+        Summary { mean: 0.0, sd: 0.0, low: 0.0, mid: 0.0, high: 0.0, least: None, most: None, undefined: 1.0, hist: Hist { from: 0.0, to: 0.0, bars: vec![] }, below0: None, points: None, law: None, exact: true, draws: 0, weighted: false, error: 0.0 }
     }
 }
 
@@ -1274,6 +1277,9 @@ pub struct Chance {
     pub undefined: f64,
     pub exact: bool,
     pub draws: usize,
+    /// The draws were weighted by how likely each makes what was seen, so `draws` is how many they're worth.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub weighted: bool,
     /// In how many of the draws it was true. Where it's several things, each drawn, that's of all their draws.
     pub hits: usize,
     /// How far out the chance could reasonably be: its standard error. 0 if it's exact.
@@ -1295,9 +1301,31 @@ pub struct Reader {
     forms: HashMap<X, Forms>,
     laws: HashMap<X, Option<Law>>,
     draws: HashMap<X, Arc<std::collections::BTreeSet<u32>>>,
-    /// Something known to be true, which every reading is given: only the draws where it holds count.
-    known: Option<Rand>,
-    kept: Option<Arc<Vec<bool>>>,
+    /// What's known, which every reading is given: only the draws where a truth holds count, and each
+    /// counts as much as how likely it makes what was seen.
+    known: Known,
+    weights: Option<Arc<Vec<f64>>>,
+}
+
+/// What a reader is given as known about draws: a truth that holds, and how likely what was seen is, as
+/// a log, in each draw. Either can be missing. See `docs/inference.md`.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Known {
+    pub truth: Option<Rand>,
+    /// The log of how likely what was seen is. Where it's undefined, what was seen couldn't have been,
+    /// and the draw counts for nothing.
+    pub log_weight: Option<Rand>,
+}
+
+impl Known {
+    pub fn truth(truth: Option<Rand>) -> Known {
+        Known { truth, log_weight: None }
+    }
+
+    /// Whether anything at all is known.
+    pub fn is_some(&self) -> bool {
+        self.truth.is_some() || self.log_weight.is_some()
+    }
 }
 
 /// How far a law is looked for through one thing made of another. Past this it's read from draws, which
@@ -1360,37 +1388,63 @@ impl Reader {
         Reader::default()
     }
 
-    /// A reader for whom something is known: an uncertain truth that's taken to hold. What shares a
-    /// draw with it is read only from the draws where it does, and says how many those were. What shares
-    /// none is as it was, so a law it has still stands.
-    pub fn given(known: Option<Rand>) -> Reader {
+    /// A reader for whom something is known: an uncertain truth that's taken to hold, and how likely
+    /// what was seen is. What shares a draw with it is read from the draws, each counting as much as it
+    /// weighs, and says how many draws that's worth. What shares none is as it was, so a law it has
+    /// still stands.
+    pub fn given(known: Known) -> Reader {
         Reader { known, ..Reader::default() }
     }
 
     /// Whether what's known says anything about this: they share a draw.
     fn tied(&mut self, r: &Rand) -> bool {
-        match self.known {
-            Some(known) => !self.apart(known.0, r.0),
-            None => false,
-        }
+        let known = self.known;
+        known.truth.is_some_and(|k| !self.apart(k.0, r.0)) || known.log_weight.is_some_and(|k| !self.apart(k.0, r.0))
     }
 
-    /// The draws where what's known holds.
-    fn kept(&mut self) -> Arc<Vec<bool>> {
-        if let Some(kept) = &self.kept {
-            return kept.clone();
+    /// How much each draw counts, given what's known: 1 or 0 for a truth, times how likely it makes what
+    /// was seen, scaled so the likeliest draw counts 1. Scaling changes nothing that's read.
+    fn weights(&mut self) -> Arc<Vec<f64>> {
+        if let Some(w) = &self.weights {
+            return w.clone();
         }
-        let kept = Arc::new(match self.known {
-            Some(known) => self.column(&known).iter().map(|v| *v == 1.0).collect(),
-            None => vec![true; DRAWS],
-        });
-        self.kept = Some(kept.clone());
-        kept
+        let mut w = vec![1.0; DRAWS];
+        if let Some(truth) = self.known.truth {
+            for (w, v) in w.iter_mut().zip(self.column(&truth).iter()) {
+                if *v != 1.0 {
+                    *w = 0.0;
+                }
+            }
+        }
+        if let Some(log) = self.known.log_weight {
+            let log = self.column(&log);
+            let most = log.iter().zip(w.iter()).filter(|(l, w)| !l.is_nan() && **w > 0.0).map(|(l, _)| *l).fold(f64::NEG_INFINITY, f64::max);
+            for (w, l) in w.iter_mut().zip(log.iter()) {
+                *w = if l.is_nan() || !most.is_finite() { 0.0 } else { *w * (l - most).exp() };
+            }
+        }
+        let w = Arc::new(w);
+        self.weights = Some(w.clone());
+        w
     }
 
-    /// In how many of the draws what's known holds: all of them, if nothing is.
+    /// How many draws what's read under what's known is worth: as many as there are, if every one that
+    /// counts counts the same, as for a truth, and fewer the more unevenly they're weighted, (Σw)²/Σw².
+    pub fn effective_draws(&mut self) -> f64 {
+        let w = self.weights();
+        let (sum, squares) = w.iter().fold((0.0, 0.0), |(s, q), w| (s + w, q + w * w));
+        if squares > 0.0 { sum * sum / squares } else { 0.0 }
+    }
+
+    /// How many draws what's known leaves, or is worth: all of them, if nothing is.
     pub fn draws_kept(&mut self) -> usize {
-        self.kept().iter().filter(|k| **k).count()
+        // Exactly the count where every draw that counts counts the same.
+        (self.effective_draws() + 1e-9).floor() as usize
+    }
+
+    /// Whether what's read under what's known is weighted, rather than only kept or dropped.
+    pub fn weighted(&self) -> bool {
+        self.known.log_weight.is_some()
     }
 
     /// What it comes to in each of `DRAWS` draws. Undefined is NaN, and a truth is 1 or 0. Every column
@@ -1701,22 +1755,26 @@ impl Reader {
         }
     }
 
-    /// One thing a number could be, as values that each count the same.
-    fn spread(&mut self, value: &Term) -> Vec<f64> {
+    /// One thing a number could be, as values with how much of it each is, adding up to 1.
+    fn spread(&mut self, value: &Term) -> Vec<(f64, f64)> {
+        let even = 1.0 / DRAWS as f64;
         match value {
-            Term::Undefined => vec![f64::NAN],
-            Term::Num(n) => vec![*n],
-            Term::Flag(b) => vec![f64::from(u8::from(*b))],
-            // What's known says something about this one, so it's only the draws where that holds.
+            Term::Undefined => vec![(f64::NAN, 1.0)],
+            Term::Num(n) => vec![(*n, 1.0)],
+            Term::Flag(b) => vec![(f64::from(u8::from(*b)), 1.0)],
+            // What's known says something about this one, so it's the draws, each as much as it weighs.
             Term::Rand(r) if self.tied(r) => {
-                let (column, kept) = (self.column(r), self.kept());
-                let left: Vec<f64> = column.iter().zip(kept.iter()).filter(|(_, k)| **k).map(|(v, _)| *v).collect();
-                if left.is_empty() { vec![f64::NAN] } else { left }
+                let (column, weights) = (self.column(r), self.weights());
+                let total: f64 = weights.iter().sum();
+                if !(total > 0.0) {
+                    return vec![(f64::NAN, 1.0)];
+                }
+                column.iter().zip(weights.iter()).filter(|(_, w)| **w > 0.0).map(|(v, w)| (*v, w / total)).collect()
             }
             Term::Rand(r) => match self.law(r) {
                 // From the law itself, evenly, so beside something drawn it's the law's and not a sample's.
-                Some(law) => (0..DRAWS).map(|i| law.quantile((i as f64 + 0.5) / DRAWS as f64)).collect(),
-                None => self.column(r).to_vec(),
+                Some(law) => (0..DRAWS).map(|i| (law.quantile((i as f64 + 0.5) / DRAWS as f64), even)).collect(),
+                None => self.column(r).iter().map(|v| (*v, even)).collect(),
             },
         }
     }
@@ -1774,16 +1832,16 @@ impl Reader {
                 (hist.from, hist.to) = (points[0].0, points[points.len() - 1].0);
             }
             let below0 = (hist.from < 0.0 && hist.to > 0.0).then(|| law.mass(0.0, false));
-            return Summary { mean: law.mean(), sd: law.sd(), low: law.quantile(0.05), mid: law.quantile(0.5), high: law.quantile(0.95), least, most, undefined, hist, below0, points, law: named, exact: true, draws: 0, error: 0.0 };
+            return Summary { mean: law.mean(), sd: law.sd(), low: law.quantile(0.05), mid: law.quantile(0.5), high: law.quantile(0.95), least, most, undefined, hist, below0, points, law: named, exact: true, draws: 0, weighted: false, error: 0.0 };
         }
 
         let mut values = Vec::new();
         let mut undefined = 0.0;
         for share in &live {
+            let w = share.weight / whole;
             let spread = self.spread(&share.value);
-            let each = share.weight / whole / spread.len() as f64;
-            undefined += spread.iter().filter(|v| v.is_nan()).count() as f64 * each;
-            values.extend(spread.into_iter().map(|v| (v, each)));
+            undefined += spread.iter().filter(|(v, _)| v.is_nan()).map(|(_, p)| p * w).sum::<f64>();
+            values.extend(spread.into_iter().map(|(v, p)| (v, p * w)));
         }
         let values = Weighted::new(values);
         if values.0.is_empty() {
@@ -1791,19 +1849,20 @@ impl Reader {
         }
         let sd = values.sd();
         // Given something, only the draws where it holds were read.
-        let draws = if live.iter().any(|s| matches!(&s.value, Term::Rand(r) if self.tied(r))) { self.draws_kept() } else { DRAWS };
+        let tied = live.iter().any(|s| matches!(&s.value, Term::Rand(r) if self.tied(r)));
+        let draws = if tied { self.draws_kept() } else { DRAWS };
         let hist = values.hist();
         let below0 = (hist.from < 0.0 && hist.to > 0.0).then(|| values.0.iter().filter(|(v, _)| *v < 0.0).map(|(_, w)| w).sum::<f64>() / values.total());
-        Summary { mean: values.mean(), sd, low: values.quantile(0.05), mid: values.quantile(0.5), high: values.quantile(0.95), least, most, undefined, hist, below0, points: None, law: None, exact: false, draws, error: sd / (draws.max(1) as f64).sqrt() }
+        Summary { mean: values.mean(), sd, low: values.quantile(0.05), mid: values.quantile(0.5), high: values.quantile(0.95), least, most, undefined, hist, below0, points: None, law: None, exact: false, draws, weighted: tied && self.weighted(), error: sd / (draws.max(1) as f64).sqrt() }
     }
 
     /// How likely a truth is, if it's each of these this much of the time.
     pub fn chance(&mut self, shares: &[Share]) -> Chance {
         let whole: f64 = shares.iter().map(|s| s.weight).sum();
         if !(whole > 0.0) {
-            return Chance { chance: 0.0, undefined: 1.0, exact: true, draws: 0, hits: 0, error: 0.0 };
+            return Chance { chance: 0.0, undefined: 1.0, exact: true, draws: 0, weighted: false, hits: 0, error: 0.0 };
         }
-        let (mut yes, mut undefined, mut drawn, mut hits, mut read) = (0.0, 0.0, 0, 0, 0);
+        let (mut yes, mut undefined, mut drawn, mut hits, mut read, mut weighted) = (0.0, 0.0, 0, 0, 0, false);
         for share in shares.iter().filter(|s| s.weight > 0.0) {
             let w = share.weight / whole;
             match &share.value {
@@ -1816,21 +1875,22 @@ impl Reader {
                         yes += w * sure;
                         continue;
                     }
-                    let (column, kept) = (self.column(r), self.kept());
-                    let among = if tied { kept.iter().filter(|k| **k).count() } else { DRAWS };
-                    let counts = |i: usize| !tied || kept[i];
-                    let nan = column.iter().enumerate().filter(|(i, v)| counts(*i) && v.is_nan()).count();
-                    let here = column.iter().enumerate().filter(|(i, v)| counts(*i) && **v == 1.0).count();
-                    if among == 0 {
+                    let column = self.column(r);
+                    let weights = if tied { self.weights() } else { Arc::new(vec![1.0; DRAWS]) };
+                    let among: f64 = weights.iter().sum();
+                    let nan: f64 = column.iter().zip(weights.iter()).filter(|(v, _)| v.is_nan()).map(|(_, w)| w).sum();
+                    let here: f64 = column.iter().zip(weights.iter()).filter(|(v, _)| **v == 1.0).map(|(_, w)| w).sum();
+                    if !(among > 0.0) {
                         // What's known never came up, so there's nothing to say how likely this is given it.
                         undefined += w;
                     } else {
-                        yes += w * here as f64 / among as f64;
-                        undefined += w * nan as f64 / among as f64;
+                        yes += w * here / among;
+                        undefined += w * nan / among;
                     }
-                    hits += here;
+                    hits += column.iter().zip(weights.iter()).filter(|(v, w)| **v == 1.0 && **w > 0.0).count();
                     drawn += 1;
-                    read += among;
+                    read += if tied { self.draws_kept() } else { DRAWS };
+                    weighted |= tied && self.weighted();
                 }
                 Term::Undefined => undefined += w,
                 _ => {}
@@ -1841,7 +1901,7 @@ impl Reader {
         // are about all of them.
         let exact = drawn == 0;
         let each = if drawn == 0 { DRAWS } else { (read / drawn).max(1) };
-        Chance { chance, undefined, exact, draws: read, hits, error: if exact { 0.0 } else { (chance * (1.0 - chance) / each as f64).sqrt() } }
+        Chance { chance, undefined, exact, draws: read, weighted, hits, error: if exact { 0.0 } else { (chance * (1.0 - chance) / each as f64).sqrt() } }
     }
 }
 

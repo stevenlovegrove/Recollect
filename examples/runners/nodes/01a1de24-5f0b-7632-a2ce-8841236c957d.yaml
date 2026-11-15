@@ -1,9 +1,0 @@
-id: 01a1de24-5f0b-7632-a2ce-8841236c957d
-components:
-- notes
-- value
-cells:
-  body: One of the forty, each as likely. Everything read through it is the same runner's, so the columns move together as they do in the data.
-  name: A runner seen
-formulas:
-  value: one_of(Runners.rows)

@@ -1,6 +1,6 @@
 # Inference: what's seen, and how likely it was
 
-**Status:** a design. Nothing here is built. It follows from [data.md](data.md#fitting), where a straight line through forty runners, written as equations, can only be told about the data with a truth, and runs out of draws. It extends [What's known, and what's demanded](distributions.md#whats-known-and-whats-demanded).
+**Status:** step 1 is built: `~`, evidence that's a weight, exact over short lists, and read with weights over draws, saying how many they're worth. [Order of building](#order-of-building) says what's next, and [What step 1 is](#what-step-1-is) how it's done and what it leaves out. It follows from [data.md](data.md#fitting), where a straight line through forty runners, written as equations, can only be told about the data with a truth, and runs out of draws. It extends [What's known, and what's demanded](distributions.md#whats-known-and-whats-demanded).
 
 ## Why
 
@@ -105,18 +105,32 @@ Everything `predict` did is here, in the open. The prior is two cells anyone can
 
 | Step | What |
 |---|---|
-| 1 | `~` and the families' densities, as evidence, read with weights and effective draws, and exact over short lists |
+| 1 | `~` and the families' densities, as evidence, read with weights and effective draws, and exact over short lists. **Built** |
 | 2 | Named arguments, and the editor saying what a function takes and gives, and a statement shown as one |
 | 3 | Moving the draws: tempering, resampling and moves, with its budget and what it says |
 | 4 | Bell curves seen through straight lines, exactly |
+
+## What step 1 is
+
+- **`~` is an operator at the level of a comparison,** so `a ~ normal(m, 1) && b ~ normal(m, 1)` needs no brackets. The right is checked when it's read: it has to be one of the families. A statement's type is *something seen*, and the type checker allows `&&` with it and nothing else that combines truths: `||`, `!`, `if` and comparing one are errors that say why. A requirement that's something seen is refused when it's written.
+- **How likely each family makes a value is written as arithmetic** on the same expressions everything else is, in `log_likely` in `formulas.rs`, so it's the same whether what goes in is plain or uncertain, and where what was seen couldn't have come from it, or it isn't a distribution, as with a spread below nothing, it's undefined, and weighs nothing.
+- **Over short lists, it's a chance of its own.** Where how likely it was is the same in every draw, what's seen is a coin whose chance of heads in each world is how likely it was there, which is `bernoulli` with a chance that differs between worlds. Evidence keeps the heads, so the worlds are weighed by Bayes' rule by the diagram, exactly, and every belief, requirement and view that reads the worlds is right with nothing new. For a density the chances are each relative to the likeliest world, which changes nothing evidence does. The coin is bookkeeping, so it's called for where it's written with `seen` after it, and isn't shown as a question.
+- **Over draws, a reader weighs them.** `Known` is a truth and the log of how likely what was seen is. A truth gives each draw 1 or 0, as before, so nothing that was right changed. What's read under weights is `weighted`, and its `draws` are how many they're worth, `(Σw)²/Σw²`. A mean or a chance carries that into the cell, and the app says *read from draws weighted by how likely each makes what's been seen, worth 22 of them*.
+- **Something seen that isn't known yet** is shown as how many draws it would leave worth reading if it were: `{"seen": {"draws": …}}`, *seen: worth 22 of 4,096 draws, known*.
+
+It leaves out, beyond the later steps:
+
+- **Evidence that's a matter of draws in some worlds and not others** is still refused, weights or not. So is something seen whose likelihood depends on draws and differs between worlds.
+- **A statement's own chance, shown in its cell, isn't a likelihood.** Where it's a coin, a cell that reads one shows it as true or false, as `bernoulli` would. Only evidence gives it a meaning.
 
 ## How it'd be checked
 
 | Check | How |
 |---|---|
 | **A truth as evidence is as it was** | Every test and sample from before |
-| **An observation over short lists is Bayes' rule** | Which die it was, from rolls, against the sums done by hand |
-| **Weighted reading is honest** | Effective draws against `(Σw)²/Σw²`, and a few rows of the line against a grid |
+| **An observation over short lists is Bayes' rule** | A coin's bias from tosses, a middle from a reading, and a die from a roll, against the sums done by hand (`tests/seen.rs`) |
+| **Weighted reading is honest** | A bell curve seen through a bell curve against its exact answer, 2.2 ± 0.45, and a line through five rows against a grid, 2.004. Forty rows say they're worth a few dozen draws (`tests/seen.rs`) |
+| **What's seen isn't asked about** | Another roll of 7 moves which die it was by Bayes' rule, with nothing new among the questions (`recollect-server`'s tests) |
 | **Moving gets there** | The line through forty runners against a grid, 2.099 ± 0.043 with σ = 1. The tea's six humps, each the right size. Two humps far apart, both kept |
 | **It's repeatable** | The same graph, built twice, the same answer |
 | **Exact is exact** | Bell curves seen through straight lines, exactly, against moving draws, within what drawing allows |

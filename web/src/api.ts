@@ -48,7 +48,18 @@ export interface Dist {
   /** These are exactly right. Otherwise they were read from `draws` draws, and `error` is how far out the mean could be. */
   exact: boolean;
   draws: number;
+  /** The draws were weighted by how likely each makes what's been seen, so `draws` is how many they're worth. */
+  weighted?: boolean;
   error: number;
+}
+
+/**
+ * Something seen whose likelihood depends on draws, `y ~ normal(…)`, sent as `{"seen": …}`: how many of the
+ * draws it would leave worth reading if it were known. See docs/inference.md.
+ */
+export interface Seen {
+  draws: number;
+  of: number;
 }
 
 /** A number read from draws, such as a mean with no law, sent as `{"estimate": …}` wherever the number would be. */
@@ -57,6 +68,7 @@ export interface Estimate {
   /** How far out it could be: its standard error. Missing where it's come through something that doesn't say. */
   error?: number | null;
   draws: number;
+  weighted?: boolean;
 }
 
 /** How likely an uncertain truth is, sent as `{"chance": …}` wherever the truth would be. */
@@ -65,6 +77,7 @@ export interface Chance {
   undefined: number;
   exact: boolean;
   draws: number;
+  weighted?: boolean;
   /** In how many of the draws it was true. */
   hits: number;
   error: number;

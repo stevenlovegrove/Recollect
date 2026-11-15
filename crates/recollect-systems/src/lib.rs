@@ -126,6 +126,13 @@ pub fn is_draw(var: &str) -> bool {
     var.starts_with('~')
 }
 
+/// Whether a variable is the chance that something seen, with how likely it was, was seen: a coin
+/// whose heads evidence keeps, which is how what's seen weighs the worlds. It's bookkeeping, not a
+/// question anyone would ask, so it isn't shown as one. See `docs/inference.md`.
+pub fn is_seen(var: &str) -> bool {
+    var.starts_with('~') && var.split_once('#').is_some_and(|(_, which)| which.trim_start_matches(|c: char| c.is_ascii_digit()).starts_with("seen"))
+}
+
 /// Where a draw is written, from what it's called: the node, the cell, and which of that cell's draws.
 pub fn draw_site(var: &str) -> Option<(&str, &str, &str)> {
     let (node, rest) = var.strip_prefix('~')?.split_once('/')?;

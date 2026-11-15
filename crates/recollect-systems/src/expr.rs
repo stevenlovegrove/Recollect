@@ -26,6 +26,10 @@ pub enum Val {
     /// A number, or a truth, that's uncertain: an expression over draws. See `docs/distributions.md`.
     /// It's written `{"rand": …}`.
     Rand(Rand),
+    /// What was seen, as `y ~ normal(…)` gives where how likely it was depends on draws: the log of how
+    /// likely, in each draw. See `docs/inference.md`. It's written `{"likely": …}`.
+    #[serde(serialize_with = "likely_out", deserialize_with = "likely_in")]
+    Likely(Rand),
     /// A number read from draws, as `mean(x)` is where x has no law, rather than worked out exactly. It
     /// says so wherever it goes. It's written `{"estimate": …}`.
     #[serde(serialize_with = "estimate_out", deserialize_with = "estimate_in")]
@@ -41,8 +45,11 @@ pub struct Estimate {
     /// How far out it could reasonably be: its standard error. Nothing, where it's come through something
     /// that doesn't say how far out what comes out could be.
     pub error: Option<f64>,
-    /// How many draws it was read from.
+    /// How many draws it was read from: how many they're worth, where they were weighted.
     pub draws: usize,
+    /// The draws were weighted by how likely each makes what was seen. See `docs/inference.md`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub weighted: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -57,6 +64,20 @@ fn estimate_out<S: Serializer>(e: &Estimate, s: S) -> Result<S::Ok, S::Error> {
 
 fn estimate_in<'de, D: Deserializer<'de>>(d: D) -> Result<Estimate, D::Error> {
     Ok(EstimateJson::deserialize(d)?.estimate)
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LikelyJson {
+    likely: Rand,
+}
+
+fn likely_out<S: Serializer>(r: &Rand, s: S) -> Result<S::Ok, S::Error> {
+    LikelyJson { likely: *r }.serialize(s)
+}
+
+fn likely_in<'de, D: Deserializer<'de>>(d: D) -> Result<Rand, D::Error> {
+    Ok(LikelyJson::deserialize(d)?.likely)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -102,6 +123,8 @@ pub enum Type {
     /// A node. What's read through it is checked as it runs.
     Ref,
     Record(BTreeMap<String, Type>),
+    /// What was seen, and how likely it was: `y ~ normal(…)`. It means something as evidence.
+    Seen,
 }
 
 impl Type {
@@ -116,6 +139,7 @@ impl Type {
             // Whether something's uncertain isn't part of its type, as whether it differs between worlds isn't.
             Val::Rand(r) if r.is_truth() => Type::Bool,
             Val::Rand(_) | Val::Estimate(_) => Type::Number,
+            Val::Likely(_) => Type::Seen,
             Val::Record(fields) => Type::Record(fields.iter().map(|(k, v)| (k.clone(), Type::of(v))).collect()),
         }
     }
@@ -142,6 +166,7 @@ impl Type {
             Type::List => "a list",
             Type::Ref => "a node",
             Type::Record(_) => "a record",
+            Type::Seen => "something seen",
         }
     }
 }
@@ -195,6 +220,8 @@ pub enum Expr {
     /// `Year[3].balance`: a row of a table, by its key, and a cell on it. See `table`.
     Row { table: String, key: Box<Expr>, path: Vec<String> },
     Call(String, Vec<Expr>),
+    /// `what ~ family(args…)`: `what` was seen, drawn from that distribution. See `docs/inference.md`.
+    Seen { what: Box<Expr>, family: String, args: Vec<Expr> },
     /// `sum(x in group: body)`. A group is `in.kind`, `out.kind`, `with.component`, or a name.
     /// `start` is what `max` and `min` begin from.
     Fold { func: String, var: String, group: Vec<String>, body: Box<Expr>, start: Option<Box<Expr>> },
@@ -209,6 +236,9 @@ pub const CORE: &[&str] = &["if", "defined", "has", "chose", "round", "floor", "
 /// The functions that are something uncertain: each place one is written is a draw of its own. See
 /// `docs/distributions.md`.
 pub const DISTRIBUTIONS: &[&str] = &["normal", "lognormal", "uniform", "triangular", "exponential", "between", "integers", "bernoulli", "one_of"];
+
+/// The distributions something seen can be said to be drawn from, on the right of `~`.
+pub const FAMILIES: &[&str] = &["normal", "lognormal", "between", "uniform", "exponential", "triangular", "bernoulli", "integers", "one_of"];
 
 /// Functions that expand into one copy of their body for each node in a group.
 pub const FOLDS: &[&str] = &["sum", "product", "all", "any", "count", "max", "min", "distinct"];
@@ -259,7 +289,7 @@ enum Tok {
     Sym(&'static str),
 }
 
-const SYMBOLS: &[&str] = &["&&", "||", "!=", "<=", ">=", "(", ")", "[", "]", ",", ".", ":", "+", "-", "*", "/", "^", "=", "<", ">", "!"];
+const SYMBOLS: &[&str] = &["&&", "||", "!=", "<=", ">=", "(", ")", "[", "]", ",", ".", ":", "+", "-", "*", "/", "^", "=", "<", ">", "!", "~"];
 
 fn tokens(text: &str) -> Result<Vec<(Tok, usize)>, String> {
     let chars: Vec<char> = text.chars().collect();
@@ -409,6 +439,14 @@ impl Parser {
 
     fn compare(&mut self) -> Result<Expr, String> {
         let left = self.sum()?;
+        // What was seen, and what it's drawn from: `y ~ normal(mu, sigma)`.
+        if self.eat("~") {
+            let column = self.column();
+            return match self.sum()? {
+                Expr::Call(family, args) if FAMILIES.contains(&family.as_str()) => Ok(Expr::Seen { what: Box::new(left), family, args }),
+                _ => Err(format!("the right of ~ at column {column} says what it's drawn from, such as normal(0, 1), and has to be one of {}", FAMILIES.join(", "))),
+            };
+        }
         for (sym, op) in [("=", BinOp::Eq), ("!=", BinOp::Ne), ("<=", BinOp::Le), (">=", BinOp::Ge), ("<", BinOp::Lt), (">", BinOp::Gt)] {
             if self.eat(sym) {
                 return Ok(Expr::Bin(op, Box::new(left), Box::new(self.sum()?)));

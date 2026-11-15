@@ -592,3 +592,14 @@ fn a_runner_seen_is_one_row_so_knowing_their_5k_says_what_their_10k_was() {
     let given: Vec<f64> = all.iter().zip(ten.cases()).filter(|(_, (w, _))| !(&quick & w).is_never()).map(|((_, v), _)| *v).collect();
     assert!(!given.is_empty() && given.iter().all(|v| *v < 47.0), "{given:?}");
 }
+
+#[test]
+fn a_line_through_the_runners_is_about_two_and_says_how_few_draws_its_worth() {
+    use recollect_graph::chance::{Reader, Share, Term};
+    let o = open("runners");
+    let Val::Rand(slope) = o.get::<ValueCell>("Slope").0.0.cases()[0].1.clone() else { panic!("the slope is uncertain") };
+    let s = Reader::given(recollect_systems::formulas::known_draws(o.g())).summary(&[Share { weight: 1.0, value: Term::Rand(slope) }]);
+    assert!(s.weighted && s.draws < 100, "weighted, and worth a few dozen draws: {s:?}");
+    // A fine grid over the same prior and the same forty runners says 2.099 ± 0.043.
+    assert!((s.mean - 2.099).abs() < 3.0 * 0.043 / (s.draws as f64).sqrt(), "{s:?}");
+}

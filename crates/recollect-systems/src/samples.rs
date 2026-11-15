@@ -61,7 +61,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "33";
+pub const FORMAT: &str = "34";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -537,7 +537,15 @@ fn runners(b: &mut Build) {
 
 - Select **Their 10k** and look at its histogram: the forty times, from 35½ minutes to nearly 70.
 - Click **known?** on **Under 22 minutes over 5k**. Only the runners quicker than that are left, and **Their 10k** is now what they ran: all under 47 minutes.
-- Open the worlds chip at the top: the forty runners, which can be pinned or stepped through one at a time."#);
+- Open the worlds chip at the top: the forty runners, which can be pinned or stepped through one at a time.
+
+**A line through them** is written as it would be on paper. **Slope** and **Height** are what's believed of the line before the data, and **Runners** itself says what was seen: every runner's 10k drawn from a bell curve about the line at their 5k, a minute either way, `all(r in rows: r.t10k ~ normal(slope * r.t5k + height, 1))`. It's evidence, so each draw of the slope and height counts as much as it makes the forty times likely.
+
+That's honest and, for now, thin. The slope comes out about 2.1, which is right, but weighing the prior's 4,096 draws by forty runners leaves only a few dozen worth anything, and every number read through them says so: hover over one and it says how many. Drawing more where the weight is comes next: see docs/inference.md.
+
+- Select **Slope** and look at its histogram, then hover for how many draws it's worth.
+- Click **known?** off on **Runners** and back: the prior's spread, and then the data's.
+- **A 22-minute 5k runner's 10k** is an ordinary formula over the same slope and height."#);
     for (i, (t5k, t10k, age)) in RUNNERS.iter().enumerate() {
         let row = format!("Runners[{}]", i + 1);
         b.put(&row, "t5k", json!(t5k)).put(&row, "t10k", json!(t10k)).put(&row, "age", json!(age));
@@ -550,6 +558,12 @@ fn runners(b: &mut Build) {
     b.formula(ten, "runner.value.t10k").label(ten, pick, "runner");
     let quick = "Under 22 minutes over 5k";
     b.formula(quick, "t5k < 22").label(quick, five, "t5k").note(quick, "Not known: click known? to look only at the runners quicker than this, and see what their 10k times are.");
+    b.formula("Slope", "normal(2, 0.5)").note("Slope", "How many minutes over 10k each minute over 5k is worth: about 2, give or take half, before anything's seen.");
+    b.formula("Height", "normal(0, 5)").note("Height", "Where the line would cross a 5k of nothing: about 0, give or take 5 minutes, before anything's seen.");
+    b.formula("Runners", "all(r in rows: r.t10k ~ normal(slope * r.t5k + height, 1))").label("Runners", "Slope", "slope").label("Runners", "Height", "height").add("Runners", EVIDENCE);
+    let next = "A 22-minute 5k runner's 10k";
+    b.formula(next, "normal(slope * 22 + height, 1)").label(next, "Slope", "slope").label(next, "Height", "height");
+    b.note(next, "Someone new: the line at 22, and a minute either way of their own. It reads the same slope and height as everything else, so it's read from the same weighted draws.");
 }
 
 fn supplier(b: &mut Build) {

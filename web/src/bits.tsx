@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { Cell, Chance, Dist, Edge, Estimate, GraphNode, Op, Reading, Shown } from "./api";
+import type { Cell, Chance, Dist, Edge, Estimate, GraphNode, Op, Reading, Seen, Shown } from "./api";
 import { bracketRuns, partText } from "./brackets";
 import type { Workspace } from "./workspace";
 import { badgesOf, compColor, isDropped, label, nodeColor } from "./theme";
@@ -54,8 +54,21 @@ export function estimateText(e: Estimate): string {
   return e.error ? `≈ ${toWithin(e.value, e.error)} ± ${smallFigures(e.error)}` : `≈ ${figures(e.value)}`;
 }
 
+/** Where something was read from: so many draws, or draws weighted by what's been seen, worth so many. */
+function fromDraws(draws: number, weighted?: boolean): string {
+  return weighted ? `Read from draws weighted by how likely each makes what's been seen, worth ${Math.floor(draws).toLocaleString()} of them` : `Read from ${draws.toLocaleString()} draws`;
+}
+
 export function estimateHow(e: Estimate): string {
-  return `Read from ${e.draws.toLocaleString()} draws, not worked out exactly. ${e.error ? `It could be out by about ${smallFigures(e.error)}.` : "It's come through something that doesn't say how far out it could be."}`;
+  return `${fromDraws(e.draws, e.weighted)}, not worked out exactly. ${e.error ? `It could be out by about ${smallFigures(e.error)}.` : "It's come through something that doesn't say how far out it could be."}`;
+}
+
+/** Something seen whose likelihood depends on draws, if that's what this is: `{"seen": …}`. */
+export const seenOf = (v: unknown): Seen | undefined => only(v, "seen") as Seen | undefined;
+
+/** Something seen, in a few words: how much of the draws it would leave, known. */
+export function seenText(s: Seen): string {
+  return `seen: worth ${Math.floor(s.draws).toLocaleString()} of ${s.of.toLocaleString()} draws, known`;
 }
 
 /** How likely an uncertain truth is, if that's what this is: `{"chance": …}`. */
@@ -89,7 +102,7 @@ export function distHow(d: Dist): string {
   const range = `Nine times in ten it's between ${figures(d.low)} and ${figures(d.high)}`;
   const gaps = d.undefined > 0 && d.undefined < 1 ? `. Undefined ${beliefText(d.undefined)} of the time` : "";
   if (d.exact) return `${d.law ? `Exactly ${d.law}` : "Exact"}. ${range}${gaps}`;
-  return `Read from ${d.draws.toLocaleString()} draws, so the mean could be out by about ${smallFigures(d.error)}. ${range}${gaps}`;
+  return `${fromDraws(d.draws, d.weighted)}, so the mean could be out by about ${smallFigures(d.error)}. ${range}${gaps}`;
 }
 
 /** A chance in a few words. One nothing settled says how many draws it held in, and never says never. */
@@ -103,7 +116,7 @@ export function chanceText(c: Chance): string {
 
 export function chanceHow(c: Chance): string {
   const gaps = c.undefined > 0 ? ` Undefined ${beliefText(c.undefined)} of the time.` : "";
-  return c.exact ? `Exactly this likely.${gaps}` : `True in ${c.hits.toLocaleString()} of ${c.draws.toLocaleString()} draws, so it could be out by about ${(c.error * 100).toFixed(1)} points.${gaps}`;
+  return c.exact ? `Exactly this likely.${gaps}` : c.weighted ? `${fromDraws(c.draws, true)}, so it could be out by about ${(c.error * 100).toFixed(1)} points.${gaps}` : `True in ${c.hits.toLocaleString()} of ${c.draws.toLocaleString()} draws, so it could be out by about ${(c.error * 100).toFixed(1)} points.${gaps}`;
 }
 
 /** A histogram, small enough to sit beside a number. */
@@ -184,6 +197,13 @@ export function AnyValue({ v, text, wide }: { v: unknown; text: (v: unknown) => 
   if (d) return <DistValue d={d} wide={wide} />;
   const c = chanceOf(v);
   if (c) return <ChanceValue c={c} />;
+  const s = seenOf(v);
+  if (s)
+    return (
+      <span className="mono-value estimate" title="Something seen, with how likely it was: as evidence, each draw counts as much as it makes this likely. This is how many of the draws it would leave worth reading if it were known on its own: the fewer, the more it says.">
+        {seenText(s)}
+      </span>
+    );
   const e = estimateOf(v);
   if (e)
     return (
@@ -212,6 +232,8 @@ export function valueText(v: unknown): string {
   if (d) return distText(d);
   const c = chanceOf(v);
   if (c) return `true ${chanceText(c)}`;
+  const s = seenOf(v);
+  if (s) return seenText(s);
   const e = estimateOf(v);
   if (e) return estimateText(e);
   if (typeof v === "number") return Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 2 });

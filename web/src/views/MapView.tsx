@@ -133,7 +133,7 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
   const says =
     mark === "requires"
       ? { on: "required ✓", off: "require", done: "Required", undone: "No longer required", title: marked ? "Required: only the choices that make this true, as surely as it says, count. Click to make it only a value again" : "Only a value. Click to require it of your choices, so only the ones that make it true count" }
-      : { on: "known ✓", off: "known?", done: "Known", undone: "No longer known", title: marked ? "Known to be true: only the worlds, and the draws, where it is count. Click to make it only a value again" : "Only a value. Click to say it's known to be true, so only the worlds where it is count" };
+      : { on: "known ✓", off: "known?", done: "Known", undone: "No longer known", title: marked ? "Known: only the worlds and draws where it's true count, or, for something seen, each counts as much as it makes that likely. Click to make it only a value again" : "Only a value. Click to say it's known: so only the worlds where it's true count, or, for something seen, each counts as much as it makes that likely" };
   return (
     <div
       className={["card", node.unwritten && "unwritten", isDropped(node) && "dead", out && "out", selected && "selected", recent && "recent", dim && "dim", entering && "entering", leaving && "leaving", linking && "linking", leaned && "leaned"].filter(Boolean).join(" ")}

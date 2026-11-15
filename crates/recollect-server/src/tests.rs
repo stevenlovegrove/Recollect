@@ -1427,3 +1427,25 @@ async fn a_draw_whose_outcomes_depend_on_something_is_one_question() {
     assert_eq!((belief("A d6"), belief("A d8"), belief("A d12")), (0.0, 0.0, 1.0));
     assert_eq!(cell(&ten, "Average next roll", "value")["value"], 10.0, "and what's averaged over chance reads it");
 }
+
+/// Something seen, with how likely it was, weighs the worlds by Bayes' rule, and the chance it was seen
+/// that does that isn't a question of its own. See docs/inference.md.
+#[tokio::test]
+async fn a_roll_seen_weighs_which_die_and_isnt_asked_about() {
+    let c = Client::new();
+    c.open("which-die").await;
+    let belief = |v: &Value, option: &str| -> f64 {
+        let die = v["worlds"]["vars"].as_array().unwrap().iter().find(|x| x["name"] == "Which die?").unwrap();
+        die["options"].as_array().unwrap().iter().find(|o| o["name"] == option).unwrap()["chance"].as_f64().unwrap()
+    };
+    let before = c.view(json!({})).await;
+    let (d8, d12) = (belief(&before, "A d8"), belief(&before, "A d12"));
+    c.claude_applies("another roll", vec![json!({"op": "add_node", "id": "new:x", "name": "Another 7", "components": ["evidence"], "cells": {"value": {"formula": "7 ~ integers(1, die.chosen.sides)", "labels": {"die": "Which die?"}}}})]).unwrap();
+    let after = c.view(json!({})).await;
+    // A 7 is one in eight from a d8 and one in twelve from a d12.
+    let want = d8 / 8.0 / (d8 / 8.0 + d12 / 12.0);
+    assert!((belief(&after, "A d8") - want).abs() < 1e-12, "{} and {want}", belief(&after, "A d8"));
+    let asked: Vec<&Value> = after["worlds"]["vars"].as_array().unwrap().iter().map(|x| &x["name"]).collect();
+    assert_eq!(asked.len(), before["worlds"]["vars"].as_array().unwrap().len(), "nothing new is asked: {asked:?}");
+    assert_eq!(after["worlds"]["count"], before["worlds"]["count"]);
+}
