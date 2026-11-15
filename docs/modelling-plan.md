@@ -301,6 +301,44 @@ edges; collapse below a depth.
 - R16: decision records, and ADR export.
 - R17: move, re-kind and merge as single ops in `ops.rs`.
 
+## What Phases 2 to 5 did, and didn't
+
+**Built**
+
+- **Structure** is a system of its own. Its registration and checks are in `structure.rs`, and the code
+  that works out `need`, decisions and options is still in `plan.rs`, which `structure.rs` calls. Moving
+  that code is only a move, left for later. A cell now records the system that gives it, so writing
+  `done` still takes on `plan`. Samples say the systems they use, which a test checks, and the examples
+  were written again. Most samples that said `plan` only had decisions, and now say `structure`.
+- **Decisions** come back for a design that isn't a plan, so the Decisions tab works there too.
+- **A kind's notes** are its own.
+- **Leaning** and its `why`, the notice, the Decisions tab and a mark on the Map. The worlds panel takes
+  a formula to look through, with one click for current intent.
+- **Relations**: a relation is a node, an edge names it in `kind`, takes its cells, and is followed by its
+  name. Relations can arrange the Map, Outline and tree reads, with notices for loops and for ends of the
+  wrong kinds. `apply` links by a relation's name, and resolves names inside `{ref}`.
+- **Realises and coverage**, in reads and as a Coverage tab.
+- **What's unresolved**, as a standing list in Checks, and **`should`**, a workspace's own checks.
+- **The Map**: lanes by a cell, and only so many levels. Focus was already there.
+
+**Done differently**
+
+- **`instances(Kind)` isn't a function.** `k.in.is_a` does it with one label for the kind, now that a
+  path can go along edges anywhere, and `count(self.in.realises)` works on a kind for each instance.
+  Instances of instances aren't followed by a formula yet, though a read by kind follows them.
+- **A formula typed in the app can't name nodes yet,** since naming them needs labels, so the worlds panel
+  keeps pins as pins rather than showing them as a formula.
+- **The unresolved list** has the checks that turned out cheap and useful: a cell written once, a letter
+  or two from another; nodes sharing a name; `relates` without a kind; a relation used once. It leaves
+  out labels with no target and dangling edges, which formulas and loading already report.
+
+**Not done**
+
+- The Inspector doesn't show or set an edge's relation yet; `apply` and the agent do.
+- R15 (markdown export), R16 (decision records) and R17 (restructuring ops) are left for when modelling
+  shows they're needed, as the plan said.
+- The app labels `need` as "Needed", which reads oddly in a design.
+
 ## Risks and what to check early
 
 - **`in` mid-path (1.1)** may reach into how paths bind in `formulas.rs`. Refusing first keeps Phase 1

@@ -111,10 +111,12 @@ A commit also checks what it touched against the definitions: a component nothin
 | Component | On | Cells | Requires |
 |---|---|---|---|
 | `named` | every node | `name` (per entity) | |
-| `notes` | node | `body`, in markdown | |
+| `notes` | node | `body` (per entity, so an instance doesn't show its kind's), in markdown | |
 | `sources` | node | `sources` | |
 | `drawing` | node | `drawing`: see [drawings.md](drawings.md) | |
-| `serves`, `supports`, `contradicts`, `constrains`, `supersedes`, `relates` | edge | none | |
+| `relation` | node | `arranges`, `reversed`, `from_kind`, `to_kind`: a kind of edge the workspace defines. Its edges take the cells they don't say from it | |
+| `relates` | edge | `kind` (per entity): the relation it's of, `{ref}`. It can be followed by that relation's name, as `in.names` | |
+| `serves`, `supports`, `contradicts`, `constrains`, `supersedes`, `realises` | edge | none | |
 
 **Formulas** (always there)
 
@@ -129,20 +131,29 @@ A commit also checks what it touched against the definitions: a component nothin
 | `macro` | node | `macro` (`params`, `body`); internal `macro_body` | |
 | `label` | edge | `called`: the name a formula on the source uses for the target. Arranges a map upside down | |
 | `is_a` | edge | none. What kind of thing the source is | |
+| `should` | node | `should`: a truth that should hold. Where it doesn't, a notice says so, and no world is ruled out. On a kind, each instance is held to it | |
 
-**Plan**
+**Structure**: what a design or a plan is made of, and decisions held open. A design has this and no plan.
 
 | Component | On | Cells | Requires |
 |---|---|---|---|
-| `part` | node | `need`, `done`, `dropped`; internal `blockers`, `scope`, `scope_depth`, `can_start`, `can_finish` | |
-| `work` | node | `blocked`, shown as Waiting | `part` |
-| `task` | node | `estimate`, `actionable` | `work` |
-| `goal`, `question`, `risk`, `unknown` | node | none of their own | `work` |
+| `part` | node | `need`, `dropped` | |
 | `decision` | node, per entity | none of its own. Fills in `chosen`, over its live options as likely as their weights say | `part`, `choice` |
+| `leaning` | node, per entity | `leaning`: the option preferred for now, `{ref}`; `leaning_why`. It narrows nothing: a formula such as `all(d in with.leaning: d.chosen = d.leaning)` looks through it | `decision` |
 | `uncertain` | node | none: it isn't anyone's choice, so what's expected averages over it | `decision` |
 | `option` | node | none of its own | `part` |
 | `part_of` | edge | none. Brings `part` to both ends | |
 | `alternative` | edge | `weight` (default `if(has(from.unknown), 0, 1)`), `ruled_out`. Brings `option` to its source and `decision` to its target | |
+| `within`, `excludes`, `knowing` | edge | none: see the guide | |
+
+**Plan**, built on structure: it adds work, and what's done and waits.
+
+| Component | On | Cells | Requires |
+|---|---|---|---|
+| `part` | node | adds `done`; internal `blockers`, `scope`, `scope_depth`, `can_start`, `can_finish` | |
+| `work` | node | `blocked`, shown as Waiting | `part` |
+| `task` | node | `estimate`, `actionable` | `work` |
+| `goal`, `question`, `risk`, `unknown` | node | none of their own | `work` |
 | `depends_on` | edge | `wait_for`: `done` (the default) or `decided`. Brings `part` to both ends | |
 
 **Schedule** adds to `part`: `start`, `finish`, `slack`, and the quiet `dates`; internal `latest_start` and `latest_finish`. The whole graph has `schedule`, with `plan_end`.
