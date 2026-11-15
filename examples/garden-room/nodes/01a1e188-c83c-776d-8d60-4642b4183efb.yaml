@@ -1,0 +1,10 @@
+id: 01a1e188-c83c-776d-8d60-4642b4183efb
+cells:
+  name: Kitchen fit-out
+links:
+- to: 01a1e188-c83b-756d-80d4-77d06b437415
+  components:
+  - is_a
+- to: 01a1e188-c83c-776d-8d60-4640a8608b26
+  components:
+  - realises

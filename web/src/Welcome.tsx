@@ -4,6 +4,7 @@ import { askSure } from "./Ask";
 
 const GROUPS: { title: string; group: string; about: string }[] = [
   { title: "Plans", group: "plan", about: "Work, decisions held open, and what can safely start" },
+  { title: "Designs", group: "design", about: "Something designed coarse to fine: what each layer has realised so far, and what's still only an idea" },
   { title: "Spreadsheets", group: "sheet", about: "Numbers and formulas, including numbers that differ between worlds" },
   { title: "Uncertain numbers", group: "chance", about: "Which distribution fits which kind of thing, and what each lets you ask" },
   { title: "Reasoning", group: "reasoning", about: "What's uncertain, how likely each way is, and what's worth finding out" },

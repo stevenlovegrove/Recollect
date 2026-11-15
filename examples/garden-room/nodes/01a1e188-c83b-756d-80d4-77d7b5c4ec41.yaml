@@ -1,0 +1,15 @@
+id: 01a1e188-c83b-756d-80d4-77d7b5c4ec41
+components:
+- decision
+- leaning
+- notes
+cells:
+  body: Decides the cost, how bright it is, and whether we need planning permission.
+  leaning:
+    ref: 01a1e188-c83b-756d-80d4-77d88b4afc19
+  leaning_why: cheaper, and it fits within permitted development
+  name: Which roof over the garden room?
+links:
+- to: 01a1e188-c83b-756d-80d4-77d526aaf9b7
+  components:
+  - part_of

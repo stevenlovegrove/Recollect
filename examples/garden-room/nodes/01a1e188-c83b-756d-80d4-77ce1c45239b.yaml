@@ -1,0 +1,10 @@
+id: 01a1e188-c83b-756d-80d4-77ce1c45239b
+components:
+- notes
+- should
+cells:
+  body: Somewhere we want in the house, as we'd describe it to the architect.
+  layer: brief
+  name: Space
+formulas:
+  should: count(self.in.realises) > 0

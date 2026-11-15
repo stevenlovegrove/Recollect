@@ -143,6 +143,20 @@ fn the_trip_budget_is_exact_with_its_choices_open() {
 }
 
 #[test]
+fn the_garden_room_holds_its_roof_open_and_says_what_nothing_realises() {
+    use recollect_graph::worlds::Worldly;
+    use recollect_systems::formulas::Should;
+    let o = open("garden-room");
+    let cost: Cond<f64> = o.get::<ValueCell>("Roof cost (£)").0.0.map(|v| if let Val::Num(n) = v { *n } else { panic!("{v:?}") });
+    assert_eq!((cost.min(), cost.max()), (9000.0, 16000.0), "one cost for each roof, while the question is open");
+    // Each space is held to what Space says should be true: that something in a later layer realises it.
+    // The rooms the floor plan or the roof section draw are, and the extension as a whole isn't yet.
+    for (space, realised) in [("Kitchen", true), ("Dining area", true), ("Garden room", true), ("Utility room", true), ("Extension", false)] {
+        assert_eq!(o.get::<Should>(space), Should(Worldly::plain(Some(realised))), "{space}");
+    }
+}
+
+#[test]
 fn compound_interest_and_fibonacci_reach_their_known_values() {
     // A table's own column, worked out row by row from the one before.
     // Most rows aren't written, so they're found by where they are.

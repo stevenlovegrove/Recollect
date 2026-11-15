@@ -1,0 +1,13 @@
+id: 01a1e188-c83b-756d-80d4-77d526aaf9b7
+components:
+- notes
+cells:
+  body: Bright, looking onto the garden.
+  name: Garden room
+links:
+- to: 01a1e188-c83b-756d-80d4-77ce1c45239b
+  components:
+  - is_a
+- to: 01a1e188-c83b-756d-80d4-77d225557e8f
+  components:
+  - part_of

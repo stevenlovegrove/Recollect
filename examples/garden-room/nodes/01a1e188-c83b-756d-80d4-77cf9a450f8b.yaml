@@ -1,0 +1,7 @@
+id: 01a1e188-c83b-756d-80d4-77cf9a450f8b
+components:
+- notes
+cells:
+  body: An architect's drawing that pins a space down.
+  layer: drawings
+  name: Drawing

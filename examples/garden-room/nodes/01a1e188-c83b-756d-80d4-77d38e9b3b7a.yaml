@@ -1,0 +1,20 @@
+id: 01a1e188-c83b-756d-80d4-77d38e9b3b7a
+components:
+- notes
+cells:
+  body: Moved to the back, with an island.
+  name: Kitchen
+links:
+- to: 01a1e188-c83b-756d-80d4-77ce1c45239b
+  components:
+  - is_a
+- to: 01a1e188-c83b-756d-80d4-77d225557e8f
+  components:
+  - part_of
+- to: 01a1e188-c83b-756d-80d4-77d4bd7c1398
+  components:
+  - relates
+  cells:
+    kind:
+      ref: 01a1e188-c83b-756d-80d4-77d1d31ac2d4
+    through: a wide arch

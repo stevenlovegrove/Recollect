@@ -1,0 +1,7 @@
+id: 01a1e188-c83b-756d-80d4-77db2ad7cf07
+cells:
+  name: Blinds for the glass
+links:
+- to: 01a1e188-c83b-756d-80d4-77d99f224c70
+  components:
+  - part_of

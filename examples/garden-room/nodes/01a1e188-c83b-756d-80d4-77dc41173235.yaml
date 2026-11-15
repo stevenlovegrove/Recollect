@@ -1,0 +1,18 @@
+id: 01a1e188-c83b-756d-80d4-77dc41173235
+components:
+- value
+cells:
+  name: Roof cost (£)
+formulas:
+  value: if(chose(roof, flat), 9000, 16000)
+links:
+- to: 01a1e188-c83b-756d-80d4-77d7b5c4ec41
+  components:
+  - label
+  cells:
+    called: roof
+- to: 01a1e188-c83b-756d-80d4-77d88b4afc19
+  components:
+  - label
+  cells:
+    called: flat

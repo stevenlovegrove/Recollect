@@ -1,0 +1,10 @@
+id: 01a1e188-c83c-776d-8d60-46410c7556bb
+cells:
+  name: Roof section
+links:
+- to: 01a1e188-c83b-756d-80d4-77cf9a450f8b
+  components:
+  - is_a
+- to: 01a1e188-c83b-756d-80d4-77d526aaf9b7
+  components:
+  - realises

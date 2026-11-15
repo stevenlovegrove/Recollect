@@ -1,0 +1,16 @@
+id: 01a1e188-c83c-776d-8d60-4640a8608b26
+cells:
+  name: Ground floor plan
+links:
+- to: 01a1e188-c83b-756d-80d4-77cf9a450f8b
+  components:
+  - is_a
+- to: 01a1e188-c83b-756d-80d4-77d38e9b3b7a
+  components:
+  - realises
+- to: 01a1e188-c83b-756d-80d4-77d4bd7c1398
+  components:
+  - realises
+- to: 01a1e188-c83b-756d-80d4-77d61fe3c6a9
+  components:
+  - realises

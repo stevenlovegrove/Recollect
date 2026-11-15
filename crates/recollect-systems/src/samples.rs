@@ -6,10 +6,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use recollect_graph::{CellType, Entity, Name, On, Op, Stored};
 use serde_json::{Value, json};
 
-use crate::formulas::{AT, At, AtLeast, Called, EVIDENCE, IS_A, LABEL, OPTIONS, Options, REQUIRES, VALUE, ValueCell};
-use crate::notes::{Body, DRAWING, Drawing, NOTES};
+use crate::formulas::{AT, At, AtLeast, Called, EVIDENCE, IS_A, LABEL, OPTIONS, Options, REQUIRES, SHOULD, Should, VALUE, ValueCell};
+use crate::notes::{Body, DRAWING, Drawing, EdgeKind, FromKind, NOTES, REALISES, RELATES, RELATION, ToKind};
 use crate::plan::{DEPENDS_ON, Done, Estimate, GOAL, RISK, TASK, UNKNOWN};
-use crate::structure::{ALTERNATIVE, DECISION, EXCLUDES, KNOWING, PART_OF, UNCERTAIN, WITHIN, Weight};
+use crate::structure::{ALTERNATIVE, DECISION, EXCLUDES, KNOWING, LEANING, LeaningWhy, Leans, PART_OF, UNCERTAIN, WITHIN, Weight};
 
 pub struct Sample {
     pub name: &'static str,
@@ -25,6 +25,7 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "handbook", title: "Publishing a handbook", about: "A first plan to read: a team publishing a handbook, with one decision held open.", group: "plan", systems: &["structure", "plan", "schedule"], build: handbook },
     Sample { name: "critical-path", title: "Critical path", about: "A plain schedule with no decisions: dates go forward over the dependencies, and slack comes from following them backward.", group: "plan", systems: &["structure", "plan", "schedule"], build: critical_path },
     Sample { name: "launch", title: "A launch, give or take", about: "A plan whose estimates are guesses with a least, a likeliest and a most: what they add up to, when it's likely to end, and how likely that is to be within a fortnight.", group: "plan", systems: &["structure", "plan", "schedule"], build: launch },
+    Sample { name: "garden-room", title: "A garden room extension", about: "A design from coarse to fine: the spaces wanted in the brief, the drawings that pin them down, and the building jobs that make them, with a relation of its own, what's still only an idea in each layer, and one question held open with a leaning.", group: "design", systems: &["structure"], build: garden_room },
     Sample { name: "bus", title: "Waiting for a bus", about: "Exponential and uniform: buses that come at random against buses on a timetable, every ten minutes either way. One keeps you waiting twice as long on average.", group: "chance", systems: &[], build: bus },
     Sample { name: "bottles", title: "Filling bottles", about: "Normal: a machine that fills each bottle a little differently. How often one is short, and why a six-pack hardly ever is.", group: "chance", systems: &[], build: bottles },
     Sample { name: "sales", title: "First-year sales", about: "Lognormal: a number that grows by multiplying, so it can't go below nothing and has a long tail. Its average is above its middle, and halving is as likely as doubling.", group: "chance", systems: &[], build: sales },
@@ -607,6 +608,60 @@ fn invoice(b: &mut Build) {
     b.value("Tax rate", 0.2);
     b.formula("Tax", "subtotal * rate").label("Tax", "Subtotal", "subtotal").label("Tax", "Tax rate", "rate");
     b.formula("Total", "subtotal + tax").label("Total", "Subtotal", "subtotal").label("Total", "Tax", "tax");
+}
+
+fn garden_room(b: &mut Build) {
+    let refer = |b: &mut Build, name: &str| json!({ "ref": b.e(name).to_string() });
+    // Three kinds, one for each layer the design goes through: what's wanted, how it's drawn, and the
+    // work that builds it. Every space should be realised by something in a later layer.
+    for (kind, layer, about) in [
+        ("Space", "brief", "Somewhere we want in the house, as we'd describe it to the architect."),
+        ("Drawing", "drawings", "An architect's drawing that pins a space down."),
+        ("Job", "build", "A piece of building work a trade does on site."),
+    ] {
+        b.note(kind, about).put(kind, "layer", json!(layer));
+    }
+    b.add("Space", SHOULD).formula_on("Space", Should::NAME, "count(self.in.realises) > 0");
+    // A kind of link of the design's own, from one space to another.
+    let space = refer(b, "Space");
+    b.note("opens onto", "You can walk from one space straight into the other.")
+        .set("opens onto", RELATION, FromKind(space.clone()))
+        .set("opens onto", RELATION, ToKind(space));
+
+    b.note("Extension", "The new single-storey back of the house.");
+    for (room, about) in [
+        ("Kitchen", "Moved to the back, with an island."),
+        ("Dining area", "Room for a table of eight."),
+        ("Garden room", "Bright, looking onto the garden."),
+        ("Utility room", "Washing machine, boots and coats."),
+    ] {
+        b.note(room, about).link(room, "Space", IS_A).link(room, "Extension", PART_OF);
+    }
+    b.link("Extension", "Space", IS_A);
+    let opens = refer(b, "opens onto");
+    for (from, to, through) in [("Kitchen", "Dining area", "a wide arch"), ("Dining area", "Garden room", "bifold doors"), ("Utility room", "Kitchen", "a door")] {
+        b.link(from, to, RELATES).on_edge(from, to, EdgeKind::NAME, opens.clone()).on_edge(from, to, "through", json!(through));
+    }
+
+    // The one question still open, leaning one way for now, and what it decides.
+    let roof = "Which roof over the garden room?";
+    b.add(roof, DECISION).note(roof, "Decides the cost, how bright it is, and whether we need planning permission.").link(roof, "Garden room", PART_OF);
+    b.option("Flat roof with a lantern", roof, None).option("Pitched glass roof", roof, None);
+    b.link("Roof lantern", "Flat roof with a lantern", PART_OF).link("Blinds for the glass", "Pitched glass roof", PART_OF);
+    let flat = refer(b, "Flat roof with a lantern");
+    b.set(roof, LEANING, Leans(flat)).set(roof, LEANING, LeaningWhy("cheaper, and it fits within permitted development".to_string()));
+    b.formula("Roof cost (£)", "if(chose(roof, flat), 9000, 16000)").label("Roof cost (£)", roof, "roof").label("Roof cost (£)", "Flat roof with a lantern", "flat");
+
+    // What realises each space: two drawings so far, and two jobs that build from the floor plan. The
+    // garden room has a drawing and no job yet, and the extension as a whole has neither.
+    b.link("Ground floor plan", "Drawing", IS_A).link("Roof section", "Drawing", IS_A);
+    for room in ["Kitchen", "Dining area", "Utility room"] {
+        b.link("Ground floor plan", room, REALISES);
+    }
+    b.link("Roof section", "Garden room", REALISES);
+    for job in ["Kitchen fit-out", "Plumbing first fix"] {
+        b.link(job, "Job", IS_A).link(job, "Ground floor plan", REALISES);
+    }
 }
 
 fn trip_budget(b: &mut Build) {

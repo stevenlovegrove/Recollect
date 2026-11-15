@@ -1,0 +1,11 @@
+id: 01a1e188-c83b-756d-80d4-77d1d31ac2d4
+components:
+- notes
+- relation
+cells:
+  body: You can walk from one space straight into the other.
+  from_kind:
+    ref: 01a1e188-c83b-756d-80d4-77ce1c45239b
+  name: opens onto
+  to_kind:
+    ref: 01a1e188-c83b-756d-80d4-77ce1c45239b

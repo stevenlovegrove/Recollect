@@ -1,0 +1,7 @@
+id: 01a1e188-c83b-756d-80d4-77d06b437415
+components:
+- notes
+cells:
+  body: A piece of building work a trade does on site.
+  layer: build
+  name: Job

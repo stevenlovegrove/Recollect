@@ -1,0 +1,7 @@
+id: 01a1e188-c83b-756d-80d4-77dafae53fb9
+cells:
+  name: Roof lantern
+links:
+- to: 01a1e188-c83b-756d-80d4-77d88b4afc19
+  components:
+  - part_of
