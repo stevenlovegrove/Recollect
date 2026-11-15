@@ -85,7 +85,7 @@ type CardData = {
   kinds: string[];
   title: string;
   /** For a question whose options are drawn on it rather than as cards: each, to pin. */
-  options: { choice: string; id: string; name: string; chance: number | null; picked: boolean; possible: boolean }[];
+  options: { choice: string; id: string; name: string; chance: number | null; picked: boolean; possible: boolean; leaning: boolean }[];
   /** The names of its parts that aren't drawn as cards. */
   holds: string[];
   /** For a note with no links, which is there to be read: what it says, shown in full. */
@@ -126,14 +126,17 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
   const yours = (value?.vars ?? []).some((id) => data.ws.view!.worlds.vars.some((v) => v.id === id && !v.uncertain));
   const mark = known ? "evidence" : required || yours ? "requires" : "evidence";
   const marked = required || known;
+  // The option a decision leans towards for now: marked lightly, since leaning decides nothing.
+  const leaned = data.ws.view!.worlds.vars.some((v) => v.leaning === node.id);
   const says =
     mark === "requires"
       ? { on: "required ✓", off: "require", done: "Required", undone: "No longer required", title: marked ? "Required: only the choices that make this true, as surely as it says, count. Click to make it only a value again" : "Only a value. Click to require it of your choices, so only the ones that make it true count" }
       : { on: "known ✓", off: "known?", done: "Known", undone: "No longer known", title: marked ? "Known to be true: only the worlds, and the draws, where it is count. Click to make it only a value again" : "Only a value. Click to say it's known to be true, so only the worlds where it is count" };
   return (
     <div
-      className={["card", node.unwritten && "unwritten", isDropped(node) && "dead", out && "out", selected && "selected", recent && "recent", dim && "dim", entering && "entering", leaving && "leaving", linking && "linking"].filter(Boolean).join(" ")}
+      className={["card", node.unwritten && "unwritten", isDropped(node) && "dead", out && "out", selected && "selected", recent && "recent", dim && "dim", entering && "entering", leaving && "leaving", linking && "linking", leaned && "leaned"].filter(Boolean).join(" ")}
       style={{ borderLeftColor: nodeColor(node), width: data.note ? NOTE_W : W }}
+      title={leaned ? "What its decision leans towards for now" : undefined}
     >
       {/* Links point child → parent, and parents come first: leave from that side. */}
       <Handle type="source" position={direction === "down" ? Position.Top : Position.Left} />
@@ -176,7 +179,7 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
           {options.map((o) => (
             <button
               key={o.id}
-              className={`card-opt ${o.picked ? "picked" : ""} ${o.possible ? "" : "gone"}`}
+              className={`card-opt ${o.picked ? "picked" : ""} ${o.possible ? "" : "gone"} ${o.leaning ? "leaning" : ""}`}
               title={o.picked ? `Pinned to ${o.name}. Click to unpin` : `See everything as if it were ${o.name}`}
               onClick={(e) => {
                 e.stopPropagation();
@@ -604,7 +607,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
     const decision = (id: string) => !!ws.byId.get(id)?.components.some((c) => c.name === "decision");
     for (const asked of g.worlds.vars)
       if (asked.options.some((o) => folded.has(o.id) || (decision(asked.id) && !cards.has(o.id))))
-        out.set(asked.id, asked.options.map((o) => ({ choice: asked.id, id: o.id, name: short(o.id, o.name), chance: asked.uncertain ? o.chance : null, picked: o.picked, possible: o.possible })));
+        out.set(asked.id, asked.options.map((o) => ({ choice: asked.id, id: o.id, name: short(o.id, o.name), chance: asked.uncertain ? o.chance : null, picked: o.picked, possible: o.possible, leaning: asked.leaning === o.id })));
     return out;
   }, [g.nodes, g.worlds.vars, folded, ws.byId]);
   const cardHeight = (n: GraphNode) => nodeHeight(n) + optionsHeight(cardOptions.get(n.id) ?? []);

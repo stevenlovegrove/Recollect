@@ -188,6 +188,12 @@ pub struct VarView {
     /// The other uncertain things that would help most to find out, best first, for working this out.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub clues: Vec<ClueView>,
+    /// The option it leans towards for now, by id, if it leans.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leaning: Option<String>,
+    /// Why it leans that way.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leaning_why: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -813,7 +819,7 @@ fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap
             .collect();
         // A draw from a short list is a matter of chance by being one, as an uncertain decision is by saying so.
         let uncertain = recollect_systems::is_draw(id) || id.parse::<Entity>().is_ok_and(|e| g.has(e, UNCERTAIN));
-        views.push(VarView { id: id.clone(), name: labels.of(id), options: views_options, uncertain, sure: None, clues: Vec::new() });
+        views.push(VarView { id: id.clone(), name: labels.of(id), options: views_options, uncertain, sure: None, clues: Vec::new(), leaning: None, leaning_why: None });
     }
     for n in &narrowed {
         let id = n.id.to_string();
@@ -841,7 +847,7 @@ fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap
         } else {
             asked.push(Asked { id: id.clone(), lands });
         }
-        views.push(VarView { id: id.clone(), name: labels.of(&id), options: views_options, uncertain: g.has(n.id, UNCERTAIN), sure: None, clues: Vec::new() });
+        views.push(VarView { id: id.clone(), name: labels.of(&id), options: views_options, uncertain: g.has(n.id, UNCERTAIN), sure: None, clues: Vec::new(), leaning: None, leaning_why: None });
     }
     for group in &groups {
         let options = group.options();
@@ -867,10 +873,17 @@ fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap
         } else {
             asked.push(Asked { id: group.name.clone(), lands });
         }
-        views.push(VarView { id: group.name.clone(), name: labels.of(&group.name), options: views_options, uncertain: true, sure: None, clues: Vec::new() });
+        views.push(VarView { id: group.name.clone(), name: labels.of(&group.name), options: views_options, uncertain: true, sure: None, clues: Vec::new(), leaning: None, leaning_why: None });
     }
     views.sort_by(|a, b| a.id.cmp(&b.id));
     clues(&mut views, &asked, in_play, held);
+    for v in views.iter_mut() {
+        let Ok(d) = v.id.parse::<Entity>() else { continue };
+        if let Ok(Some(recollect_systems::structure::Leans(to))) = g.get::<recollect_systems::structure::Leans>(d) {
+            v.leaning = to.get("ref").and_then(Value::as_str).map(String::from);
+            v.leaning_why = g.get::<recollect_systems::structure::LeaningWhy>(d).ok().flatten().map(|w| w.0).filter(|w| !w.is_empty());
+        }
+    }
     // Each way things could go is counted once: a variable of a draw that isn't the one in use doesn't make another.
     let at_rest = groups.iter().fold(plan::at_rest(g), |acc, group| Some(acc.map_or_else(|| group.at_rest(), |a| &a & &group.at_rest())));
     let with_applied = |mut s: World| {
@@ -1189,13 +1202,15 @@ pub struct PlanView {
 }
 
 pub fn planning(o: &Workspace, world: &World) -> Result<PlanView, String> {
-    if !o.built.names.iter().any(|n| n == "plan") {
+    // Decisions are structure's, and a design has them too. Work is only a plan's.
+    let has = |s: &str| o.built.names.iter().any(|n| n == s);
+    if !has(recollect_systems::structure::NAME) {
         return Ok(PlanView { work: vec![], decisions: vec![] });
     }
     let (copy, _) = looked_at(o.log.graph(), world);
     let g: &Graph = copy.as_ref().unwrap_or_else(|| o.log.graph());
     let labels = Labels::gather(g);
-    let work = plan::work(g, world).map_err(|e| describe_error(&e, &labels))?;
+    let work = if has(plan::NAME) { plan::work(g, world).map_err(|e| describe_error(&e, &labels))? } else { Vec::new() };
     let decisions = plan::matrices(g, world).map_err(|e| describe_error(&e, &labels))?;
     Ok(PlanView { work, decisions })
 }

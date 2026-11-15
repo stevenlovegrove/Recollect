@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { Workspace } from "./workspace";
 import { ViewIcon } from "./ViewNav";
-import { WorldPanel, useStepping } from "./views/WorldPanel";
+import { CURRENT_INTENT, WorldPanel, useStepping } from "./views/WorldPanel";
 
 /** Whether there's anything to narrow to: an open choice, or something pinned. */
 export function hasWorlds(ws: Workspace) {
@@ -16,6 +16,7 @@ function pinnedList(ws: Workspace): string[] {
     ...w.vars.flatMap((v) => v.options.filter((o) => o.picked).map((o) => `${v.name}: ${o.name}`)),
     ...w.vars.flatMap((v) => v.options.filter((o) => `!${v.id}/${o.id}` in ws.world).map((o) => `${v.name}: not ${o.name}`)),
     ...(w.quantities ?? []).map((q) => `${ws.byId.get(q.node)?.name ?? "something"} ${q.text.includes("..") ? `in ${q.text}` : `= ${q.text}`}`),
+    ...(ws.lookThrough && !ws.lookError ? [ws.lookThrough === CURRENT_INTENT ? "current intent" : `where ${ws.lookThrough}`] : []),
   ];
   return said;
 }

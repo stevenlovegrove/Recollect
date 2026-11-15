@@ -7,7 +7,7 @@
 
 use serde_json::json;
 
-use recollect_graph::{CellType, Registry, Severity, Shown};
+use recollect_graph::{CellType, Registry, Severity, Shown, cell};
 
 use crate::expr::Type;
 use crate::formulas::{self, CHOICE, Chosen, compiler};
@@ -15,6 +15,19 @@ pub use crate::plan::{ALTERNATIVE, DECISION, Dropped, EXCLUDES, KNOWING, NARROWE
 use crate::plan::{Falls, UNKNOWN, WEIGHT, decision_chosen, falls, is_live, listed, live_option, need, settled_as_it_fell, settled_on};
 
 pub const NAME: &str = "structure";
+
+/// A decision that leans one way: what's preferred for now, which isn't deciding.
+pub const LEANING: &str = "leaning";
+
+/// Which of a decision's options is preferred for now, as `{ref: handle}`. Only ever one, as `chosen`
+/// is. Leaning doesn't narrow anything: a read or a view looks at it only through a formula, such as
+/// `all(d in with.leaning: d.chosen = d.leaning)`.
+#[cell("leaning")]
+pub struct Leans(pub serde_json::Value);
+
+/// Why it leans that way, which goes with it in the files, where the log's reasons don't.
+#[cell("leaning_why")]
+pub struct LeaningWhy(pub String);
 
 /// How to use what this system gives, for an agent: see `mcp.rs` in the server.
 pub const GUIDE: &str = "\
@@ -60,6 +73,10 @@ pub fn install(reg: &mut Registry) {
     reg.edge(WITHIN, "Only the options that are part of whatever that choice lands on are options here, so this comes after it.").arranges().reversed().source_has(NARROWED).target_has(CHOICE);
     reg.edge(KNOWING, "This choice is made knowing how that turns out, so what's required of it is judged for each way that could.").arranges().reversed().source_has(DECISION);
     reg.edge(EXCLUDES, "Whatever that choice lands on isn't an option here, so this comes after it.").arranges().reversed().source_has(NARROWED).target_has(CHOICE);
+
+    reg.component(LEANING, "Leans towards one option for now, without deciding.").icon("↗").requires(DECISION).per_entity();
+    reg.cell::<Leans>(LEANING, "The option preferred for now. Name one, as {\"ref\": handle}.").validate(formulas::one_node).summary().per_entity();
+    reg.cell::<LeaningWhy>(LEANING, "Why it leans that way.").initial(json!("")).per_entity();
 
     checks(reg);
     reg.system(&was);
@@ -123,5 +140,16 @@ fn checks(reg: &mut Registry) {
             }
         }
         Ok(out)
+    });
+
+
+    reg.check(LEANING, "leaning_must_be_a_live_option", Notice, |cx| {
+        let Some(Leans(v)) = cx.own::<Leans>()? else { return Ok(vec![]) };
+        let Ok(crate::expr::Val::Ref(o)) = serde_json::from_value::<crate::expr::Val>(v) else { return Ok(vec![]) };
+        let ok = match cx.incoming(ALTERNATIVE).into_iter().find(|(x, _)| *x == o) {
+            Some((x, edge)) => live_option(cx, x, edge)?,
+            None => listed(cx)?.contains(&o),
+        };
+        Ok(if ok { vec![] } else { vec![format!("leans towards {o}, which isn't a live option of it")] })
     });
 }

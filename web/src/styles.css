@@ -4198,3 +4198,37 @@ button.icon.act.revert:hover {
 .link-notice button.primary {
   margin-left: 6px;
 }
+
+/* A decision leaning one way: preferred for now, not decided. */
+.leaning {
+  color: var(--accent);
+  font-style: italic;
+}
+.card-opt.leaning {
+  border-style: dashed;
+  border-color: var(--accent);
+}
+
+/* A formula to look through, above the choices. */
+.look-through {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+.look-through input {
+  flex: 1 1 14em;
+  min-width: 0;
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.look-through input.bad {
+  border-color: var(--danger, #c33);
+}
+.look-through .error {
+  flex-basis: 100%;
+}
+.card.leaned {
+  outline: 1px dashed var(--accent);
+  outline-offset: 2px;
+}

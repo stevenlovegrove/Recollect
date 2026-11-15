@@ -58,7 +58,7 @@ export function WorldPanel({ ws, onSelect, summary, steps }: { ws: Workspace; on
   const g = ws.view!;
   const w = g.worlds;
   const quantities = w.quantities ?? [];
-  const pinned = Object.keys(w.picks).length + quantities.length + Object.keys(ws.world).filter((k) => k.startsWith("!")).length;
+  const pinned = Object.keys(w.picks).length + quantities.length + Object.keys(ws.world).filter((k) => k.startsWith("!")).length + (ws.lookThrough ? 1 : 0);
   // What it all means, for whoever asks.
   const [help, setHelp] = useState(false);
   // Each world is asked for by where it comes, so there's no limit to how far stepping goes.
@@ -69,7 +69,7 @@ export function WorldPanel({ ws, onSelect, summary, steps }: { ws: Workspace; on
     const n = stepping?.total ?? total;
     if (!n || n < BigInt(1)) return;
     const at = stepping ? (stepping.at + BigInt(by) + n) % n : by > 0 ? BigInt(0) : n - BigInt(1);
-    const found = await api.worldAt(base, at.toString());
+    const found = await api.worldAt(base, at.toString(), ws.lookThrough || undefined);
     if (!found) return;
     // What's ruled out, and quantities pinned, stay as they were: the worlds stepped through respect them.
     const next = { ...found, ...Object.fromEntries(Object.entries(base).filter(([k]) => k.startsWith("!") || k.startsWith("="))) };
@@ -121,6 +121,7 @@ export function WorldPanel({ ws, onSelect, summary, steps }: { ws: Workspace; on
             onClick={() => {
               setStepping(null);
               ws.setWorld({});
+              ws.setLookThrough("");
             }}
           >
             ⟲
@@ -128,6 +129,7 @@ export function WorldPanel({ ws, onSelect, summary, steps }: { ws: Workspace; on
         </span>
         {summary}
       </div>
+      <LookThrough ws={ws} />
       {quantities.length > 0 && (
         <div className="world-pins">
           {quantities.map((q) => (
@@ -392,5 +394,51 @@ function WorthFindingOut({ ws, onSelect, help }: { ws: ViewProps["ws"]; onSelect
         ))}
       </ol>
     </section>
+  );
+}
+
+/** What a view leans towards: every decision that leans landing where it leans. */
+export const CURRENT_INTENT = "all(d in with.leaning: d.chosen = d.leaning)";
+
+/**
+ * A formula to look through as well as what's pinned: only the worlds where it's true are shown, as a read
+ * with `where` does. It's typed, or one click for current intent where something leans. Nothing is saved.
+ */
+function LookThrough({ ws }: { ws: Workspace }) {
+  const [text, setText] = useState(ws.lookThrough);
+  useEffect(() => setText(ws.lookThrough), [ws.lookThrough]);
+  const leans = ws.view!.worlds.vars.some((v) => v.leaning);
+  const set = (f: string) => ws.setLookThrough(f.trim());
+  return (
+    <div className="look-through">
+      <label className="small muted" htmlFor="look-through">
+        Look only where
+      </label>
+      <input
+        id="look-through"
+        className={`small ${ws.lookError ? "bad" : ""}`}
+        value={text}
+        placeholder="a true-or-false formula"
+        spellCheck={false}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") set(text);
+          if (e.key === "Escape") setText(ws.lookThrough);
+        }}
+        onBlur={() => set(text)}
+        title="Only the worlds where this is true are shown, and nothing is saved. Where it can't be told, a world is kept."
+      />
+      {leans && ws.lookThrough !== CURRENT_INTENT && (
+        <button className="link small" title="Only the worlds where every decision that leans lands where it leans" onClick={() => set(CURRENT_INTENT)}>
+          current intent
+        </button>
+      )}
+      {ws.lookThrough && (
+        <button className="icon small" aria-label="Stop looking through it" onClick={() => set("")}>
+          ×
+        </button>
+      )}
+      {ws.lookError && <div className="error small">{ws.lookError}</div>}
+    </div>
   );
 }

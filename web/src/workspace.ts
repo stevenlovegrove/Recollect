@@ -22,6 +22,11 @@ export interface Workspace {
   world: World;
   pin: (choice: string, option: string | null) => void;
   setWorld: (w: World) => void;
+  /** A true-or-false formula everything on screen is narrowed by too, as `where` narrows a read. Empty for none. */
+  lookThrough: string;
+  setLookThrough: (formula: string) => void;
+  /** Why the formula looked through couldn't be, if it couldn't. Everything is shown without it then. */
+  lookError: string | null;
   /** Take back the newest change. */
   undo: () => Promise<void>;
   /** Take back the newest undo. */
@@ -62,15 +67,26 @@ export function useWorkspace(): Workspace {
   const recentTimer = useRef<number | undefined>(undefined);
   const worldRef = useRef(world);
   worldRef.current = world;
+  const [lookThrough, setLookThrough] = useState("");
+  const [lookError, setLookError] = useState<string | null>(null);
+  const lookRef = useRef(lookThrough);
+  lookRef.current = lookThrough;
   // Only the newest answer counts: clicking through worlds can overtake a slower reply.
   const asked = useRef(0);
 
   const refresh = useCallback(async () => {
     const n = ++asked.current;
     try {
-      const v = await api.view(worldRef.current);
+      // A formula that doesn't work says why, and everything is shown as if there were none.
+      let looked: string | null = null;
+      const v = await api.view(worldRef.current, lookRef.current || undefined).catch((e) => {
+        if (!lookRef.current || isNothingOpen(e)) throw e;
+        looked = e instanceof Error ? e.message : String(e);
+        return api.view(worldRef.current);
+      });
       const p = await api.plan(worldRef.current);
       if (n !== asked.current) return;
+      setLookError(looked);
       setView(v);
       setPlan(p);
       setNothingOpen(false);
@@ -113,6 +129,8 @@ export function useWorkspace(): Workspace {
       } else if (ev.type === "workspace_changed") {
         setWorld({});
         worldRef.current = {};
+        setLookThrough("");
+        lookRef.current = "";
         refresh();
         loadAvailable();
       } else {
@@ -131,7 +149,7 @@ export function useWorkspace(): Workspace {
   useEffect(() => {
     if (first.current) first.current = false;
     else refresh();
-  }, [world, refresh]);
+  }, [world, lookThrough, refresh]);
 
   // Rows nobody wrote that something reads can be looked up too, though they're not in `nodes`.
   const byId = useMemo(() => new Map([...(view?.nodes ?? []), ...(view?.unwritten ?? []), ...(view?.constants ?? [])].map((n) => [n.id, n])), [view]);
@@ -189,7 +207,7 @@ export function useWorkspace(): Workspace {
     await api.openSample(name, reset);
   }, []);
 
-  return { view, nothingOpen, byId, edgeById, plan, available, backend: be, status, error, recent, recentCells, world, pin, setWorld, undo, redo, arranging, shape, ends, partKind, info, cellInfo, refresh, apply, openSample };
+  return { view, nothingOpen, byId, edgeById, plan, available, backend: be, status, error, recent, recentCells, world, pin, setWorld, lookThrough, setLookThrough, lookError, undo, redo, arranging, shape, ends, partKind, info, cellInfo, refresh, apply, openSample };
 }
 
 /**

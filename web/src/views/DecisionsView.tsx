@@ -59,7 +59,10 @@ function DecisionCard({ m, ws, selected, onSelect, focused }: { m: Matrix; ws: W
   const safe = m.rows.filter((r) => r.is_work && r.need.always && !r.finished).length;
   const specific = m.rows.filter((r) => r.is_work && !r.need.always && !r.need.never && !r.finished).length;
   const live = m.options.filter((o) => !o.ruled_out && !o.dropped);
-  const uncertain = ws.view?.worlds.vars.find((v) => v.id === m.id)?.uncertain;
+  const variable = ws.view?.worlds.vars.find((v) => v.id === m.id);
+  const uncertain = variable?.uncertain;
+  // Leaning is what's preferred for now. It narrows nothing: a formula can look through it.
+  const leaning = variable?.leaning;
 
   return (
     <article id={`decision-${m.id}`} className={`choice-card ${focused ? "focused" : ""} ${m.chosen ? "decided" : ""}`}>
@@ -88,6 +91,11 @@ function DecisionCard({ m, ws, selected, onSelect, focused }: { m: Matrix; ws: W
                   </span>
                 ) : null;
               })()}
+              {leaning === o.id && !m.chosen && (
+                <span className="leaning small" title={variable?.leaning_why ?? "Preferred for now, without deciding"}>
+                  leaning{variable?.leaning_why ? `: ${variable.leaning_why}` : ""}
+                </span>
+              )}
               {o.ruled_out && <span className="muted small">ruled out</span>}
               {o.dropped && <span className="muted small">dropped</span>}
               <span className="opt-actions">
@@ -99,6 +107,25 @@ function DecisionCard({ m, ws, selected, onSelect, focused }: { m: Matrix; ws: W
                 {!m.chosen && !out && !o.gap && (
                   <button className="link" title={uncertain ? "Record that this is how it was" : undefined} onClick={() => setCommitting({ kind: "choose", option: o })}>
                     {uncertain ? "found out…" : "choose…"}
+                  </button>
+                )}
+                {!m.chosen && !out && !o.gap && !uncertain && (
+                  <button
+                    className="link"
+                    title={leaning === o.id ? "Stop leaning this way" : "Prefer this for now, without deciding"}
+                    onClick={async () => {
+                      if (leaning === o.id) {
+                        run([{ op: "set", id: m.id, cell: "leaning" }, { op: "set", id: m.id, cell: "leaning_why" }], "stopped leaning");
+                        return;
+                      }
+                      const why = await askWhy(`Lean towards “${o.name}” for now? Say why, if you like.`, "Lean");
+                      if (why === null) return;
+                      const ops: Parameters<Workspace["apply"]>[0] = [{ op: "set", id: m.id, cell: "leaning", value: { ref: o.id } }];
+                      ops.push(why ? { op: "set", id: m.id, cell: "leaning_why", value: why } : { op: "set", id: m.id, cell: "leaning_why" });
+                      run(ops, why || "leaning");
+                    }}
+                  >
+                    {leaning === o.id ? "stop leaning" : "lean"}
                   </button>
                 )}
                 {!m.chosen && !out && !o.gap && !o.listed && live.length > 1 && (

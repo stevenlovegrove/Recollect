@@ -2133,7 +2133,7 @@ fn a_chance(v: &Value) -> Result<(), String> {
 }
 
 /// Settling a choice is naming one node.
-fn one_node(v: &Value) -> Result<(), String> {
+pub(crate) fn one_node(v: &Value) -> Result<(), String> {
     match serde_json::from_value::<Val>(v.clone()) {
         Ok(Val::Ref(_)) => Ok(()),
         _ => Err(format!("a choice is settled by naming a node, as {{\"ref\": handle}}, not {v}")),

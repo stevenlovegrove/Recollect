@@ -276,7 +276,9 @@ fn changes_say_what_each_event_did_and_what_it_replaced_with_names() {
 fn a_read_can_ask_where_the_plan_stands() {
     let mut ws = design();
     let v = read_json(&mut ws, json!({ "plan": true }));
-    assert!(v["plan"]["decisions"].as_array().unwrap().is_empty(), "a design that isn't a plan has nothing a plan would say: {}", v["plan"]);
+    assert!(v["plan"]["work"].as_array().unwrap().is_empty(), "a design that isn't a plan has no work: {}", v["plan"]);
+    assert_eq!(v["plan"]["decisions"][0]["name"], "How is ancestry recorded?", "but it has decisions: {}", v["plan"]);
+    assert_eq!(v["plan"]["decisions"][0]["pressure"]["state"], "idle", "which hold up no work");
     let ops = json!([{ "op": "add_node", "id": "new:t", "name": "Write the header", "components": ["task"], "links": [{ "to": "By hash", "component": "part_of" }] }]);
     dispatch(&mut ws, "apply", json!({ "ops": ops }), "t").unwrap();
     let v = read_json(&mut ws, json!({ "plan": true }));
@@ -304,4 +306,34 @@ fn a_kinds_notes_are_its_own_and_not_its_instances() {
     assert_eq!(trailer["worked_out"]["layer"]["value"], "data model", "though it takes the kind's other cells");
     let found = read_json(&mut ws, json!({ "nodes": { "text": "design is about" } }));
     assert_eq!(names(&found), ["Concept"], "and searching for the kind's notes finds the kind alone");
+}
+
+#[test]
+fn a_leaning_is_data_and_current_intent_is_a_formula_over_it() {
+    let mut ws = design();
+    let (how, hash, count) = (handle(&mut ws, "How is ancestry recorded?"), handle(&mut ws, "By hash"), handle(&mut ws, "By count"));
+    let ops = json!([
+        { "op": "set", "id": how, "cell": "leaning", "value": { "ref": hash } },
+        { "op": "set", "id": how, "cell": "leaning_why", "value": "a restored device can still tell what it's missing" }
+    ]);
+    dispatch(&mut ws, "apply", json!({ "ops": ops, "why": "leaning" }), "t").unwrap();
+    let v = read_json(&mut ws, json!({ "nodes": { "ids": ["How is ancestry recorded?"] } }));
+    let d = node(&v, "How is ancestry recorded?");
+    assert!(d["components"].as_array().unwrap().contains(&json!("leaning")), "writing it gives the component: {d}");
+    assert_eq!(d["cells"]["leaning"], json!({ "ref": hash }));
+    assert_eq!(d["cells"]["leaning_why"], "a restored device can still tell what it's missing");
+
+    // Leaning narrows nothing by itself.
+    let all = read_json(&mut ws, json!({ "nodes": { "ids": ["Parent size"] }, "cells": ["value"], "worked_out": true }));
+    assert_eq!(size_cases(&all)["cases"].as_array().unwrap().len(), 2);
+    // Current intent is a formula over it.
+    let intent = read_json(&mut ws, json!({ "nodes": { "ids": ["Parent size"] }, "cells": ["value"], "worked_out": true, "where": "all(d in with.leaning: d.chosen = d.leaning)" }));
+    assert_eq!(size_cases(&intent), json!({ "value": 32.0 }), "{intent}");
+
+    // Leaning towards an option that's ruled out is worth a notice.
+    dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "set", "id": how, "cell": "leaning", "value": { "ref": count } }, { "op": "set", "from": count, "to": how, "cell": "ruled_out", "value": "too big" }] }), "t").unwrap();
+    let checks = serde_json::to_value(views::view(&ws, &World::new()).checks).unwrap();
+    assert!(checks.as_array().unwrap().iter().any(|c| c["rule"] == "leaning_must_be_a_live_option"), "{checks}");
+    let bad = dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "set", "id": how, "cell": "leaning", "value": "By hash" }] }), "t");
+    assert!(bad.is_err(), "a leaning names a node, as chosen does");
 }
