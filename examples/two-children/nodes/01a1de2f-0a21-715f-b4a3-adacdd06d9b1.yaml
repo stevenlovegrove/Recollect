@@ -1,0 +1,18 @@
+id: 01a1de2f-0a21-715f-b4a3-adacdd06d9b1
+components:
+- value
+cells:
+  name: Both are boys
+formulas:
+  value: elder.chosen.value = "boy" && younger.chosen.value = "boy"
+links:
+- to: 01a1de2f-0a21-715f-b4a3-ada9b79b9e5d
+  components:
+  - label
+  cells:
+    called: elder
+- to: 01a1de2f-0a21-715f-b4a3-adaae0558834
+  components:
+  - label
+  cells:
+    called: younger

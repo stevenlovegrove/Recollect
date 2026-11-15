@@ -1,9 +1,0 @@
-id: 01a1d83e-3778-70ff-bc18-a899953c492d
-components:
-- notes
-- value
-cells:
-  body: Nine times in ten between the two, which is a bell curve about 1,201.
-  name: Shelf
-formulas:
-  value: between(1198, 1204)

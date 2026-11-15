@@ -1,0 +1,18 @@
+id: 01a1de2f-09fd-75ed-90d7-a786c1ba9f9a
+components:
+- value
+cells:
+  name: “We are both knaves”
+formulas:
+  value: a.chosen.value = "knave" && b.chosen.value = "knave"
+links:
+- to: 01a1de2f-09fd-75ed-90d7-a784107fb873
+  components:
+  - label
+  cells:
+    called: a
+- to: 01a1de2f-09fd-75ed-90d7-a785988ecd5b
+  components:
+  - label
+  cells:
+    called: b

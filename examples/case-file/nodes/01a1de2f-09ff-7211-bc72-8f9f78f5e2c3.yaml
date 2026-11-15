@@ -1,0 +1,16 @@
+id: 01a1de2f-09ff-7211-bc72-8f9f78f5e2c3
+components:
+- evidence
+- notes
+- value
+cells:
+  body: The case was locked at 9:00 and empty at 10:15, and it would take a while to find the key, open it, and get away.
+  name: Whoever took it was in the house by 10:00
+formulas:
+  value: who.chosen.arrives <= 60
+links:
+- to: 01a1de2f-09ff-7211-bc72-8f8ebd5605e5
+  components:
+  - label
+  cells:
+    called: who

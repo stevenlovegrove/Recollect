@@ -1,0 +1,10 @@
+id: 01a1de2f-09b1-706f-b682-0b271e5a2aed
+cells:
+  cooling: 0.03
+  name: A mug
+links:
+- to: 01a1de2f-09b1-706f-b682-0b25ada8dea7
+  components:
+  - alternative
+  cells:
+    weight: 2.0

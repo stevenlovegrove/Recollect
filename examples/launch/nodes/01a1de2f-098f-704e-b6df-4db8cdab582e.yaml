@@ -1,0 +1,13 @@
+id: 01a1de2f-098f-704e-b6df-4db8cdab582e
+components:
+- notes
+- task
+cells:
+  body: 'A three-point estimate: a least, a likeliest and a most. Its histogram leans toward the least, because the most is further from the likeliest than the least is.'
+  name: Design the pages
+formulas:
+  estimate: triangular(3, 4, 8)
+links:
+- to: 01a1de2f-098f-704e-b6df-4db6da52c455
+  components:
+  - part_of

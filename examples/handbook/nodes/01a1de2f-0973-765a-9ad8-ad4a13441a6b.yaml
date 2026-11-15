@@ -1,0 +1,10 @@
+id: 01a1de2f-0973-765a-9ad8-ad4a13441a6b
+components:
+- notes
+cells:
+  body: An option. It shares the layout with the booklet, then takes five days to tag, so it's finished after seven.
+  name: As a PDF
+links:
+- to: 01a1de2f-0973-765a-9ad8-ad4808e100b3
+  components:
+  - alternative

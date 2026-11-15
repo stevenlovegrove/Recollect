@@ -1,0 +1,13 @@
+id: 01a1de2f-09c3-7183-8d05-b31ee320b6ea
+components:
+- value
+cells:
+  name: First roll
+formulas:
+  value: integers(1, die.chosen.sides)
+links:
+- to: 01a1de2f-09c3-7183-8d05-b31ac68ab7f6
+  components:
+  - label
+  cells:
+    called: die

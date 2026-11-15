@@ -1,0 +1,20 @@
+id: 01a1de2f-09d4-775c-bf6f-a8fc75709ba7
+components:
+- notes
+- value
+cells:
+  body: How much room there is. A bell curve, exactly, because the two measurements share nothing.
+  name: Clearance
+formulas:
+  value: alcove - shelf
+links:
+- to: 01a1de2f-09d4-775c-bf6f-a8faa56ac4e1
+  components:
+  - label
+  cells:
+    called: alcove
+- to: 01a1de2f-09d4-775c-bf6f-a8fb5b822868
+  components:
+  - label
+  cells:
+    called: shelf

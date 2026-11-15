@@ -1,0 +1,13 @@
+id: 01a1de2f-09ff-7211-bc72-8f98e0fd2ba7
+components:
+- notes
+cells:
+  body: The garage says he collected the car on Friday.
+  minutes: 10
+  name: By car, 10 minutes
+links:
+- to: 01a1de2f-09ff-7211-bc72-8f961f679650
+  components:
+  - alternative
+  cells:
+    weight: 1.0

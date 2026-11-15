@@ -1,0 +1,10 @@
+id: 01a1de2f-09e6-7295-aeb7-7aab265ae57d
+components:
+- value
+cells:
+  name: Add 500
+  value: 500.0
+links:
+- to: 01a1de2f-09e6-7295-aeb7-7aa9e0b523d1
+  components:
+  - alternative

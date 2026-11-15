@@ -1,3 +1,3 @@
 name = "The positive test"
 about = "A positive result from a test that's 90% accurate: how likely is it that you have the condition?"
-systems = ["plan"]
+systems = ["structure"]

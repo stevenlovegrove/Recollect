@@ -1,9 +1,0 @@
-id: 01a1d792-7c9f-7452-9fb2-85acfd3ba44f
-components:
-- notes
-- value
-cells:
-  body: A matter of chance with two answers, three times in ten. It's a short list, so it's held exactly, as an uncertain decision is, and it can be pinned in the bar at the top.
-  name: The review asks for changes
-formulas:
-  value: bernoulli(0.3)

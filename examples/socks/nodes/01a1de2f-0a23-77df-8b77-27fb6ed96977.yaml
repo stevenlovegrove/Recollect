@@ -1,0 +1,9 @@
+id: 01a1de2f-0a23-77df-8b77-27fb6ed96977
+cells:
+  name: 4 pairs
+links:
+- to: 01a1de2f-0a23-77df-8b77-27f83fd56fc7
+  components:
+  - alternative
+  cells:
+    weight: 1.0

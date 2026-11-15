@@ -1,0 +1,18 @@
+id: 01a1de2f-09d6-77dc-972a-a5a19b3d328a
+components:
+- value
+cells:
+  name: Gears
+formulas:
+  value: quantity * price
+links:
+- to: 01a1de2f-09d6-77dc-972a-a59fa465a7e1
+  components:
+  - label
+  cells:
+    called: quantity
+- to: 01a1de2f-09d6-77dc-972a-a5a0784cbad0
+  components:
+  - label
+  cells:
+    called: price

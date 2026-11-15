@@ -1,0 +1,15 @@
+id: 01a1de2f-09b1-706f-b682-0b31b4436b7a
+components:
+- notes
+- value
+cells:
+  body: 'Exact, and misleading: it''s in a gap between humps.'
+  name: Average minutes ago
+formulas:
+  value: mean(t)
+links:
+- to: 01a1de2f-09b1-706f-b682-0b2cc4255929
+  components:
+  - label
+  cells:
+    called: t

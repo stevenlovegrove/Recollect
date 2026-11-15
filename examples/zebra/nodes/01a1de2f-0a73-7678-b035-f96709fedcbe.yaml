@@ -1,0 +1,7 @@
+id: 01a1de2f-0a73-7678-b035-f96709fedcbe
+components:
+- value
+cells:
+  name: The Norwegian lives next to the blue house
+formulas:
+  value: abs(Nationality[Norwegian].chosen.value - Colour[Blue].chosen.value) = 1

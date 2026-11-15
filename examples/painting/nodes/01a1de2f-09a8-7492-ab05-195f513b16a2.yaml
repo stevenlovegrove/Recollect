@@ -1,0 +1,9 @@
+id: 01a1de2f-09a8-7492-ab05-195f513b16a2
+components:
+- notes
+- value
+cells:
+  body: 'Filling and sanding: probably two hours, and five if the walls are worse than they look.'
+  name: Prepare the walls
+formulas:
+  value: triangular(1, 2, 5)

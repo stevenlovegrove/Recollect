@@ -1,0 +1,20 @@
+id: 01a1de2f-0a0b-7337-addb-b255bcaa7d3a
+components:
+- notes
+- value
+cells:
+  body: A six eleven times in thirty-six, and a one only once.
+  name: The higher of the two
+formulas:
+  value: max(a, b)
+links:
+- to: 01a1de2f-0a0b-7337-addb-b250272e2498
+  components:
+  - label
+  cells:
+    called: a
+- to: 01a1de2f-0a0b-7337-addb-b251bf91657d
+  components:
+  - label
+  cells:
+    called: b

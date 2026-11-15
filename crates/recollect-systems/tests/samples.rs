@@ -71,6 +71,29 @@ fn solutions(o: &Opened, limit: usize) -> (Bool, Vec<Var>, Vec<BTreeMap<String, 
 }
 
 #[test]
+fn every_sample_says_the_systems_it_uses_and_no_others() {
+    let mut wrong = Vec::new();
+    for s in SAMPLES {
+        let ops = ops_of(s);
+        let mut components = Vec::new();
+        let mut cells = Vec::new();
+        for op in &ops {
+            match op {
+                recollect_graph::Op::Add { component, .. } | recollect_graph::Op::Link { component, .. } => components.push(component.as_str()),
+                recollect_graph::Op::Set { cell, to: Some(_), .. } => cells.push(cell.as_str()),
+                _ => {}
+            }
+        }
+        let needed = recollect_systems::needed(components, cells);
+        let said: Vec<String> = s.systems.iter().map(|n| n.to_string()).collect();
+        if said != needed {
+            wrong.push(format!("{}: says {said:?}, uses {needed:?}", s.name));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
 fn every_sample_is_there_and_is_what_its_generator_makes() {
     for s in SAMPLES {
         let o = open(s.name);

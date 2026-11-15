@@ -1,0 +1,9 @@
+id: 01a1de2f-09a4-7308-8c11-ea362aef01c8
+components:
+- notes
+- value
+cells:
+  body: 95% of the time.
+  name: Train on time
+formulas:
+  value: bernoulli(0.95)

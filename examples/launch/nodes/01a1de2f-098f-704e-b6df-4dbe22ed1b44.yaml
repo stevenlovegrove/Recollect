@@ -1,0 +1,15 @@
+id: 01a1de2f-098f-704e-b6df-4dbe22ed1b44
+components:
+- notes
+- value
+cells:
+  body: True in some draws and false in others, so what it says is how likely. It was read from draws, and says so.
+  name: Done within a fortnight
+formulas:
+  value: end <= 14
+links:
+- to: 01a1de2f-098f-704e-b6df-4dbdce596ab0
+  components:
+  - label
+  cells:
+    called: end

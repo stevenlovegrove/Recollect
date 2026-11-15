@@ -1,0 +1,25 @@
+id: 01a1de2f-09ab-7566-b570-549df495a28f
+components:
+- notes
+- value
+cells:
+  body: However you go.
+  name: Journey
+formulas:
+  value: if(way.chosen.value = "Over the bridge", bridge, ring)
+links:
+- to: 01a1de2f-09ab-7566-b570-54990f5816ae
+  components:
+  - label
+  cells:
+    called: bridge
+- to: 01a1de2f-09ab-7566-b570-549aaba4a435
+  components:
+  - label
+  cells:
+    called: ring
+- to: 01a1de2f-09ab-7566-b570-549c7b66c09b
+  components:
+  - label
+  cells:
+    called: way

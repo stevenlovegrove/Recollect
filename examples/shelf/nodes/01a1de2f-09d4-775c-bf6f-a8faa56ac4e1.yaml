@@ -1,0 +1,9 @@
+id: 01a1de2f-09d4-775c-bf6f-a8faa56ac4e1
+components:
+- notes
+- value
+cells:
+  body: The width of the gap, in millimetres, as well as the tape could say.
+  name: Alcove
+formulas:
+  value: normal(1205, 2)

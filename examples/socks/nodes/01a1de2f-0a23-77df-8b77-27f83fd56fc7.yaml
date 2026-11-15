@@ -1,0 +1,6 @@
+id: 01a1de2f-0a23-77df-8b77-27f83fd56fc7
+components:
+- decision
+- uncertain
+cells:
+  name: How many pairs went in?

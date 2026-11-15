@@ -1,0 +1,18 @@
+id: 01a1de2f-09d6-77dc-972a-a59e1591c590
+components:
+- value
+cells:
+  name: Subtotal
+formulas:
+  value: sum(line)
+links:
+- to: 01a1de2f-09d6-77dc-972a-a59da01bceca
+  components:
+  - label
+  cells:
+    called: line
+- to: 01a1de2f-09d6-77dc-972a-a5a19b3d328a
+  components:
+  - label
+  cells:
+    called: line

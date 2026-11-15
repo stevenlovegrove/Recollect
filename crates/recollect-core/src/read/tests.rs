@@ -245,9 +245,11 @@ fn the_overview_says_the_workspaces_own_words_first() {
     assert_eq!(kinds[0]["gives"], json!(["body", "layer"]));
 
     let systems: Vec<&str> = o["systems"].as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
-    assert!(systems.contains(&"notes") && systems.contains(&"plan"), "{systems:?}");
-    let short = serde_json::to_string(&o["systems"]).unwrap().len();
-    let full = serde_json::to_string(&serde_json::to_value(views::overview(&ws, true, &[])).unwrap()["systems"]).unwrap().len();
+    assert_eq!(systems, ["notes", "formulas", "structure"], "a design with decisions and no work isn't a plan");
+    // The guides are the same either way: it's what's said about each component that's shorter.
+    let components = |o: &Value| o["systems"].as_array().unwrap().iter().map(|s| serde_json::to_string(&s["components"]).unwrap().len()).sum::<usize>();
+    let short = components(&o);
+    let full = components(&serde_json::to_value(views::overview(&ws, true, &[])).unwrap());
     assert!(short * 2 < full, "one line for each component unless everything's asked for: {short} and {full}");
 }
 
@@ -274,6 +276,19 @@ fn changes_say_what_each_event_did_and_what_it_replaced_with_names() {
 fn a_read_can_ask_where_the_plan_stands() {
     let mut ws = design();
     let v = read_json(&mut ws, json!({ "plan": true }));
+    assert!(v["plan"]["decisions"].as_array().unwrap().is_empty(), "a design that isn't a plan has nothing a plan would say: {}", v["plan"]);
+    let ops = json!([{ "op": "add_node", "id": "new:t", "name": "Write the header", "components": ["task"], "links": [{ "to": "By hash", "component": "part_of" }] }]);
+    dispatch(&mut ws, "apply", json!({ "ops": ops }), "t").unwrap();
+    let v = read_json(&mut ws, json!({ "plan": true }));
     assert!(v["nodes"].as_array().unwrap().is_empty(), "the plan alone, when no nodes are asked for");
     assert_eq!(v["plan"]["decisions"][0]["name"], "How is ancestry recorded?", "{}", v["plan"]);
+}
+
+#[test]
+fn a_component_a_nodes_own_link_gives_it_isnt_written_too() {
+    let mut ws = design();
+    let ops = json!([{ "op": "add_node", "id": "new:p", "name": "Parents", "components": ["part", "notes"], "links": [{ "to": "Header", "component": "part_of" }] }]);
+    dispatch(&mut ws, "apply", json!({ "ops": ops }), "t").unwrap();
+    let v = read_json(&mut ws, json!({ "nodes": { "ids": ["Parents"] } }));
+    assert_eq!(node(&v, "Parents")["components"], json!(["notes"]), "part_of gives part, so it isn't written: {v}");
 }

@@ -1,0 +1,15 @@
+id: 01a1de2f-09ab-7566-b570-549b3a1ec238
+components:
+- notes
+- value
+cells:
+  body: 'About its average, give or take two minutes. Hardly ever: the average is between the two humps, where almost no journeys are.'
+  name: Within two minutes of 30
+formulas:
+  value: abs(b - 30) <= 2
+links:
+- to: 01a1de2f-09ab-7566-b570-54990f5816ae
+  components:
+  - label
+  cells:
+    called: b

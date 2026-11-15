@@ -1,0 +1,15 @@
+id: 01a1de2f-09d4-775c-bf6f-a8fd3c6ca732
+components:
+- notes
+- value
+cells:
+  body: How likely there's any room at all. Exact, because clearance has a law.
+  name: It fits
+formulas:
+  value: clearance > 0
+links:
+- to: 01a1de2f-09d4-775c-bf6f-a8fc75709ba7
+  components:
+  - label
+  cells:
+    called: clearance

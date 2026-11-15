@@ -1,3 +1,3 @@
 name = "Monty Hall"
 about = "Three doors and one car: should you switch after Monty opens a door?"
-systems = ["plan"]
+systems = ["structure"]

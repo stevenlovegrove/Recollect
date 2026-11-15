@@ -1,0 +1,17 @@
+id: 01a1de2f-09dc-721c-b1e9-4e3daa31bd3d
+components:
+- notes
+cells:
+  body: A mile costs the electricity it takes. Each says its own kWh a mile.
+  name: Electric car
+formulas:
+  cost_per_mile: power * self.kwh_per_mile
+links:
+- to: 01a1de2f-09dc-721c-b1e9-4e3bf0db21a2
+  components:
+  - label
+  cells:
+    called: power
+- to: 01a1de2f-09dc-721c-b1e9-4e3fcd27821a
+  components:
+  - is_a

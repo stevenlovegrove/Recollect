@@ -1,0 +1,16 @@
+id: 01a1de2f-09ff-7211-bc72-8fa0fe829b3e
+components:
+- evidence
+- notes
+- value
+cells:
+  body: Fresh mud on the study carpet, from the garden door to the case.
+  name: They came in from the garden
+formulas:
+  value: who.chosen.from_garden
+links:
+- to: 01a1de2f-09ff-7211-bc72-8f8ebd5605e5
+  components:
+  - label
+  cells:
+    called: who

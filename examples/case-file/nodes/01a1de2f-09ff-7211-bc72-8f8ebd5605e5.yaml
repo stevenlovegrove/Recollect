@@ -1,0 +1,6 @@
+id: 01a1de2f-09ff-7211-bc72-8f8ebd5605e5
+components:
+- decision
+- uncertain
+cells:
+  name: Who took it?

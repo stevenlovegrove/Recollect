@@ -1,0 +1,9 @@
+id: 01a1de2f-09a8-7492-ab05-196289b4db5f
+components:
+- notes
+- value
+cells:
+  body: Quicker than the first, unless the first shows through.
+  name: Second coat
+formulas:
+  value: triangular(1.5, 2, 4)

@@ -1,0 +1,20 @@
+id: 01a1de2f-09d0-74b4-9623-6d24baf35bc6
+components:
+- notes
+- value
+cells:
+  body: 'Always, for the fixed price: at most 4,200 and 300. For the others it''s a chance.'
+  name: Within budget
+formulas:
+  value: cost <= budget
+links:
+- to: 01a1de2f-09d0-74b4-9623-6d21bb3639ac
+  components:
+  - label
+  cells:
+    called: cost
+- to: 01a1de2f-09d0-74b4-9623-6d235ed54edd
+  components:
+  - label
+  cells:
+    called: budget

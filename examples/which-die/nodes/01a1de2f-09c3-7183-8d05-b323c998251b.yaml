@@ -1,0 +1,16 @@
+id: 01a1de2f-09c3-7183-8d05-b323c998251b
+components:
+- evidence
+- notes
+- value
+cells:
+  body: All you're told. It rules out the d6 entirely, and most of what a d12 rolls three times.
+  name: The highest roll was a 7
+formulas:
+  value: h = 7
+links:
+- to: 01a1de2f-09c3-7183-8d05-b322231a23ea
+  components:
+  - label
+  cells:
+    called: h

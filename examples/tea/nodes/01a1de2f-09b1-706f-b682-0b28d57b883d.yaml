@@ -1,0 +1,10 @@
+id: 01a1de2f-09b1-706f-b682-0b28d57b883d
+cells:
+  cooling: 0.015
+  name: A flask cup
+links:
+- to: 01a1de2f-09b1-706f-b682-0b25ada8dea7
+  components:
+  - alternative
+  cells:
+    weight: 1.0

@@ -1,0 +1,18 @@
+id: 01a1de2f-09e9-75c6-a3bb-82ed57f16b1f
+components:
+- value
+cells:
+  name: Western Australia ≠ Northern Territory
+formulas:
+  value: a.chosen != b.chosen
+links:
+- to: 01a1de2f-09e9-75c6-a3bb-82e55619b2e6
+  components:
+  - label
+  cells:
+    called: a
+- to: 01a1de2f-09e9-75c6-a3bb-82e64b25c5df
+  components:
+  - label
+  cells:
+    called: b

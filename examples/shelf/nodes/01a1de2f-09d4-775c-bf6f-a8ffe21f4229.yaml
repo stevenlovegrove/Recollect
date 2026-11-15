@@ -1,0 +1,15 @@
+id: 01a1de2f-09d4-775c-bf6f-a8ffe21f4229
+components:
+- notes
+- value
+cells:
+  body: Exactly nothing. A cell read twice is the same draw both times, which a histogram of each could never say.
+  name: Clearance less itself
+formulas:
+  value: clearance - clearance
+links:
+- to: 01a1de2f-09d4-775c-bf6f-a8fc75709ba7
+  components:
+  - label
+  cells:
+    called: clearance

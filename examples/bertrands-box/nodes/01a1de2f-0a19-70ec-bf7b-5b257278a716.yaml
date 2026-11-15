@@ -1,0 +1,6 @@
+id: 01a1de2f-0a19-70ec-bf7b-5b257278a716
+components:
+- decision
+- uncertain
+cells:
+  name: Which box?

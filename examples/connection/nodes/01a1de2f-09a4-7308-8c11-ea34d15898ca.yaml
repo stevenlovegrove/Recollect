@@ -1,0 +1,9 @@
+id: 01a1de2f-09a4-7308-8c11-ea34d15898ca
+components:
+- notes
+- value
+cells:
+  body: On time 85% of the time.
+  name: First flight on time
+formulas:
+  value: bernoulli(0.85)

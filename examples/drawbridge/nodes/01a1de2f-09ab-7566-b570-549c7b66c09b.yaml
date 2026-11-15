@@ -1,0 +1,11 @@
+id: 01a1de2f-09ab-7566-b570-549c7b66c09b
+components:
+- decision
+- notes
+- options
+cells:
+  body: Yours to choose. Link it to The bridge is up by knowing, to say you can see the bridge before you set off.
+  name: Which way?
+  options:
+  - Over the bridge
+  - Round the ring road

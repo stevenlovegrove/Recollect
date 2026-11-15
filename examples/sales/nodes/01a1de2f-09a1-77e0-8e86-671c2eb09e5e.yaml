@@ -1,0 +1,15 @@
+id: 01a1de2f-09a1-77e0-8e86-671c2eb09e5e
+components:
+- notes
+- value
+cells:
+  body: Above the middle. A lognormal's long tail upwards pulls its average up.
+  name: Average sales
+formulas:
+  value: mean(s)
+links:
+- to: 01a1de2f-09a1-77e0-8e86-671bb7c0ca70
+  components:
+  - label
+  cells:
+    called: s

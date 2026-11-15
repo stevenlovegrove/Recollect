@@ -1,0 +1,23 @@
+id: 01a1de2f-09dc-721c-b1e9-4e484a3e0462
+components:
+- value
+cells:
+  name: Yearly cost
+formulas:
+  value: car.chosen.price * (1 - 0.85 ^ years) / years + miles.chosen.value * car.chosen.cost_per_mile + car.chosen.insurance
+links:
+- to: 01a1de2f-09dc-721c-b1e9-4e35f9c0fd67
+  components:
+  - label
+  cells:
+    called: years
+- to: 01a1de2f-09dc-721c-b1e9-4e36df025fec
+  components:
+  - label
+  cells:
+    called: miles
+- to: 01a1de2f-09dc-721c-b1e9-4e3ed5888f85
+  components:
+  - label
+  cells:
+    called: car

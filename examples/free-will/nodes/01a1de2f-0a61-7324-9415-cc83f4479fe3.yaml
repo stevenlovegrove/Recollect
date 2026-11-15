@@ -1,0 +1,12 @@
+id: 01a1de2f-0a61-7324-9415-cc83f4479fe3
+components:
+- decision
+- notes
+- options
+- uncertain
+cells:
+  body: A premise. You can't change what happened before you were born, or what the laws of nature are.
+  name: The past and the laws of nature aren't up to you
+  options:
+  - accept
+  - reject

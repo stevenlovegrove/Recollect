@@ -1,0 +1,10 @@
+id: 01a1de2f-09d9-72a9-9dc0-a2deb96a5bd7
+components:
+- value
+cells:
+  name: Hotel
+  value: 150.0
+links:
+- to: 01a1de2f-09d9-72a9-9dc0-a2dc17cbbaa0
+  components:
+  - alternative

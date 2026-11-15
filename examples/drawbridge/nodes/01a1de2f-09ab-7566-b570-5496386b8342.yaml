@@ -1,0 +1,9 @@
+id: 01a1de2f-09ab-7566-b570-5496386b8342
+components:
+- notes
+- value
+cells:
+  body: 'Minutes, give or take traffic. A bell curve: the sum of lots of small delays.'
+  name: Drive to the river
+formulas:
+  value: normal(15, 1.5)

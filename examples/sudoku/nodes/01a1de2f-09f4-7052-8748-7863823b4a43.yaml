@@ -1,0 +1,69 @@
+id: 01a1de2f-09f4-7052-8748-7863823b4a43
+components:
+- requires
+- value
+cells:
+  name: A grid
+formulas:
+  value: all(constraint)
+links:
+- to: 01a1de2f-09f4-7052-8748-7876ac5183a9
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1de2f-09f4-7052-8748-78772d592919
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1de2f-09f4-7052-8748-787825ed58c8
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1de2f-09f4-7052-8748-7879143874d9
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1de2f-09f4-7052-8748-787a37ddf598
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1de2f-09f4-7052-8748-787b1bd3ea3c
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1de2f-09f4-7052-8748-787ccc7b1819
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1de2f-09f4-7052-8748-787dad52911e
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1de2f-09f4-7052-8748-787e2ea270a8
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1de2f-09f4-7052-8748-787f25aae3b6
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1de2f-09f4-7052-8748-7880225410de
+  components:
+  - label
+  cells:
+    called: constraint
+- to: 01a1de2f-09f4-7052-8748-7881360ee47b
+  components:
+  - label
+  cells:
+    called: constraint

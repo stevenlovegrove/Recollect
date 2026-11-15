@@ -169,15 +169,15 @@ fn a_workspace_takes_on_a_system_when_it_first_uses_one_and_keeps_its_history() 
     dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "add_node", "id": "new:a", "name": "An idea" }] }), "t").unwrap();
     assert_eq!(systems(&ws), Vec::<&str>::new(), "a note needs nothing more");
 
-    // A decision is the plan system's.
+    // A decision is structure's, and isn't work.
     dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "add_node", "id": "new:d", "name": "Which way?", "components": ["decision"] }] }), "t").unwrap();
-    assert_eq!(systems(&ws), vec!["plan"]);
+    assert_eq!(systems(&ws), vec!["structure"]);
     let written = ws.take_writes();
-    assert!(written.write[CONFIG].contains("plan"), "{}", written.write[CONFIG]);
+    assert!(written.write[CONFIG].contains("structure"), "{}", written.write[CONFIG]);
 
-    // A task is dates as well.
+    // A task is a plan's, and dates as well.
     dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "add_node", "id": "new:t", "name": "Do it", "components": ["task"] }] }), "t").unwrap();
-    assert_eq!(systems(&ws), vec!["plan", "schedule"]);
+    assert_eq!(systems(&ws), vec!["structure", "plan", "schedule"]);
     let v = view(&mut ws);
     let task = v["nodes"].as_array().unwrap().iter().find(|n| n["name"] == "Do it").unwrap();
     assert!(task["cells"]["finish"].is_object(), "it has dates: {task}");
@@ -185,7 +185,7 @@ fn a_workspace_takes_on_a_system_when_it_first_uses_one_and_keeps_its_history() 
     // Nothing that happened before is lost, and taking the task back doesn't take the system with it.
     assert_eq!(v["last_seq"], 2);
     dispatch(&mut ws, "undo", json!({}), "t").unwrap();
-    assert_eq!(systems(&ws), vec!["plan", "schedule"]);
+    assert_eq!(systems(&ws), vec!["structure", "plan", "schedule"]);
     dispatch(&mut ws, "undo", json!({ "seq": 0 }), "t").unwrap();
     assert!(!view(&mut ws)["nodes"].as_array().unwrap().iter().any(|n| n["name"] == "An idea"));
 }
@@ -194,7 +194,7 @@ fn a_workspace_takes_on_a_system_when_it_first_uses_one_and_keeps_its_history() 
 fn writing_in_a_cell_of_a_system_not_yet_used_takes_it_on() {
     let mut ws = open(new_files("Mine").unwrap());
     dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "add_node", "id": "new:t", "name": "Do it", "cells": { "estimate": 3 } }] }), "t").unwrap();
-    assert_eq!(systems(&ws), vec!["plan", "schedule"]);
+    assert_eq!(systems(&ws), vec!["structure", "plan", "schedule"]);
     let v = view(&mut ws);
     let task = v["nodes"].as_array().unwrap().iter().find(|n| n["name"] == "Do it").unwrap();
     assert!(task["components"].as_array().unwrap().iter().any(|c| c["name"] == "task"), "{task}");
@@ -252,7 +252,7 @@ fn nodes_written_by_hand_bring_their_systems_with_them() {
     let node = format!("id: {id}\ncomponents:\n- task\ncells:\n  name: By hand\n");
     files.insert(format!("nodes/{id}.yaml"), node.clone());
     let mut ws = open(files);
-    assert_eq!(systems(&ws), vec!["plan", "schedule"]);
+    assert_eq!(systems(&ws), vec!["structure", "plan", "schedule"]);
     assert!(ws.take_writes().write[CONFIG].contains("schedule"));
 
     // Arriving while it's open, it needs opening again, with them.

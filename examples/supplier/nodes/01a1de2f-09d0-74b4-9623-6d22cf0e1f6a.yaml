@@ -1,0 +1,15 @@
+id: 01a1de2f-09d0-74b4-9623-6d22cf0e1f6a
+components:
+- notes
+- value
+cells:
+  body: The cost on average over what's uncertain, for each supplier. Exact for the fixed price, and read from draws for the others, which it says.
+  name: Expected cost
+formulas:
+  value: mean(cost)
+links:
+- to: 01a1de2f-09d0-74b4-9623-6d21bb3639ac
+  components:
+  - label
+  cells:
+    called: cost

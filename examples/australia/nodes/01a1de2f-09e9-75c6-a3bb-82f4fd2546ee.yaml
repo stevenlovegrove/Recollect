@@ -1,0 +1,18 @@
+id: 01a1de2f-09e9-75c6-a3bb-82f4fd2546ee
+components:
+- value
+cells:
+  name: Queensland ≠ New South Wales
+formulas:
+  value: a.chosen != b.chosen
+links:
+- to: 01a1de2f-09e9-75c6-a3bb-82e822ea5eec
+  components:
+  - label
+  cells:
+    called: a
+- to: 01a1de2f-09e9-75c6-a3bb-82e953f171b1
+  components:
+  - label
+  cells:
+    called: b

@@ -1,0 +1,23 @@
+id: 01a1de2f-09c3-7183-8d05-b322231a23ea
+components:
+- value
+cells:
+  name: Highest of the three
+formulas:
+  value: max(a, max(b, c))
+links:
+- to: 01a1de2f-09c3-7183-8d05-b31ee320b6ea
+  components:
+  - label
+  cells:
+    called: a
+- to: 01a1de2f-09c3-7183-8d05-b31fcd527610
+  components:
+  - label
+  cells:
+    called: b
+- to: 01a1de2f-09c3-7183-8d05-b3208d509171
+  components:
+  - label
+  cells:
+    called: c

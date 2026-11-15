@@ -1,0 +1,18 @@
+id: 01a1de2f-0a0f-73a0-95ad-2e176ac97806
+components:
+- value
+cells:
+  name: You win the car
+formulas:
+  value: ends = car.chosen
+links:
+- to: 01a1de2f-0a0f-73a0-95ad-2e0e3d559790
+  components:
+  - label
+  cells:
+    called: car
+- to: 01a1de2f-0a0f-73a0-95ad-2e1651574f96
+  components:
+  - label
+  cells:
+    called: ends

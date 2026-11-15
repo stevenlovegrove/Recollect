@@ -179,10 +179,23 @@ impl Resolver<'_> {
                 if let Some(name) = op.remove("name") {
                     out.push(json!({ "op": "set", "id": id, "cell": Name::NAME, "value": name }));
                 }
+                // A component one of its own links gives it, as part_of gives `part`, isn't written as well: it
+                // would only say again what the link says, and stay behind if the link went.
+                let given: Vec<String> = match op.get("links") {
+                    Some(Value::Array(links)) => links
+                        .iter()
+                        .filter_map(|l| l.get("component")?.as_str())
+                        .filter_map(|c| recollect_systems::everything().component_def(c))
+                        .flat_map(|d| d.source.clone())
+                        .collect(),
+                    _ => Vec::new(),
+                };
                 if let Some(Value::Array(components)) = op.remove("components") {
                     for c in components {
                         let c = c.as_str().ok_or("a component is its name")?.to_string();
-                        self.add(&id, &c, out);
+                        if !given.contains(&c) {
+                            self.add(&id, &c, out);
+                        }
                     }
                 }
                 if let Some(body) = op.remove("body") {

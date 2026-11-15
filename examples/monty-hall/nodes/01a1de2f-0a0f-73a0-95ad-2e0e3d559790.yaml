@@ -1,0 +1,6 @@
+id: 01a1de2f-0a0f-73a0-95ad-2e0e3d559790
+components:
+- decision
+- uncertain
+cells:
+  name: Where's the car?

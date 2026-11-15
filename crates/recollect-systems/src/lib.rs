@@ -8,6 +8,7 @@ pub mod notes;
 pub mod plan;
 pub mod samples;
 pub mod schedule;
+pub mod structure;
 pub mod view;
 
 use std::collections::{BTreeSet, HashMap};
@@ -29,6 +30,7 @@ pub struct System {
 pub const SYSTEMS: &[System] = &[
     System { name: "notes", about: "Names, notes and sources, and edges that say how ideas relate.", install: notes::install, guide: notes::GUIDE },
     System { name: "formulas", about: "Values typed in or worked out, choices, and requirements on the worlds that count.", install: formulas::install, guide: formulas::GUIDE },
+    System { name: "structure", about: "Parts and what they're part of, and decisions held open: what a design or a plan is made of.", install: structure::install, guide: structure::GUIDE },
     System { name: "plan", about: "Work, decisions held open, and what can safely start.", install: plan::install, guide: plan::GUIDE },
     System { name: "schedule", about: "Dates and slack in every world. Needs plan.", install: schedule::install, guide: schedule::GUIDE },
 ];
@@ -63,13 +65,18 @@ pub fn needed<'a>(components: impl IntoIterator<Item = &'a str>, cells: impl Int
         }
     }
     for c in cells {
-        if let Some(d) = all.owner(c).and_then(|o| all.component_def(o)) {
-            task |= d.name == plan::TASK;
-            out.insert(d.system.clone());
+        // A cell's own system, which may not be its component's: `plan` gives `done` to `part`.
+        if let Some(def) = all.cell_def(c) {
+            task |= def.component == plan::TASK;
+            out.insert(def.system.clone());
         }
     }
     if task {
         out.insert("schedule".to_string());
+    }
+    // A plan is built on structure.
+    if out.contains(plan::NAME) {
+        out.insert(structure::NAME.to_string());
     }
     SYSTEMS.iter().map(|s| s.name).filter(|n| out.contains(*n) && !ALWAYS.contains(n)).map(String::from).collect()
 }
@@ -84,6 +91,11 @@ pub fn build(names: &[String]) -> Result<Built, String> {
     if wanted.iter().any(|n| n == "schedule") && !wanted.iter().any(|n| n == "plan") {
         return Err("the schedule system needs the plan system".to_string());
     }
+    // A plan is built on structure, which comes first.
+    if wanted.iter().any(|n| n == "plan") && !wanted.iter().any(|n| n == structure::NAME) {
+        wanted.push(structure::NAME.to_string());
+    }
+    wanted.sort_by_key(|n| SYSTEMS.iter().position(|s| s.name == n).unwrap_or(usize::MAX));
     let mut reg = Registry::new();
     for n in &wanted {
         let s = SYSTEMS.iter().find(|s| s.name == n).ok_or_else(|| format!("there's no system called {n}"))?;

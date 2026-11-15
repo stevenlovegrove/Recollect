@@ -1,0 +1,25 @@
+id: 01a1de2f-09b1-706f-b682-0b2d3cbd799d
+components:
+- notes
+- value
+cells:
+  body: What it would be now, for each cup, milk, and time it was made.
+  name: Temperature now
+formulas:
+  value: 20 + (milk.chosen.starts_at - 20) * exp(-cup.chosen.cooling * t)
+links:
+- to: 01a1de2f-09b1-706f-b682-0b25ada8dea7
+  components:
+  - label
+  cells:
+    called: cup
+- to: 01a1de2f-09b1-706f-b682-0b29bfd67bf0
+  components:
+  - label
+  cells:
+    called: milk
+- to: 01a1de2f-09b1-706f-b682-0b2cc4255929
+  components:
+  - label
+  cells:
+    called: t

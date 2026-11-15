@@ -1,0 +1,9 @@
+id: 01a1de2f-09e9-75c6-a3bb-82e64b25c5df
+components:
+- options
+cells:
+  name: Northern Territory
+  options:
+  - red
+  - green
+  - blue

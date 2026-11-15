@@ -187,6 +187,9 @@ pub enum Default {
 pub struct CellDef {
     pub name: String,
     pub component: String,
+    /// The system that gives it, which needn't be the one that gives its component: `plan` adds `done`
+    /// to `structure`'s `part`.
+    pub system: String,
     pub about: String,
     /// Plumbing, which only makes sense to what reads it.
     pub internal: bool,
@@ -329,6 +332,11 @@ impl Registry {
         self
     }
 
+    /// The system saying what's being said now.
+    pub fn current_system(&self) -> &str {
+        &self.current
+    }
+
     fn define(&mut self, name: &str, place: Place, about: &str) -> &mut ComponentDef {
         let system = self.current.clone();
         self.components.entry(name.to_string()).or_insert_with(|| ComponentDef {
@@ -377,9 +385,11 @@ impl Registry {
         if let Some(existing) = self.cells.get(C::NAME) {
             assert_eq!(existing.component, component, "{} is already a cell of {}", C::NAME, existing.component);
         }
+        let system = self.current.clone();
         let def = self.cells.entry(C::NAME.to_string()).or_insert_with(|| CellDef {
             name: C::NAME.to_string(),
             component: component.to_string(),
+            system,
             about: about.to_string(),
             internal: false,
             summary: false,
@@ -425,11 +435,15 @@ impl Registry {
         let check = CheckDef { name: name.to_string(), severity };
         let cell = check.cell();
         let comp = self.components.get_mut(component).unwrap_or_else(|| panic!("{component} has to be registered before its checks"));
+        // A system installed twice, as one is when another brings it, still only checks a thing once.
+        if comp.checks.iter().any(|c| c.name == check.name) {
+            return self;
+        }
         comp.checks.push(check);
         let computed = Computed::json(&cell, move |cx| Ok(Some(serde_json::to_value(f(cx)?).expect("strings serialise"))));
         self.cells.insert(
             cell.clone(),
-            CellDef { name: cell, component: component.to_string(), about: String::new(), internal: true, summary: false, quiet: false, truth: false, per_entity: true, initial: None, default: Some(Default::Builtin(computed)), compile: None, validate: None, shown: None },
+            CellDef { name: cell, component: component.to_string(), system: self.current.clone(), about: String::new(), internal: true, summary: false, quiet: false, truth: false, per_entity: true, initial: None, default: Some(Default::Builtin(computed)), compile: None, validate: None, shown: None },
         );
         self
     }

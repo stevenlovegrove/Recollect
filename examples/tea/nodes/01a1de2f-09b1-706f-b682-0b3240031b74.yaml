@@ -1,0 +1,15 @@
+id: 01a1de2f-09b1-706f-b682-0b3240031b74
+components:
+- notes
+- value
+cells:
+  body: Only if it's the thin glass.
+  name: Made in the last half hour
+formulas:
+  value: t <= 30
+links:
+- to: 01a1de2f-09b1-706f-b682-0b2cc4255929
+  components:
+  - label
+  cells:
+    called: t

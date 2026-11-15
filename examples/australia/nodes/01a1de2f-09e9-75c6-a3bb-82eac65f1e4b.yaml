@@ -1,0 +1,9 @@
+id: 01a1de2f-09e9-75c6-a3bb-82eac65f1e4b
+components:
+- options
+cells:
+  name: Victoria
+  options:
+  - red
+  - green
+  - blue

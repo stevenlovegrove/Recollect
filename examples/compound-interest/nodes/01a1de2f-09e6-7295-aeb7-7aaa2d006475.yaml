@@ -1,0 +1,10 @@
+id: 01a1de2f-09e6-7295-aeb7-7aaa2d006475
+components:
+- value
+cells:
+  name: No top-up
+  value: 0.0
+links:
+- to: 01a1de2f-09e6-7295-aeb7-7aa9e0b523d1
+  components:
+  - alternative

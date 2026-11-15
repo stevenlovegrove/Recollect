@@ -1,0 +1,20 @@
+id: 01a1de2f-09d0-74b4-9623-6d21bb3639ac
+components:
+- notes
+- value
+cells:
+  body: The quote of whichever is chosen, plus shipping. Each answer is held as what it is.
+  name: Cost
+formulas:
+  value: supplier.chosen.quote + shipping
+links:
+- to: 01a1de2f-09d0-74b4-9623-6d1c891f2f32
+  components:
+  - label
+  cells:
+    called: supplier
+- to: 01a1de2f-09d0-74b4-9623-6d208414e8a5
+  components:
+  - label
+  cells:
+    called: shipping

@@ -1,0 +1,10 @@
+id: 01a1de2f-0a15-75f3-90d9-82fef57add43
+cells:
+  name: A false alarm
+  positive: true
+links:
+- to: 01a1de2f-0a15-75f3-90d9-82fd4237c580
+  components:
+  - alternative
+  cells:
+    weight: 5.0

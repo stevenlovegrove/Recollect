@@ -1,0 +1,30 @@
+id: 01a1de2f-0a61-7324-9415-cc89a2a2f1f5
+components:
+- notes
+- value
+cells:
+  body: 'Accepts the whole argument, and so gives up freedom: nothing we do is up to us.'
+  name: Hard determinism
+formulas:
+  value: settled.chosen.value = "accept" && past.chosen.value = "accept" && transfer.chosen.value = "accept" && free.chosen.value = "reject"
+links:
+- to: 01a1de2f-0a61-7324-9415-cc824a25d79c
+  components:
+  - label
+  cells:
+    called: settled
+- to: 01a1de2f-0a61-7324-9415-cc83f4479fe3
+  components:
+  - label
+  cells:
+    called: past
+- to: 01a1de2f-0a61-7324-9415-cc84bf969212
+  components:
+  - label
+  cells:
+    called: transfer
+- to: 01a1de2f-0a61-7324-9415-cc858bd753f4
+  components:
+  - label
+  cells:
+    called: free

@@ -1,0 +1,7 @@
+id: 01a1de2f-0a73-7678-b035-f95ee075a230
+components:
+- value
+cells:
+  name: The green house is just right of the ivory house
+formulas:
+  value: Colour[Green].chosen.value = Colour[Ivory].chosen.value + 1

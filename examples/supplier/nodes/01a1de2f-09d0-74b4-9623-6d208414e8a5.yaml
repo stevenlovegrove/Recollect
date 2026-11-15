@@ -1,0 +1,9 @@
+id: 01a1de2f-09d0-74b4-9623-6d208414e8a5
+components:
+- notes
+- value
+cells:
+  body: Anywhere from 100 to 300, and the same whoever supplies.
+  name: Shipping
+formulas:
+  value: uniform(100, 300)

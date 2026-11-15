@@ -1,0 +1,15 @@
+id: 01a1de2f-099c-763a-b251-79c69cf51d72
+components:
+- notes
+- value
+cells:
+  body: Ten minutes, twice the timetable's, though the buses come just as often.
+  name: Average wait, random
+formulas:
+  value: mean(w)
+links:
+- to: 01a1de2f-099c-763a-b251-79c3e605657a
+  components:
+  - label
+  cells:
+    called: w

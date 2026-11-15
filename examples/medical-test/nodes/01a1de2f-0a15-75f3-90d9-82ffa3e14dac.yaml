@@ -1,0 +1,10 @@
+id: 01a1de2f-0a15-75f3-90d9-82ffa3e14dac
+cells:
+  name: It's clear
+  positive: false
+links:
+- to: 01a1de2f-0a15-75f3-90d9-82fd4237c580
+  components:
+  - alternative
+  cells:
+    weight: 95.0

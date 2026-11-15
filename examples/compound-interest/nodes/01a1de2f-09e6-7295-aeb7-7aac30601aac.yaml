@@ -1,0 +1,16 @@
+id: 01a1de2f-09e6-7295-aeb7-7aac30601aac
+cells:
+  name: Year[5]
+formulas:
+  balance: prev.balance * (1 + rate) + top_up.chosen.value
+links:
+- to: 01a1de2f-09e6-7295-aeb7-7aa64456e8e1
+  components:
+  - label
+  cells:
+    called: rate
+- to: 01a1de2f-09e6-7295-aeb7-7aa9e0b523d1
+  components:
+  - label
+  cells:
+    called: top_up
