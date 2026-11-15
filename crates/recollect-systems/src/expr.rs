@@ -198,17 +198,20 @@ pub enum Expr {
     /// `sum(x in group: body)`. A group is `in.kind`, `out.kind`, `with.component`, or a name.
     /// `start` is what `max` and `min` begin from.
     Fold { func: String, var: String, group: Vec<String>, body: Box<Expr>, start: Option<Box<Expr>> },
+    /// `predict(r in group: y, x₁, x₂, …)`: what `y` is likely to be for something new, given the rows of
+    /// the group and the `x`s read on the row it's written on. See `docs/data.md`.
+    Predict { var: String, group: Vec<String>, y: Box<Expr>, xs: Vec<Expr> },
     Not(Box<Expr>),
     Neg(Box<Expr>),
     Bin(BinOp, Box<Expr>, Box<Expr>),
 }
 
 /// What's evaluated as itself, rather than being expanded into something else.
-pub const CORE: &[&str] = &["if", "defined", "has", "chose", "round", "floor", "ceil", "max", "min", "distinct", "exp", "ln", "sqrt", "chance", "mean", "normal", "lognormal", "uniform", "triangular", "exponential", "between", "integers", "bernoulli"];
+pub const CORE: &[&str] = &["if", "defined", "has", "chose", "round", "floor", "ceil", "max", "min", "distinct", "exp", "ln", "sqrt", "chance", "mean", "normal", "lognormal", "uniform", "triangular", "exponential", "between", "integers", "bernoulli", "any_row"];
 
 /// The functions that are something uncertain: each place one is written is a draw of its own. See
-/// `docs/distributions.md`.
-pub const DISTRIBUTIONS: &[&str] = &["normal", "lognormal", "uniform", "triangular", "exponential", "between", "integers", "bernoulli"];
+/// `docs/distributions.md`, and `docs/data.md` for `any_row` and `predict`.
+pub const DISTRIBUTIONS: &[&str] = &["normal", "lognormal", "uniform", "triangular", "exponential", "between", "integers", "bernoulli", "any_row", "predict"];
 
 /// Functions that expand into one copy of their body for each node in a group.
 pub const FOLDS: &[&str] = &["sum", "product", "all", "any", "count", "max", "min", "distinct"];
@@ -498,6 +501,18 @@ impl Parser {
         {
             let var = var.clone();
             self.at += 2;
+            if func == "predict" {
+                let first = self.name()?;
+                let group = self.path_from(first)?;
+                self.expect(":")?;
+                let y = self.or()?;
+                let mut xs = Vec::new();
+                while self.eat(",") {
+                    xs.push(self.or()?);
+                }
+                self.expect(")")?;
+                return Ok(Expr::Predict { var, group, y: Box::new(y), xs });
+            }
             if !FOLDS.contains(&func.as_str()) {
                 return Err(format!("{func} doesn't go over a group"));
             }
