@@ -8,8 +8,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use recollect_graph::worlds::Bool;
 use recollect_graph::{Backed, CellType, Entity, Graph, Name, Op};
-use recollect_systems::formulas::IS_A;
+use recollect_systems::expr::Val;
+use recollect_systems::formulas::{Called, IS_A, LABEL, is_chance, try_formula};
 use recollect_systems::label_of;
 use recollect_systems::notes::Body;
 use serde::{Deserialize, Serialize};
@@ -43,9 +45,44 @@ pub struct ReadSpec {
     /// Choices pinned, as the app pins them.
     #[serde(default)]
     pub world: World,
+    /// Only the worlds where this formula is true, for every value read.
+    #[serde(default, rename = "where")]
+    pub where_: Option<Where>,
     /// The most nodes to give.
     #[serde(default)]
     pub limit: Option<usize>,
+}
+
+/// A formula saying which worlds to look at: plain, when it names no nodes, as
+/// `all(d in with.leaning: d.chosen = d.leaning)`, or with the nodes it names, as a cell's formula has.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum Where {
+    Plain(String),
+    Named {
+        formula: String,
+        /// What each name in it means: a node's handle or name.
+        #[serde(default)]
+        labels: BTreeMap<String, String>,
+    },
+}
+
+/// What looking through a `where` formula did.
+#[derive(Debug, Serialize)]
+pub struct Looking {
+    /// How much of what was believed is in the worlds it leaves, from 0 to 1.
+    pub kept: f64,
+    /// How much is in worlds where it couldn't be told, which are kept rather than hidden.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub undecided: f64,
+    /// What's a matter of chance that it mentions: looking only where it holds is supposing those are
+    /// found out, so what's believed about everything else changes with them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub supposing: Vec<String>,
+}
+
+fn is_zero(x: &f64) -> bool {
+    *x == 0.0
 }
 
 /// Which nodes. Everything given here has to hold, so `{kind: Concept, name: "Delta*"}` is the concepts
@@ -118,6 +155,8 @@ impl Default for EdgeSpec {
 /// What a read gives.
 #[derive(Debug, Serialize)]
 pub struct ReadOut {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub looking: Option<Looking>,
     pub nodes: Vec<NodeOut>,
     /// How many more matched than were given.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -216,7 +255,9 @@ pub struct Happened {
 pub fn read(o: &Workspace, spec: &ReadSpec) -> Result<ReadOut, String> {
     let (copy, _) = views::looked_at(o.log.graph(), &spec.world);
     let g: &Graph = copy.as_ref().unwrap_or_else(|| o.log.graph());
-    let reader = Reader::new(o, g, spec);
+    let narrowing = spec.where_.as_ref().map(|w| narrowing(g, w)).transpose()?;
+    let reader = Reader::new(o, g, spec, narrowing.as_ref());
+    let looking = narrowing.as_ref().map(|n| looking(g, &spec.world, n, reader.lens.as_ref().expect("a where makes a lens")));
     let limit = spec.limit.unwrap_or(MOST_NODES);
     if let Some(tree) = &spec.nodes.tree {
         let root = one(g, &tree.root)?;
@@ -224,11 +265,59 @@ pub fn read(o: &Workspace, spec: &ReadSpec) -> Result<ReadOut, String> {
         let mut given = 0;
         let top = reader.tree(root, tree.depth, &mut seen, &mut given, limit);
         let more = given.saturating_sub(limit);
-        return Ok(ReadOut { nodes: vec![top], more: (more > 0).then_some(more) });
+        return Ok(ReadOut { looking, nodes: vec![top], more: (more > 0).then_some(more) });
     }
     let chosen = select(g, &spec.nodes)?;
     let more = chosen.len().saturating_sub(limit);
-    Ok(ReadOut { nodes: chosen.into_iter().take(limit).map(|e| reader.node(e)).collect(), more: (more > 0).then_some(more) })
+    Ok(ReadOut { looking, nodes: chosen.into_iter().take(limit).map(|e| reader.node(e)).collect(), more: (more > 0).then_some(more) })
+}
+
+/// The worlds a `where` formula keeps: where it's true, and where it can't be told, so a gap in what's
+/// written never hides a world.
+pub struct Narrowing {
+    pub keeps: Bool,
+    pub undefined: Bool,
+    pub truth: Bool,
+}
+
+pub fn narrowing(g: &Graph, w: &Where) -> Result<Narrowing, String> {
+    let (text, labels) = match w {
+        Where::Plain(t) => (t.as_str(), BTreeMap::new()),
+        Where::Named { formula, labels } => (formula.as_str(), labels.clone()),
+    };
+    // A formula's names are its node's labels, so one that names nodes is tried on a node of its own,
+    // on a copy that's thrown away.
+    let tried = if labels.is_empty() {
+        try_formula(g, Entity::whole(), text)
+    } else {
+        let mut copy = g.fork();
+        let at = copy.spawn();
+        for (called, said) in &labels {
+            let to = one(g, said)?;
+            let edge = copy.link(at, to, LABEL);
+            copy.set(edge, Called(called.clone()));
+        }
+        try_formula(&copy, at, text)
+    };
+    let (value, _) = tried.map_err(|e| format!("where: {}", views::error_text(&e, g)))?;
+    let truth = value.holds(|v| *v == Val::Bool(true));
+    let undefined = value.holds(|v| *v == Val::Undefined);
+    if value.holds(|v| !matches!(v, Val::Bool(_) | Val::Undefined)).prob() > 0.0 {
+        return Err(format!("where: {text} has to be true or false"));
+    }
+    Ok(Narrowing { keeps: &truth | &undefined, undefined, truth })
+}
+
+fn looking(g: &Graph, world: &World, n: &Narrowing, lens: &Lens) -> Looking {
+    let before = Lens::new(g, world).in_play.prob();
+    let after = lens.in_play.prob();
+    let kept = if before > 0.0 { after / before } else { 0.0 };
+    let undecided = if after > 0.0 { (&n.undefined & &lens.in_play).prob() / after } else { 0.0 };
+    let labels = Labels::gather(g);
+    let mut supposing: Vec<String> = n.truth.vars().iter().map(|v| v.name()).filter(|v| is_chance(g, v)).map(|v| labels.of(&v)).collect();
+    supposing.sort();
+    supposing.dedup();
+    Looking { kept, undecided, supposing }
 }
 
 /// The node a handle or a name means, which has to be exactly one.
@@ -330,8 +419,8 @@ struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
-    fn new(o: &'a Workspace, g: &'a Graph, spec: &'a ReadSpec) -> Reader<'a> {
-        let lens = spec.worked_out.then(|| Lens::new(g, &spec.world));
+    fn new(o: &'a Workspace, g: &'a Graph, spec: &'a ReadSpec, narrowing: Option<&Narrowing>) -> Reader<'a> {
+        let lens = (spec.worked_out || narrowing.is_some()).then(|| Lens::looking(g, &spec.world, narrowing.map(|n| &n.keeps)));
         Reader { o, g, spec, labels: Labels::gather(g), lens }
     }
 
@@ -400,7 +489,7 @@ impl<'a> Reader<'a> {
     }
 
     fn worked_out(&self, e: Entity) -> BTreeMap<String, Worked> {
-        let Some(lens) = &self.lens else { return BTreeMap::new() };
+        let Some(lens) = self.lens.as_ref().filter(|_| self.spec.worked_out) else { return BTreeMap::new() };
         let mut vars = BTreeMap::new();
         self.g
             .cells_of(e)

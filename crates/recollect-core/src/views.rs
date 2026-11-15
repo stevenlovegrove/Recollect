@@ -16,6 +16,7 @@ use recollect_systems::plan::{self, Matrix, UNCERTAIN, WorkItem};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::read::Where;
 use crate::workspace::Workspace;
 
 pub type World = BTreeMap<String, String>;
@@ -570,17 +571,25 @@ pub(crate) struct Lens {
     /// worlds where it lands on what it's pinned to. Always, if nothing like that is pinned.
     found: Bool,
     /// The worlds that are left once these picks are made, and whatever rules worlds out has.
-    in_play: Bool,
+    pub(crate) in_play: Bool,
     /// What reads anything uncertain. One for everything this looks at, so what's shared is drawn once.
     reader: RefCell<Reader>,
 }
 
 impl Lens {
     pub(crate) fn new(g: &Graph, world: &World) -> Lens {
+        Lens::looking(g, world, None)
+    }
+
+    /// The same, looking only at the worlds where `also` holds too, as a `where` formula says.
+    pub(crate) fn looking(g: &Graph, world: &World, also: Option<&Bool>) -> Lens {
         let picks = plan::picks(g, world);
         // A draw that's several variables is pinned where whichever is in use lands there.
         // And whatever's ruled out, just for looking, is left out of every world.
-        let found = (&(&plan::pinned(g, world) & &draws_found(world)) & &plan::not_ruled_out(g, world)).given(&picks);
+        let mut found = (&(&plan::pinned(g, world) & &draws_found(world)) & &plan::not_ruled_out(g, world)).given(&picks);
+        if let Some(also) = also {
+            found = &found & &also.given(&picks);
+        }
         // Whatever's known about draws is given to everything this reads.
         let reader = RefCell::new(Reader::given(known_draws(g)));
         let in_play = worlds_left(g, &picks, &found, &mut reader.borrow_mut());
@@ -1025,20 +1034,26 @@ fn relabel(text: &str, labels: &Labels) -> String {
 
 /// The whole graph, narrowed to `world`.
 pub fn view(o: &Workspace, world: &World) -> View {
-    view_at(o, world, None)
+    view_at(o, world, None, None).expect("with no formula to look through, there's nothing to refuse")
+}
+
+/// The same, looking only at the worlds a `where` formula keeps. Refused if the formula doesn't work.
+pub fn view_where(o: &Workspace, world: &World, w: Option<&Where>) -> Result<View, String> {
+    view_at(o, world, None, w)
 }
 
 /// The world that comes `k`th among those left, counting from 0, with every choice pinned. It's what
 /// stepping through the worlds shows, worked out when asked for, however many there are.
-pub fn world_at(o: &Workspace, world: &World, k: u128) -> Option<World> {
-    view_at(o, world, Some(k)).worlds.at
+pub fn world_at(o: &Workspace, world: &World, k: u128, w: Option<&Where>) -> Result<Option<World>, String> {
+    Ok(view_at(o, world, Some(k), w)?.worlds.at)
 }
 
-fn view_at(o: &Workspace, world: &World, at: Option<u128>) -> View {
+fn view_at(o: &Workspace, world: &World, at: Option<u128>, w: Option<&Where>) -> Result<View, String> {
     let (copy, quantities) = looked_at(o.log.graph(), world);
     let g: &Graph = copy.as_ref().unwrap_or_else(|| o.log.graph());
     let labels = Labels::gather(g);
-    let lens = Lens::new(g, world);
+    let narrowing = w.map(|w| crate::read::narrowing(g, w)).transpose()?;
+    let lens = Lens::looking(g, world, narrowing.as_ref().map(|n| &n.keeps));
     let mut vars = BTreeMap::new();
     let mut node = |e: Entity, name: String| {
         let cells = cells(g, e, &lens, &labels, &mut vars);
@@ -1063,7 +1078,7 @@ fn view_at(o: &Workspace, world: &World, at: Option<u128>) -> View {
     let refused: Vec<CheckView> = quantities.iter().filter_map(|q| Some(CheckView { severity: "notice", rule: "pin_not_applied".to_string(), on: if q.node == Entity::whole() { vec![] } else { vec![q.node] }, detail: format!("{} {} couldn't be pinned to {}: {}", labels.of(&q.node.to_string()), q.cell, q.text, q.refused.as_ref()?) })).collect();
     let worlds = worlds(g, world, &lens, &labels, vars, quantities, narrows(o.log.graph()), at);
     let ran = g.take_ran().into_iter().filter(|(_, c)| !internal(g, c)).map(|(node, cell)| RanView { node, cell }).collect();
-    View {
+    Ok(View {
         workspace: WorkspaceView { name: o.config.name.clone(), about: o.config.about.clone(), id: o.id.clone(), location: o.location.clone(), systems: o.built.names.clone(), sample: o.sample.clone() },
         last_seq: o.log.last_seq(),
         undo: o.log.undo_next(),
@@ -1078,7 +1093,7 @@ fn view_at(o: &Workspace, world: &World, at: Option<u128>) -> View {
         worlds,
         checks: checks(&o.log, &labels).into_iter().chain(refused).collect(),
         ran,
-    }
+    })
 }
 
 /// What a formula would read as on a node, with nothing changed.

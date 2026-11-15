@@ -162,3 +162,72 @@ fn wildcards_match_as_expected() {
     assert!(!matches("d?lta", "Dlta"));
     assert!(matches("*", ""));
 }
+
+fn size_cases(v: &Value) -> Value {
+    node(v, "Parent size")["worked_out"]["value"].clone()
+}
+
+#[test]
+fn a_where_formula_narrows_every_value_read() {
+    let mut ws = design();
+    let spec = |w: Value| json!({ "nodes": { "ids": ["Parent size"] }, "cells": ["value"], "worked_out": true, "where": w });
+    let v = read_json(&mut ws, spec(json!({ "formula": "chose(d, h)", "labels": { "d": "How is ancestry recorded?", "h": "By hash" } })));
+    assert_eq!(size_cases(&v), json!({ "value": 32.0 }), "{v}");
+    assert!((v["looking"]["kept"].as_f64().unwrap() - 0.5).abs() < 1e-9, "{v}");
+    assert!(v["looking"].get("undecided").is_none() && v["looking"].get("supposing").is_none(), "{v}");
+
+    let v = read_json(&mut ws, spec(json!("count(with.decision) = 1")));
+    assert_eq!(v["looking"]["kept"], 1.0, "a formula that names no nodes is plain text");
+    assert_eq!(size_cases(&v)["cases"].as_array().unwrap().len(), 2);
+
+    let v = read_json(&mut ws, json!({ "nodes": { "ids": ["Delta"] }, "where": "count(with.decision) = 1" }));
+    assert!(node(&v, "Delta").get("worked_out").is_none(), "narrowing doesn't by itself ask for what's worked out");
+}
+
+#[test]
+fn where_it_cant_be_told_a_world_is_kept_and_said_to_be() {
+    let mut ws = design();
+    let w = json!({ "formula": "if(chose(d, h), undefined, true)", "labels": { "d": "How is ancestry recorded?", "h": "By hash" } });
+    let v = read_json(&mut ws, json!({ "nodes": { "ids": ["Parent size"] }, "cells": ["value"], "worked_out": true, "where": w }));
+    assert_eq!(v["looking"]["kept"], 1.0, "{v}");
+    assert!((v["looking"]["undecided"].as_f64().unwrap() - 0.5).abs() < 1e-9, "{v}");
+    assert_eq!(size_cases(&v)["cases"].as_array().unwrap().len(), 2, "nothing is hidden by a gap");
+}
+
+#[test]
+fn a_where_about_something_uncertain_says_its_supposing_it() {
+    let mut ws = design();
+    let ops = json!([
+        { "op": "add_node", "id": "new:old", "name": "Is the backup old?", "components": ["decision", "uncertain"] },
+        { "op": "add_node", "id": "new:yes", "name": "Old", "links": [{ "to": "new:old", "component": "alternative" }] },
+        { "op": "add_node", "id": "new:no", "name": "Recent", "links": [{ "to": "new:old", "component": "alternative" }] }
+    ]);
+    dispatch(&mut ws, "apply", json!({ "ops": ops }), "t").unwrap();
+    let w = json!({ "formula": "chose(b, o)", "labels": { "b": "Is the backup old?", "o": "Old" } });
+    let v = read_json(&mut ws, json!({ "nodes": { "ids": ["Delta"] }, "where": w }));
+    assert_eq!(v["looking"]["supposing"], json!(["Is the backup old?"]), "{v}");
+}
+
+#[test]
+fn a_where_has_to_be_a_truth_that_works() {
+    let mut ws = design();
+    for (w, says) in [(json!("1 + 1"), "true or false"), (json!("nope"), "where:"), (json!({ "formula": "chose(d, h)", "labels": { "d": "Nothing" } }), "no node Nothing")] {
+        let r = dispatch(&mut ws, "read", json!({ "where": w }), "t");
+        assert!(matches!(r, Err(crate::Error::Refused(ref why)) if why.contains(says)), "{w}: {r:?}");
+    }
+}
+
+#[test]
+fn the_apps_view_looks_through_the_same_formula() {
+    let mut ws = design();
+    let count = |v: &Value| v["worlds"]["count"].as_str().unwrap().to_string();
+    let all = dispatch(&mut ws, "view", json!({}), "t").unwrap().0;
+    assert_eq!(count(&all), "2");
+    let w = json!({ "formula": "chose(d, h)", "labels": { "d": "How is ancestry recorded?", "h": "By hash" } });
+    let some = dispatch(&mut ws, "view", json!({ "where": w }), "t").unwrap().0;
+    assert_eq!(count(&some), "1", "{}", some["worlds"]);
+    let at = dispatch(&mut ws, "world_at", json!({ "where": w, "at": "0" }), "t").unwrap().0;
+    let (how, hash) = (handle(&mut ws, "How is ancestry recorded?"), handle(&mut ws, "By hash"));
+    assert_eq!(at[&how], json!(hash), "stepping goes through the worlds it keeps: {at}");
+    assert!(dispatch(&mut ws, "view", json!({ "where": "1 + 1" }), "t").is_err());
+}
