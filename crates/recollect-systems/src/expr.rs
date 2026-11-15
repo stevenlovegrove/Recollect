@@ -301,7 +301,15 @@ fn tokens(text: &str) -> Result<Vec<(Tok, usize)>, String> {
             while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
                 i += 1;
             }
-            out.push((Tok::Name(chars[start..i].iter().collect()), at));
+            let mut name: String = chars[start..i].iter().collect();
+            // `in*` and `out*` go on along a link as far as it goes, as `kind.in*.is_a`. Only straight
+            // after a dot and before one, so `x.in * 2` and `in*.…` are still what they were.
+            let after_dot = start > 0 && chars[start - 1] == '.';
+            if after_dot && matches!(name.as_str(), "in" | "out") && chars.get(i) == Some(&'*') && chars.get(i + 1) == Some(&'.') {
+                name.push('*');
+                i += 1;
+            }
+            out.push((Tok::Name(name), at));
         } else {
             let rest: String = chars[i..chars.len().min(i + 2)].iter().collect();
             let Some(sym) = SYMBOLS.iter().find(|s| rest.starts_with(**s)) else {
@@ -525,7 +533,7 @@ impl Parser {
 
 /// Whether a path goes along links after its first name, as `hub.in.part_of` does, which makes it a group.
 pub fn goes_along(path: &[String]) -> bool {
-    path.iter().skip(1).any(|p| p == "in" || p == "out")
+    path.iter().skip(1).any(|p| matches!(p.as_str(), "in" | "out" | "in*" | "out*"))
 }
 
 fn check_start(func: &str, given: bool) -> Result<(), String> {
@@ -550,7 +558,7 @@ fn short_fold(func: String, mut args: Vec<Expr>) -> Result<Expr, String> {
         return Err(format!("{} needs to say which kind", path[0]));
     }
     // Going on along links, as `hub.in.part_of`, is still the group: what follows is read on each.
-    while path.get(whole).is_some_and(|p| p == "in" || p == "out") {
+    while path.get(whole).is_some_and(|p| matches!(p.as_str(), "in" | "out" | "in*" | "out*")) {
         if path.len() < whole + 2 {
             return Err(format!("{} needs to say which component, such as {}.part_of", path[..=whole].join("."), path[..=whole].join(".")));
         }

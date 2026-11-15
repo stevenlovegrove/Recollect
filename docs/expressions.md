@@ -233,7 +233,7 @@ term     := unary (("*" | "/") unary)*
 unary    := "-" unary | power
 power    := atom ("^" unary)?
 atom     := number | string | "true" | "false" | "undefined" | path | row | call | "(" expr ")"
-path     := name ("." name)*
+path     := name ("." name)*          (a step may be in* or out*, as kind.in*.is_a)
 row      := name "[" expr "]" ("." name)*
 call     := name "(" (name "in" path ":" expr ("," expr)? | expr ("," expr)*)? ")"
 ```
@@ -252,10 +252,12 @@ call     := name "(" (name "in" path ":" expr ("," expr)? | expr ("," expr)*)? "
 | `in.part_of`, `out.depends_on` | The group of nodes at the other end of edges with that component |
 | `with.task` | The group of nodes with that component |
 | `kind.in.is_a`, `x.out.part_of`, `hub.out.relates.in.is_a` | Going on along edges from a labelled node, a node being gone over, or a group: the nodes at the other end, from each |
+| `kind.in*.is_a`, `x.out*.part_of` | Going on along that component as far as it goes: a kind's instances and theirs, or every whole above a part, each once |
 | `whole.plan_end` | A cell on the graph as a whole |
 
 - `=` between truths means "exactly when".
 - A path that goes along edges is a group, wherever `in` or `out` comes in it, so `count(kind.in.is_a)` is how many instances a kind has, and `kind.in.is_a` on its own is an error rather than a cell. After a group, only `in.…` and `out.…` go on: a cell is read inside, as `sum(x in kind.in.is_a: x.cost)`, or in the short form `sum(kind.in.is_a.cost)`.
+- `in*` and `out*` are written with no space before the dot that follows, as `kind.in*.is_a`. They go round a loop once, so a node is never counted twice; one reached back along the loop is in the group like any other.
 - A plain label must be exactly one node, and that's an error otherwise. As a group, it can be any number, including none, so a total with no lines yet is 0.
 
 ## Typing one
@@ -263,6 +265,8 @@ call     := name "(" (name "in" path ":" expr ("," expr)? | expr ("," expr)*)? "
 The Inspector and the Table have one field for a cell, as in a spreadsheet: `=price * 2` is a formula, and `5`, `true` or `hello` is a value. Clearing it takes away what's written, so the cell goes back to its kind or its default. A leading `'` means take the rest literally, for text that really starts with `=`. The `=` is only how it's typed: what's stored is `price * 2`, so a file doesn't have one. Turning a formula back into a value takes its labels with it.
 
 The Inspector asks which node each new name refers to. The Table can use the names a cell already has, and sends you to the Inspector for a new one.
+
+The worlds panel's "Look only where" takes a formula too, and its names mean nodes in the same way, though nothing is saved. A name is taken as the node it plainly is, ignoring case and reading `_` as a space, so `roof_cost` is "Roof cost (£)", or the only node whose name starts with it. Otherwise it asks which, and each guess can be taken back and picked again.
 
 Any part of a formula can be tried on a node with nothing changed, which is what hovering over a bracket shows, and what "what it expands to" uses.
 

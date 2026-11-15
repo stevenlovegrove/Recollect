@@ -766,20 +766,35 @@ impl<'c, 'a> Expander<'c, 'a> {
     }
 
     /// Going on from a group along links, as `x.in.part_of` or `hub.out.relates.in.is_a` do: each step
-    /// is `in` or `out` and a component, from every node reached so far. Anything else after a group is
-    /// a cell, which a group hasn't got.
+    /// is `in` or `out` and a component, from every node reached so far. `in*` and `out*` keep going
+    /// along it as far as it goes, so `kind.in*.is_a` is its instances, theirs, and so on, each once.
+    /// Anything else after a group is a cell, which a group hasn't got.
     fn go_on(&self, said: &str, mut nodes: Vec<(Entity, Option<Entity>)>, mut rest: &[String]) -> Result<Vec<(Entity, Option<Entity>)>, Error> {
         let mut said = said.to_string();
         while let Some(step) = rest.first() {
             let way = step.as_str();
-            if !matches!(way, "in" | "out") {
+            if !matches!(way, "in" | "out" | "in*" | "out*") {
                 return failed(format!("{said}.{step}: a group of nodes goes on only by in.… or out.…, so read a cell inside, as sum(x in {said}: x.{step})"));
             }
             let Some(component) = rest.get(1) else { return failed(format!("{said}.{way} needs to say which component, such as {said}.{way}.part_of")) };
+            let along = |n: Entity| if way.starts_with("in") { self.cx.incoming_at(n, component) } else { self.cx.outgoing_at(n, component) };
             let mut next = Vec::new();
-            for (n, _) in &nodes {
-                let edges = if way == "in" { self.cx.incoming_at(*n, component) } else { self.cx.outgoing_at(*n, component) };
-                next.extend(edges.into_iter().map(|(m, e)| (m, Some(e))));
+            if way.ends_with('*') {
+                // Each node once, however many ways it's reached, and a loop ends.
+                let mut seen = std::collections::BTreeSet::new();
+                let mut level: Vec<Entity> = nodes.iter().map(|(n, _)| *n).collect();
+                while let Some(n) = level.pop() {
+                    for (m, e) in along(n) {
+                        if seen.insert(m) {
+                            next.push((m, Some(e)));
+                            level.push(m);
+                        }
+                    }
+                }
+            } else {
+                for (n, _) in &nodes {
+                    next.extend(along(*n).into_iter().map(|(m, e)| (m, Some(e))));
+                }
             }
             nodes = next;
             said = format!("{said}.{way}.{component}");
@@ -2297,7 +2312,8 @@ or not either varies. Operators: + - * / = != < <= > >= && || !. A number, \\\"t
 value, `rate.finish` another of its cells, and `self.need` one of this node's. Functions: if(c, a, b), defined(x), or(x, fallback), abs, \
 min(a, b), max(a, b), round(x, places?), floor, ceil, has(x.c), and chose(choice, option), which is true where that choice lands on that \
 option. Over a group, which is a label, in.component or out.component (the nodes at the other end of those edges), with.component (the \
-nodes with it), or any of those followed by more steps such as `k.in.is_a` or `x.out.part_of`: sum, product, all, any, count and \
+nodes with it), or any of those followed by more steps such as `k.in.is_a` or `x.out.part_of`, where `in*` or `out*` goes on as far \
+as it goes, as `k.in*.is_a` for instances of instances too: sum, product, all, any, count and \
 distinct, as sum(line) or sum(t in task: if(t.need, t.estimate, 0)). In a fold over edges, `o.via.weight` reads a cell of the edge `o` \
 was reached along, and a formula on an edge reads its ends as `from` and `to`. with.component is every such node in the workspace, so \
 only use it when that's what's meant. Division by zero and missing inputs are undefined, only in the worlds where that's so. A formula \

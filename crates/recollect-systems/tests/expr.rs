@@ -424,6 +424,32 @@ fn a_group_can_go_on_along_links_from_a_node_or_a_group() {
 }
 
 #[test]
+fn a_starred_step_goes_along_a_link_as_far_as_it_goes() {
+    let mut g = N::with(plan::install);
+    // top ← a ← a1 ← a2, and top ← b
+    for (t, d, whole) in [("a", 1.0, "top"), ("b", 2.0, "top"), ("a1", 4.0, "a"), ("a2", 8.0, "a1")] {
+        g.add(t, TASK).set(t, Estimate::days(d)).link(t, whole, PART_OF);
+    }
+    g.formula("near", "count(hub.in.part_of)").input("near", "top", "hub");
+    assert_eq!(value(&g, "near"), ValueCell::num(2.0), "in.… is one step");
+    g.formula("all", "count(hub.in*.part_of)").input("all", "top", "hub");
+    assert_eq!(value(&g, "all"), ValueCell::num(4.0), "in*.… is every step");
+    g.formula("total", "sum(x in hub.in*.part_of: x.estimate)").input("total", "top", "hub");
+    assert_eq!(value(&g, "total"), ValueCell::num(15.0));
+    g.formula("short", "sum(hub.in*.part_of.estimate)").input("short", "top", "hub");
+    assert_eq!(value(&g, "short"), ValueCell::num(15.0), "the short form too");
+    g.formula("up", "count(hub.out*.part_of)").input("up", "a2", "hub");
+    assert_eq!(value(&g, "up"), ValueCell::num(3.0), "out*.… goes up as far as it goes");
+    g.formula("times", "count(hub.in.part_of) * 2").input("times", "top", "hub");
+    assert_eq!(value(&g, "times"), ValueCell::num(4.0), "a star anywhere else is still times");
+
+    g.add("a3", TASK).set("a3", Estimate::days(16.0)).link("a3", "a2", PART_OF);
+    assert_eq!(value(&g, "total"), ValueCell::num(31.0), "a new one far down is noticed");
+    g.link("top", "a3", PART_OF);
+    assert_eq!(value(&g, "up"), ValueCell::num(5.0), "a loop is gone round once: a1, a, top, a3 and a2 itself, each once");
+}
+
+#[test]
 fn a_cell_can_read_other_cells_and_their_fields() {
     let mut g = N::with(plan::install);
     g.add("gate", DECISION);
