@@ -1029,17 +1029,19 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
   const setShapes = (rels: string[], on: boolean) => setLayoutPref({ ...layoutPref, layoutBy: { ...layoutPref.layoutBy, ...Object.fromEntries(rels.map((r) => [r, on])) } });
   const labelRels = rels.filter(([r]) => r.startsWith(LABEL_REL));
   const kindRels = rels.filter(([r]) => !r.startsWith(LABEL_REL));
-  // The Links menu by what each is for: the ones that shape the map, the relations the workspace defines,
-  // the rest, and what says what kind each thing is, which is there only while setup is shown.
+  // The Links menu by what each is, which ticking layout never changes: the structure the systems build
+  // in, the relations the workspace defines, the rest, and what says what kind each thing is, which is
+  // there only while setup is shown.
   const ownRels = new Set(view.relations.map((r) => r.name));
+  const builtIn = (r: string) => !ownRels.has(r) && !!view.components.find((c) => c.name === r)?.arranges;
   const relAbout = (name: string) => {
     const body = ws.byId.get(view.relations.find((x) => x.name === name)?.id ?? "")?.cells.body?.value;
     return typeof body === "string" ? body : undefined;
   };
   const relGroups = [
-    { title: "Shape the map", rels: kindRels.filter(([r]) => shapes(r) && r !== "is_a") },
-    { title: "Relations of your own", rels: kindRels.filter(([r]) => !shapes(r) && ownRels.has(r)) },
-    { title: "Other links", rels: kindRels.filter(([r]) => !shapes(r) && !ownRels.has(r) && r !== "is_a") },
+    { title: "Structure", rels: kindRels.filter(([r]) => builtIn(r) && r !== "is_a") },
+    { title: "Relations of your own", rels: kindRels.filter(([r]) => ownRels.has(r)) },
+    { title: "Other links", rels: kindRels.filter(([r]) => !builtIn(r) && !ownRels.has(r) && r !== "is_a") },
     { title: "Setup", rels: kindRels.filter(([r]) => r === "is_a") },
   ].filter((group) => group.rels.length > 0);
 
