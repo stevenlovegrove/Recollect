@@ -206,7 +206,7 @@ pub struct ApplyParams {
 impl RecollectMcp {
     #[tool(description = "The workspace: which systems it uses, every component and the cells it brings and what each means, what checks currently report, its open choices, and how much is pending. Call first.")]
     async fn get_overview(&self) -> Result<String, String> {
-        self.read(|o| Ok(views::overview(o)))
+        self.read(|o| Ok(views::overview(o, false)))
     }
 
     #[tool(description = "One node: its components and why it has each, every cell and where what's in it comes from, its edges either way with their cells, and the history of what touched it. Takes a world to read it as it would be then.")]

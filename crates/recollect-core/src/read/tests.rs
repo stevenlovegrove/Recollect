@@ -231,3 +231,22 @@ fn the_apps_view_looks_through_the_same_formula() {
     assert_eq!(at[&how], json!(hash), "stepping goes through the worlds it keeps: {at}");
     assert!(dispatch(&mut ws, "view", json!({ "where": "1 + 1" }), "t").is_err());
 }
+
+#[test]
+fn the_overview_says_the_workspaces_own_words_first() {
+    let ws = design();
+    let o = serde_json::to_value(views::overview(&ws, false)).unwrap();
+    let own: Vec<(String, String, u64)> = o["own"]["cells"].as_array().unwrap().iter().map(|c| (c["name"].as_str().unwrap().to_string(), c["on"].as_str().unwrap().to_string(), c["used"].as_u64().unwrap())).collect();
+    assert_eq!(own, [("layer".to_string(), "nodes".to_string(), 1), ("role".to_string(), "edges".to_string(), 1)], "{}", o["own"]);
+    let kinds = o["own"]["kinds"].as_array().unwrap();
+    assert_eq!(kinds.len(), 1);
+    assert_eq!(kinds[0]["name"], "Concept");
+    assert_eq!(kinds[0]["instances"], 2);
+    assert_eq!(kinds[0]["gives"], json!(["body", "layer"]));
+
+    let systems: Vec<&str> = o["systems"].as_array().unwrap().iter().map(|s| s["name"].as_str().unwrap()).collect();
+    assert!(systems.contains(&"notes") && systems.contains(&"plan"), "{systems:?}");
+    let short = serde_json::to_string(&o["systems"]).unwrap().len();
+    let full = serde_json::to_string(&serde_json::to_value(views::overview(&ws, true)).unwrap()["systems"]).unwrap().len();
+    assert!(short * 2 < full, "one line for each component unless everything's asked for: {short} and {full}");
+}

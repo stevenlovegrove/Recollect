@@ -1364,27 +1364,141 @@ pub fn tree(o: &Workspace, root: Entity, depth: usize) -> TreeNode {
     walk(o, &kinds, &labels, root, depth, &mut Vec::new())
 }
 
+/// What a workspace is, for whoever's starting on it: its own words first, and then what its systems give.
 #[derive(Serialize)]
 pub struct Overview {
     pub workspace: WorkspaceView,
     pub nodes: usize,
-    /// Every component there is, with the cells it brings.
-    pub components: Vec<ComponentDef>,
-    pub cells: Vec<CellInfo>,
+    pub events: usize,
+    /// What this workspace says that no system does: its own cells, its kinds, and its tables.
+    pub own: Vocabulary,
+    /// What each system it uses gives: one line for each component, unless everything is asked for.
+    pub systems: Vec<SystemView>,
     pub checks: Vec<CheckView>,
     pub open_choices: Vec<VarView>,
-    pub events: usize,
 }
 
-pub fn overview(o: &Workspace) -> Overview {
+#[derive(Serialize)]
+pub struct Vocabulary {
+    pub cells: Vec<OwnCell>,
+    pub kinds: Vec<KindView>,
+    pub tables: Vec<TableBrief>,
+}
+
+/// A cell the workspace writes that no system gives.
+#[derive(Serialize)]
+pub struct OwnCell {
+    pub name: String,
+    /// "nodes", "edges", or "both".
+    pub on: &'static str,
+    /// How many nodes and edges say it.
+    pub used: usize,
+    pub example: Value,
+}
+
+/// A kind: what links to it by `is_a` is an instance of it, and takes the cells it doesn't say from it.
+#[derive(Serialize)]
+pub struct KindView {
+    pub id: Entity,
+    pub name: String,
+    pub instances: usize,
+    /// The cells it gives its instances.
+    pub gives: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct TableBrief {
+    pub name: String,
+    pub rows: usize,
+}
+
+#[derive(Serialize)]
+pub struct SystemView {
+    pub name: String,
+    pub about: String,
+    pub components: Vec<ComponentBrief>,
+}
+
+/// A component as one line, or, when everything is asked for, all that's said about it.
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum ComponentBrief {
+    Line { name: String, about: String, #[serde(skip_serializing_if = "Vec::is_empty")] cells: Vec<String> },
+    Full { #[serde(flatten)] def: ComponentDef, cell_defs: Vec<CellInfo> },
+}
+
+pub fn overview(o: &Workspace, full: bool) -> Overview {
     let v = view(o, &World::new());
-    Overview {
-        nodes: v.nodes.len(),
-        workspace: v.workspace,
-        components: v.components,
-        cells: v.cells,
-        checks: v.checks,
-        open_choices: v.worlds.vars,
-        events: o.log.events().len(),
+    let g = o.log.graph();
+    let all = recollect_systems::everything();
+    let systems = o
+        .built
+        .names
+        .iter()
+        .map(|name| {
+            let about = recollect_systems::SYSTEMS.iter().find(|s| s.name == name).map_or(String::new(), |s| s.about.to_string());
+            let components = all
+                .components()
+                .filter(|c| &c.system == name)
+                .map(|c| {
+                    if full {
+                        ComponentBrief::Full { def: c.clone(), cell_defs: c.cells.iter().filter_map(|n| all.cell_def(n)).filter(|d| !d.internal).map(cell_info).collect() }
+                    } else {
+                        let cells = c.cells.iter().filter(|n| all.cell_def(n).is_some_and(|d| !d.internal)).cloned().collect();
+                        ComponentBrief::Line { name: c.name.clone(), about: c.about.clone(), cells }
+                    }
+                })
+                .collect();
+            SystemView { name: name.clone(), about, components }
+        })
+        .collect();
+    Overview { nodes: v.nodes.len(), workspace: v.workspace, events: o.log.events().len(), own: vocabulary(g), systems, checks: v.checks, open_choices: v.worlds.vars }
+}
+
+fn vocabulary(g: &Graph) -> Vocabulary {
+    let all = recollect_systems::everything();
+    let mut cells: BTreeMap<String, (bool, bool, usize, Value)> = BTreeMap::new();
+    for e in g.entities().chain(g.edges().map(|(e, _, _)| e)) {
+        let edge = g.is_edge(e);
+        for (c, b) in g.written(e) {
+            if all.cell_def(&c).is_some() {
+                continue;
+            }
+            let example = match b {
+                Backed::Value(v) => v,
+                Backed::Formula(t) => json!({ "formula": t }),
+                Backed::Builtin => Value::Null,
+            };
+            let entry = cells.entry(c).or_insert((false, false, 0, example));
+            if edge { entry.1 = true } else { entry.0 = true }
+            entry.2 += 1;
+        }
+    }
+    let cells = cells
+        .into_iter()
+        .map(|(name, (nodes, edges, used, example))| OwnCell { name, on: if nodes && edges { "both" } else if edges { "edges" } else { "nodes" }, used, example: short(example) })
+        .collect();
+    let kinds = g
+        .entities()
+        .filter(|e| !g.is_edge(*e))
+        .filter_map(|k| {
+            let instances = g.sources_of(k, recollect_systems::formulas::IS_A).len();
+            (instances > 0).then(|| KindView { id: k, name: recollect_systems::label_of(g, k), instances, gives: g.written(k).into_keys().filter(|c| c != recollect_graph::Name::NAME).collect() })
+        })
+        .collect();
+    let mut tables: BTreeMap<String, usize> = BTreeMap::new();
+    for e in g.entities() {
+        if let Some(row) = g.row_of(e) {
+            *tables.entry(row.table.clone()).or_default() += 1;
+        }
+    }
+    Vocabulary { cells, kinds, tables: tables.into_iter().map(|(name, rows)| TableBrief { name, rows }).collect() }
+}
+
+/// An example short enough to glance at.
+fn short(v: Value) -> Value {
+    match v {
+        Value::String(s) if s.chars().count() > 60 => Value::String(format!("{}…", s.chars().take(60).collect::<String>())),
+        other => other,
     }
 }
