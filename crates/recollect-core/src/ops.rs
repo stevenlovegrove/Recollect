@@ -21,7 +21,9 @@
 //!   unless it says otherwise, and a node named `Car[Hatchback]` for each row, with its own cells.
 //!   A row can be just its key, and `"range": [0, 10]` adds numbered rows. Nodes with those names
 //!   already are used, not made again. `"alternative_of": "Which car?"` makes every row one of that
-//!   decision's options.
+//!   decision's options. `"csv"` in place of `"rows"` reads them from the text of a CSV file, whose first
+//!   line names the columns, numbered from 1 unless `"key"` names the column their keys are in: see
+//!   `docs/data.md`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -384,10 +386,15 @@ fn table(mut op: Map<String, Value>, names: &BTreeMap<String, Vec<Entity>>) -> R
         }
     }
     let decision = op.remove("alternative_of");
-    let mut rows: Vec<Value> = match op.remove("rows") {
-        Some(Value::Array(rows)) => rows,
-        None => Vec::new(),
-        Some(_) => return Err("a table's rows are a list, each a key or {key, cells…}".to_string()),
+    let key_column = op.remove("key");
+    let mut rows: Vec<Value> = match (op.remove("rows"), op.remove("csv")) {
+        (Some(_), Some(_)) => return Err("a table's rows come from \"rows\" or from \"csv\", not both".to_string()),
+        (None, Some(Value::String(csv))) => csv_rows(&csv, key_column.as_ref().and_then(Value::as_str))?,
+        (None, Some(_)) => return Err("\"csv\" is the text of a CSV file".to_string()),
+        (_, None) if key_column.is_some() => return Err("\"key\" names the CSV column the rows' keys are in, so it needs \"csv\"".to_string()),
+        (Some(Value::Array(rows)), None) => rows,
+        (None, None) => Vec::new(),
+        (Some(_), None) => return Err("a table's rows are a list, each a key or {key, cells…}".to_string()),
     };
     if let Some(range) = op.remove("range") {
         let bounds: Option<(i64, i64)> = range.as_array().and_then(|r| Some((r.first()?.as_i64()?, r.get(1)?.as_i64()?)));
@@ -416,6 +423,116 @@ fn table(mut op: Map<String, Value>, names: &BTreeMap<String, Vec<Entity>>) -> R
         }
     }
     Ok(out)
+}
+
+/// The fields of each line of a CSV file. A field can be quoted, with `""` for a quote inside it, and a
+/// quoted field can run over lines.
+fn csv_fields(text: &str) -> Result<Vec<Vec<String>>, String> {
+    let mut lines = Vec::new();
+    let (mut line, mut field) = (Vec::new(), String::new());
+    let mut chars = text.chars().peekable();
+    let (mut quoted, mut was_quoted) = (false, false);
+    let mut number = 1;
+    while let Some(c) = chars.next() {
+        if quoted {
+            match c {
+                '"' if chars.peek() == Some(&'"') => {
+                    chars.next();
+                    field.push('"');
+                }
+                '"' => quoted = false,
+                c => {
+                    if c == '\n' {
+                        number += 1;
+                    }
+                    field.push(c);
+                }
+            }
+            continue;
+        }
+        match c {
+            '"' if field.trim().is_empty() && !was_quoted => {
+                field.clear();
+                quoted = true;
+                was_quoted = true;
+            }
+            '"' => return Err(format!("line {number} of the CSV has a quote inside a field that isn't quoted")),
+            ',' => {
+                line.push(std::mem::take(&mut field));
+                was_quoted = false;
+            }
+            '\r' if chars.peek() == Some(&'\n') => {}
+            '\n' | '\r' => {
+                line.push(std::mem::take(&mut field));
+                lines.push(std::mem::take(&mut line));
+                was_quoted = false;
+                number += 1;
+            }
+            c => field.push(c),
+        }
+    }
+    if quoted {
+        return Err("the CSV ends inside a quoted field".to_string());
+    }
+    if !field.is_empty() || !line.is_empty() {
+        line.push(field);
+        lines.push(line);
+    }
+    // Blank lines say nothing.
+    lines.retain(|l| !(l.len() == 1 && l[0].trim().is_empty()));
+    Ok(lines)
+}
+
+/// A table's rows, from a CSV file whose first line names the columns: see `docs/data.md`.
+fn csv_rows(text: &str, key: Option<&str>) -> Result<Vec<Value>, String> {
+    let mut lines = csv_fields(text)?.into_iter();
+    let header = lines.next().ok_or("the CSV is empty: its first line names the columns")?;
+    let mut names = Vec::with_capacity(header.len());
+    for h in &header {
+        let name: String = h.trim().chars().map(|c| if c == ' ' || c == '-' { '_' } else { c }).collect();
+        if !recollect_systems::expr::is_name(&name) {
+            return Err(format!("the CSV's column “{}” can't be what a formula calls a cell: a column is called by one name, such as t5k or finish_time", h.trim()));
+        }
+        if names.contains(&name) {
+            return Err(format!("the CSV has two columns called {name}"));
+        }
+        names.push(name);
+    }
+    let key_at = match key {
+        Some(k) => Some((0..names.len()).find(|i| names[*i] == k || header[*i].trim() == k).ok_or_else(|| format!("the CSV has no column called {k} for the rows' keys"))?),
+        None => None,
+    };
+    let mut rows = Vec::new();
+    for (i, fields) in lines.enumerate() {
+        let line = i + 2;
+        if fields.len() != names.len() {
+            return Err(format!("line {line} of the CSV has {} fields, and its first line names {}", fields.len(), names.len()));
+        }
+        let mut row = Map::new();
+        row.insert("key".to_string(), match key_at {
+            Some(k) if fields[k].trim().is_empty() => return Err(format!("line {line} of the CSV has no key")),
+            Some(k) => json!(fields[k].trim()),
+            None => json!(i + 1),
+        });
+        for (at, (name, field)) in names.iter().zip(&fields).enumerate() {
+            if Some(at) == key_at {
+                continue;
+            }
+            let text = field.trim();
+            let value = match text {
+                "" => continue,
+                "true" | "TRUE" | "True" => json!(true),
+                "false" | "FALSE" | "False" => json!(false),
+                _ => match text.parse::<f64>() {
+                    Ok(n) if n.is_finite() => json!(n),
+                    _ => json!(text),
+                },
+            };
+            row.insert(name.clone(), value);
+        }
+        rows.push(Value::Object(row));
+    }
+    Ok(rows)
 }
 
 fn key_text(v: &Value) -> String {
@@ -451,4 +568,36 @@ pub fn resolve_ops(ops: Vec<Value>, g: &Graph) -> Result<Resolved, String> {
         out.push(serde_json::from_value(w.clone()).map_err(|e| format!("{w} isn't an op: {e}"))?);
     }
     Ok(Resolved { ops: out, created: r.created })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_csv_is_the_rows_it_would_be_written_as_by_hand() {
+        let csv = "id,finish time,name,fit\r\nann,21.5,\"Smith, \"\"Ann\"\"\",true\n\nbob,,Bob,false\n";
+        let rows = csv_rows(csv, Some("id")).unwrap();
+        assert_eq!(rows, vec![json!({"key": "ann", "finish_time": 21.5, "name": "Smith, \"Ann\"", "fit": true}), json!({"key": "bob", "name": "Bob", "fit": false})]);
+        // Numbered from 1 without a key, and the last line needn't end.
+        let rows = csv_rows("x,y\n1,2\n3,4", None).unwrap();
+        assert_eq!(rows, vec![json!({"key": 1, "x": 1.0, "y": 2.0}), json!({"key": 2, "x": 3.0, "y": 4.0})]);
+        // A quoted field can run over lines.
+        let rows = csv_rows("note\n\"two\nlines\"\n", None).unwrap();
+        assert_eq!(rows, vec![json!({"key": 1, "note": "two\nlines"})]);
+    }
+
+    #[test]
+    fn a_csv_that_can_t_be_a_table_says_why() {
+        let err = |csv: &str, key: Option<&str>| csv_rows(csv, key).unwrap_err();
+        assert!(err("", None).contains("empty"));
+        assert!(err("a.b,c\n1,2", None).contains("“a.b”"));
+        assert!(err("5k time\n1", None).contains("“5k time”"), "a name starts with a letter");
+        assert!(err("row,c\n1,2", None).contains("“row”"), "a word formulas use for something else");
+        assert!(err("a,a\n1,2", None).contains("two columns called a"));
+        assert!(err("a,b\n1,2,3", None).contains("line 2 of the CSV has 3 fields"));
+        assert!(err("a,b\n1,2", Some("id")).contains("no column called id"));
+        assert!(err("a\n\"open", None).contains("ends inside"));
+        assert!(err("a\nx\"y", None).contains("quote inside"));
+    }
 }
