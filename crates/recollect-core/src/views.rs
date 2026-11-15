@@ -248,7 +248,7 @@ fn pinned_to(text: &str) -> Result<Pinned, String> {
 /// copy with it said. A quantity pinned to a value is typed in. One pinned to a range is a piece of
 /// evidence. A matter of chance pinned to an answer is something found out, which `chance` and `mean` read.
 /// So a what-if can't disagree with doing it for real.
-fn looked_at(g: &Graph, world: &World) -> (Option<Graph>, Vec<QuantityPin>) {
+pub(crate) fn looked_at(g: &Graph, world: &World) -> (Option<Graph>, Vec<QuantityPin>) {
     let mut pins: Vec<QuantityPin> = Vec::new();
     let mut said: Vec<(usize, Pinned)> = Vec::new();
     for (key, text) in world.iter().filter(|(k, _)| k.starts_with('=')) {
@@ -426,19 +426,19 @@ pub struct View {
     pub ran: Vec<RanView>,
 }
 
-struct Labels(HashMap<String, String>);
+pub(crate) struct Labels(HashMap<String, String>);
 
 impl Labels {
     /// Every name there is. The options a choice only lists are nodes made as it's worked out, so the
     /// choices are worked out first, or the first look at a workspace would have no names for them.
-    fn gather(g: &Graph) -> Labels {
+    pub(crate) fn gather(g: &Graph) -> Labels {
         for choice in g.having(CHOICE) {
             let _ = g.get_value(choice, "chosen");
         }
         Labels(recollect_systems::labels(g))
     }
 
-    fn of(&self, s: &str) -> String {
+    pub(crate) fn of(&self, s: &str) -> String {
         if let Some(name) = self.0.get(s) {
             return name.clone();
         }
@@ -564,7 +564,7 @@ fn show(s: &Shown, labels: &Labels, lens: &Lens) -> ShownView {
 }
 
 /// A world to look through: some choices pinned to an option each.
-struct Lens {
+pub(crate) struct Lens {
     picks: Picks,
     /// What pinning a decision whose options depend on other choices leaves, beyond its variables: the
     /// worlds where it lands on what it's pinned to. Always, if nothing like that is pinned.
@@ -576,7 +576,7 @@ struct Lens {
 }
 
 impl Lens {
-    fn new(g: &Graph, world: &World) -> Lens {
+    pub(crate) fn new(g: &Graph, world: &World) -> Lens {
         let picks = plan::picks(g, world);
         // A draw that's several variables is pinned where whichever is in use lands there.
         // And whatever's ruled out, just for looking, is left out of every world.
@@ -613,7 +613,7 @@ fn shown_of(g: &Graph, e: Entity, c: &str) -> Option<Result<Option<Shown>, Error
     }
 }
 
-fn cell_view(g: &Graph, e: Entity, c: &str, lens: &Lens, labels: &Labels, vars: &mut BTreeMap<String, Var>) -> Option<CellView> {
+pub(crate) fn cell_view(g: &Graph, e: Entity, c: &str, lens: &Lens, labels: &Labels, vars: &mut BTreeMap<String, Var>) -> Option<CellView> {
     let in_play = &lens.in_play;
     let (backed, source) = g.backed(e, c)?;
     let (source, kind) = match source {
@@ -700,7 +700,7 @@ fn over_choices(g: &Graph, s: &Shown, in_play: &Bool) -> Option<Over> {
 }
 
 /// Whether a cell is plumbing, which only makes sense to what reads it.
-fn internal(g: &Graph, c: &str) -> bool {
+pub(crate) fn internal(g: &Graph, c: &str) -> bool {
     g.registry().cell_def(c).is_some_and(|d| d.internal)
 }
 

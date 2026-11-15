@@ -89,13 +89,14 @@ struct WorldAtArgs {
 }
 
 /// The methods `dispatch` knows.
-pub const METHODS: &[&str] = &["view", "world_at", "plan", "try", "sweep", "rows", "history", "apply", "undo", "redo"];
+pub const METHODS: &[&str] = &["read", "view", "world_at", "plan", "try", "sweep", "rows", "history", "apply", "undo", "redo"];
 
 /// Answer one call on the workspace. `author` is who's asking, for anything that changes it.
 pub fn dispatch(ws: &mut Workspace, method: &str, a: Value, author: &str) -> Result<(Value, Effect), Error> {
     let read = |v: Value| Ok((v, Effect::default()));
     let graph = Effect { graph: true };
     match method {
+        "read" => read(to_json(crate::read::read(ws, &args::<crate::read::ReadSpec>(a)?).map_err(Error::Refused)?)),
         "view" => read(to_json(views::view(ws, &args::<WorldArgs>(a)?.world))),
         "world_at" => {
             let w: WorldAtArgs = args(a)?;
