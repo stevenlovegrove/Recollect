@@ -37,7 +37,8 @@ pub fn install(reg: &mut Registry) {
     reg.component(Named::NAME, "What it's called.").everywhere();
     reg.cell::<Name>(Named::NAME, "What it's called. It isn't an identity: two nodes can share one.").per_entity().initial(json!(""));
     reg.component(NOTES, "Notes, in markdown.").icon("¶");
-    reg.cell::<Body>(NOTES, "Notes, in markdown.").initial(json!(""));
+    // A kind's notes say what the kind is, which isn't something each instance says about itself.
+    reg.cell::<Body>(NOTES, "Notes, in markdown.").initial(json!("")).per_entity();
     reg.component(SOURCES, "Where this came from, so a claim can be followed back.").icon("↩");
     reg.cell::<Sources>(SOURCES, "Where this came from, so a claim can be followed back.").initial(json!([]));
     reg.component(DRAWING, "A way of drawing what's still possible, which the worlds panel can show.").icon("✎");

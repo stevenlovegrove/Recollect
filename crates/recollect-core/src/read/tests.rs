@@ -292,3 +292,16 @@ fn a_component_a_nodes_own_link_gives_it_isnt_written_too() {
     let v = read_json(&mut ws, json!({ "nodes": { "ids": ["Parents"] } }));
     assert_eq!(node(&v, "Parents")["components"], json!(["notes"]), "part_of gives part, so it isn't written: {v}");
 }
+
+#[test]
+fn a_kinds_notes_are_its_own_and_not_its_instances() {
+    let mut ws = design();
+    let ops = json!([{ "op": "add_node", "id": "new:i", "name": "Trailer", "links": [{ "to": "Concept", "component": "is_a" }] }]);
+    dispatch(&mut ws, "apply", json!({ "ops": ops }), "t").unwrap();
+    let v = read_json(&mut ws, json!({ "nodes": { "ids": ["Trailer"] }, "worked_out": true }));
+    let trailer = node(&v, "Trailer");
+    assert!(trailer["worked_out"].get("body").is_none(), "an instance with no notes doesn't show its kind's: {trailer}");
+    assert_eq!(trailer["worked_out"]["layer"]["value"], "data model", "though it takes the kind's other cells");
+    let found = read_json(&mut ws, json!({ "nodes": { "text": "design is about" } }));
+    assert_eq!(names(&found), ["Concept"], "and searching for the kind's notes finds the kind alone");
+}
