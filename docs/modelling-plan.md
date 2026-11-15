@@ -124,6 +124,21 @@ is a good smoke test.
 **Done when:** every old MCP tool is gone, a read of one node is about the size of its file, and the
 formula bug is fixed.
 
+### What Phase 1 did differently
+
+- **Work and decisions are `read {plan: true}`,** not specifications of components. What the plan says about them (where work
+  stands, and what a decision is holding up) is worked out by `views::planning` for the worlds in play, not held in cells, so it comes
+  as a section of the read rather than per node.
+- **`changes` gives before and after as ops:** what each event did, and its inverse, which is what it replaced, each with names
+  beside handles. Before and after as whole files would mean replaying the log for each event.
+- **The overview gives `last_seq`,** so an agent has a seq to ask `changes` from even before anything has happened.
+- **The guides are on each system** (`System::guide`), and the overview gives the guide of each system the workspace uses, lists
+  the ones it doesn't, and gives theirs when asked for with `also`.
+- **The server's tests weren't mostly MCP,** as this plan said: none of them called MCP. The MCP tests are new, in
+  `crates/recollect-server/src/mcp/tests.rs`.
+- **YAML keys come out sorted,** since the answer passes through `serde_json::Value`, so `id` isn't first. Worth fixing if it
+  reads badly.
+
 ## Phase 2: structure without work (R1, R10)
 
 ### 2.1 A structure system
