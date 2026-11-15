@@ -51,6 +51,10 @@ pub struct ReadSpec {
     /// The most nodes to give.
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Where each piece of work stands, and what each decision is holding up, as the plan system sees
+    /// them in the worlds in play.
+    #[serde(default)]
+    pub plan: bool,
 }
 
 /// A formula saying which worlds to look at: plain, when it names no nodes, as
@@ -110,6 +114,13 @@ pub struct Select {
     pub tree: Option<TreeSpec>,
 }
 
+impl Select {
+    /// Nothing narrows it: every node.
+    pub fn is_empty(&self) -> bool {
+        self.ids.is_empty() && self.kind.is_none() && self.component.is_none() && self.name.is_none() && self.text.is_none() && self.tree.is_none()
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TreeSpec {
@@ -158,6 +169,8 @@ pub struct ReadOut {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub looking: Option<Looking>,
     pub nodes: Vec<NodeOut>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<views::PlanView>,
     /// How many more matched than were given.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub more: Option<usize>,
@@ -258,6 +271,7 @@ pub fn read(o: &Workspace, spec: &ReadSpec) -> Result<ReadOut, String> {
     let narrowing = spec.where_.as_ref().map(|w| narrowing(g, w)).transpose()?;
     let reader = Reader::new(o, g, spec, narrowing.as_ref());
     let looking = narrowing.as_ref().map(|n| looking(g, &spec.world, n, reader.lens.as_ref().expect("a where makes a lens")));
+    let plan = spec.plan.then(|| views::planning(o, &spec.world)).transpose()?;
     let limit = spec.limit.unwrap_or(MOST_NODES);
     if let Some(tree) = &spec.nodes.tree {
         let root = one(g, &tree.root)?;
@@ -265,11 +279,12 @@ pub fn read(o: &Workspace, spec: &ReadSpec) -> Result<ReadOut, String> {
         let mut given = 0;
         let top = reader.tree(root, tree.depth, &mut seen, &mut given, limit);
         let more = given.saturating_sub(limit);
-        return Ok(ReadOut { looking, nodes: vec![top], more: (more > 0).then_some(more) });
+        return Ok(ReadOut { looking, nodes: vec![top], plan, more: (more > 0).then_some(more) });
     }
     let chosen = select(g, &spec.nodes)?;
     let more = chosen.len().saturating_sub(limit);
-    Ok(ReadOut { looking, nodes: chosen.into_iter().take(limit).map(|e| reader.node(e)).collect(), more: (more > 0).then_some(more) })
+    let nodes = if spec.plan && spec.nodes.is_empty() { Vec::new() } else { chosen.into_iter().take(limit).map(|e| reader.node(e)).collect() };
+    Ok(ReadOut { looking, nodes, plan, more: (more > 0 && !(spec.plan && spec.nodes.is_empty())).then_some(more) })
 }
 
 /// The worlds a `where` formula keeps: where it's true, and where it can't be told, so a gap in what's
@@ -570,6 +585,91 @@ impl<'a> Reader<'a> {
         }
         out
     }
+}
+
+// ---------- what changed ----------
+
+/// What to say has changed.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChangesSpec {
+    /// Only events after this one.
+    #[serde(default)]
+    pub since: Option<u64>,
+    /// Only what touched this node, by handle or name.
+    #[serde(default)]
+    pub node: Option<String>,
+    /// The most events, newest first. 50 if not given.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// One event: who, when and why, and each op it made with what it replaced.
+#[derive(Debug, Serialize)]
+pub struct Change {
+    pub seq: u64,
+    pub at: u64,
+    pub author: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub why: String,
+    /// The event it takes back, for an undo or a redo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reverts: Option<u64>,
+    /// What it did, in order.
+    pub did: Vec<Did>,
+    /// What undoes it, in order, which says what was there before.
+    pub before: Vec<Did>,
+}
+
+/// An op, with names beside handles.
+#[derive(Debug, Serialize)]
+pub struct Did {
+    pub op: &'static str,
+    pub node: Entity,
+    pub node_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub other: Option<Entity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub other_name: Option<String>,
+    /// The component or cell.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub what: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<Value>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub formula: bool,
+}
+
+/// The events since one, newest first, with what each did and what it replaced.
+pub fn changes(o: &Workspace, spec: &ChangesSpec) -> Result<Vec<Change>, String> {
+    let g = o.log.graph();
+    let node = spec.node.as_deref().map(|n| one(g, n)).transpose()?;
+    // A node that's gone still has a name in what it was given before.
+    let mut names: BTreeMap<Entity, String> = BTreeMap::new();
+    for ev in o.log.events() {
+        for op in ev.ops.iter().chain(&ev.inverse) {
+            if let Op::Set { on, cell, to: Some(recollect_graph::Stored::Value(Value::String(n))) } = op
+                && cell == Name::NAME
+            {
+                names.insert(on.entity(), n.clone());
+            }
+        }
+    }
+    let name = |e: Entity| if g.contains(e) { label_of(g, e) } else { names.get(&e).cloned().unwrap_or_else(|| label_of(g, e)) };
+    let did = |op: &Op| {
+        let v = views::op_view(op);
+        let n = v.node.unwrap_or_else(Entity::whole);
+        Did { op: v.verb, node: n, node_name: name(n), other: v.other, other_name: v.other.map(name), what: v.what, value: v.value, formula: v.formula }
+    };
+    Ok(o.log
+        .events()
+        .iter()
+        .rev()
+        .filter(|ev| spec.since.is_none_or(|s| ev.seq > s))
+        .filter(|ev| node.is_none_or(|n| ev.ops.iter().any(|op| op.target().nodes().contains(&n))))
+        .take(spec.limit.unwrap_or(50))
+        .map(|ev| Change { seq: ev.seq, at: ev.at, author: ev.author.clone(), why: ev.why.clone(), reverts: ev.reverts, did: ev.ops.iter().map(did).collect(), before: ev.inverse.iter().map(did).collect() })
+        .collect())
 }
 
 #[cfg(test)]

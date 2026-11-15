@@ -250,3 +250,30 @@ fn the_overview_says_the_workspaces_own_words_first() {
     let full = serde_json::to_string(&serde_json::to_value(views::overview(&ws, true)).unwrap()["systems"]).unwrap().len();
     assert!(short * 2 < full, "one line for each component unless everything's asked for: {short} and {full}");
 }
+
+#[test]
+fn changes_say_what_each_event_did_and_what_it_replaced_with_names() {
+    let mut ws = design();
+    let first = ws.log.last_seq();
+    let delta = handle(&mut ws, "Delta");
+    dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "set", "id": delta, "cell": "body", "value": "A change." }], "why": "shorter" }), "t").unwrap();
+    let c = dispatch(&mut ws, "changes", json!({ "since": first }), "t").unwrap().0;
+    let events = c.as_array().unwrap();
+    assert_eq!(events.len(), 1, "only what came after: {c}");
+    let ev = &events[0];
+    assert_eq!(ev["why"], "shorter");
+    assert_eq!(ev["did"][0]["node_name"], "Delta");
+    assert_eq!(ev["did"][0]["value"], "A change.");
+    assert_eq!(ev["before"][0]["value"], "An atomic change.", "what it replaced: {ev}");
+
+    let all = dispatch(&mut ws, "changes", json!({ "node": "Header" }), "t").unwrap().0;
+    assert_eq!(all.as_array().unwrap().len(), 1, "only what touched it");
+}
+
+#[test]
+fn a_read_can_ask_where_the_plan_stands() {
+    let mut ws = design();
+    let v = read_json(&mut ws, json!({ "plan": true }));
+    assert!(v["nodes"].as_array().unwrap().is_empty(), "the plan alone, when no nodes are asked for");
+    assert_eq!(v["plan"]["decisions"][0]["name"], "How is ancestry recorded?", "{}", v["plan"]);
+}
