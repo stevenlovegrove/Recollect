@@ -103,7 +103,7 @@ It's the same trade as before. The engine can say what's true of a model with a 
 
 ### What it would take
 
-Two things, each of use beyond fitting:
+Two things, each of use beyond fitting, designed in [inference.md](inference.md):
 
 1. **A way to say how likely something observed is,** as a weight rather than a truth: say `likely(r.residual, normal(0, sigma))`, whose meaning is the bell curve's density at each draw's residual, multiplied over the rows. It would sit beside `evidence`, as `evidence` sits beside `requires`, because it's a third thing: not "this is so" but "this is how likely what was seen is".
 2. **Draws that follow the weights,** so what's read after them is a few thousand that count, not a few that count for a lot: drawing again near the draws that weigh the most, or a Markov chain over the draws. Either way the reading has to say how many independent draws it really is, which a weighted reading can work out.

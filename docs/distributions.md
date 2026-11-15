@@ -101,7 +101,7 @@ With only choices, a world is an option, so both drop the same thing. With a dis
 - **`evidence`:** this is known to be true. It conditions what's uncertain, and never restricts a choice of yours.
 - **`requires`:** your choices have to make this true, with a cell for how surely, which is always unless it says. For each way your choices could go, its chance, given the evidence, has to reach that.
 
-With nothing uncertain, each does exactly what `requires` does now.
+With nothing uncertain, each does exactly what `requires` does now. How evidence would also take what was seen with how likely it was, `y ~ normal(…)`, as a weight rather than a truth, is designed in [inference.md](inference.md).
 
 **A choice is judged by what's known when it's made.** A `knowing` edge goes from a decision to each uncertain thing that's known by then. A requirement is then judged for each thing that could be known: an option is allowed where its chance of meeting it, given that, reaches the level. That's a value that differs over the known things, so pinning what Monty opens shows which options are left. Choices in a row are worked backward, each later one made as well as it can be. With no `knowing` edge, a choice is made before anything's known, which is what the graph says, and its card says so by name: "judged as chosen before X is known".
 

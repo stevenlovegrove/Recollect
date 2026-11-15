@@ -171,3 +171,4 @@ fn a_residual_drawn_for_each_row_fits_exactly_nowhere_and_within_a_little_for_on
     // Each row keeps a few in ten of the draws the last one left: by five rows there's none.
     assert_eq!(kept(&residual_table(5, Some(0.5))), 0);
 }
+
