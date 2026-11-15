@@ -90,3 +90,42 @@ fn a_pick_needs_rows() {
     g.formula("pick", "any_row(Empty.rows)");
     assert!(error(&g, "pick").contains("has none"), "{}", error(&g, "pick"));
 }
+
+// ---------- a line fitted as it's written ----------
+
+/// A line through the runners written as equations: a slope and a height with what's believed of them
+/// beforehand, a residual on each row, and what's known about the residuals as evidence.
+fn line_fit(rows: usize, within: f64) -> N {
+    let mut g = N::with(install);
+    g.formula("m", "normal(2, 0.5)");
+    g.formula("c", "normal(0, 5)");
+    g.e("T");
+    for (i, (x, y)) in RUNNERS.iter().take(rows).enumerate() {
+        let k = format!("T[{}]", i + 1);
+        g.e(&k);
+        g.formula_on(&k, "x", &x.to_string()).formula_on(&k, "y", &y.to_string());
+    }
+    g.formula_on("T", "residual", "self.y - (m * self.x + c)").input("T", "m", "m").input("T", "c", "c");
+    g.formula("Fits", &format!("all(r in T.rows: abs(r.residual) < {within})")).add("Fits", EVIDENCE);
+    g.formula("Slope", "mean(m)").input("Slope", "m", "m");
+    g
+}
+
+const RUNNERS: [(f64, f64); 40] = [(25.7, 53.0), (19.4, 40.8), (18.8, 40.0), (26.2, 55.0), (26.2, 54.2), (32.2, 69.7), (20.3, 44.1), (29.5, 62.7), (25.2, 54.0), (23.1, 50.8), (30.4, 63.2), (26.8, 55.6), (23.3, 50.2), (24.7, 52.0), (21.2, 42.8), (23.5, 51.8), (24.6, 51.6), (22.4, 45.9), (16.8, 35.5), (26.3, 55.9), (25.5, 51.5), (21.3, 44.2), (24.6, 51.0), (25.8, 53.3), (22.6, 47.7), (19.8, 41.3), (27.2, 57.2), (24.8, 52.6), (31.2, 63.6), (19.7, 40.7), (29.6, 62.1), (23.0, 48.3), (23.9, 52.2), (24.6, 51.7), (21.4, 44.2), (25.7, 52.5), (20.4, 42.4), (24.7, 51.4), (21.7, 45.5), (17.7, 36.3)];
+
+#[test]
+fn a_line_fitted_as_evidence_about_residuals_keeps_the_draws_that_fit_and_says_how_few() {
+    use recollect_graph::chance::Reader;
+    // Every residual within 5 minutes: about one draw in eight fits, and the slope given that is what a
+    // fine grid over the same prior and the same evidence says, 2.098 give or take 0.148.
+    let g = line_fit(40, 5.0);
+    let kept = Reader::given(recollect_systems::formulas::known_draws(&g)).draws_kept();
+    assert!((450..550).contains(&kept), "{kept} draws fit");
+    let Val::Estimate(slope) = only(&g, "Slope") else { panic!("read from the draws that fit, and says so") };
+    assert_eq!(slope.draws, kept);
+    assert!((slope.value - 2.098).abs() < 3.0 * slope.error.unwrap(), "{slope:?}");
+    // Within 2 minutes, no line fits all forty: the grid finds none either. So there's nothing to say.
+    let g = line_fit(40, 2.0);
+    assert_eq!(Reader::given(recollect_systems::formulas::known_draws(&g)).draws_kept(), 0);
+    assert_eq!(only(&g, "Slope"), Val::Undefined);
+}
