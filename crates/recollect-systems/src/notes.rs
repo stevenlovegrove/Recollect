@@ -46,3 +46,19 @@ pub fn install(reg: &mut Registry) {
         reg.edge(name, about);
     }
 }
+
+/// How to use what this system gives, for an agent: see `mcp.rs` in the server.
+pub const GUIDE: &str = "\
+Every node has a `name`. Its notes are `body`, in markdown, and `sources` says where a claim came from, so it can be followed back. \
+Reasons for a change belong in its `why`, which is in the log, not in a node's text.\n\
+\n\
+Edges say how ideas relate: `serves`, `supports`, `contradicts`, `constrains`, `supersedes` and `relates`. An edge can carry cells of \
+the workspace's own, as a node can, so `relates` with `role: names` and `many: true` says more than `relates` alone. Write them in a \
+link's `cells`.\n\
+\n\
+A node with a `drawing` cell holding TypeScript shows the problem the way it's really thought about: `export function draw(world: World): \
+string` returns SVG or HTML, and the app's worlds panel can show it. world.choices is [{id, name, options: [{id, name, possible, picked, \
+gap, weight}]}], already narrowed to what's pinned, and world.nodes is [{id, name, cells}], with world.edges, world.count and world.picks. \
+An element with data-pin-choice and data-pin-option pins that option when clicked, and unpins it if it's already pinned. Colours are CSS \
+variables: --text, --muted, --accent, --bg, --panel, --border. It runs sandboxed with no network, no DOM and no memory between worlds, so \
+everything it shows has to come from `world`. There can be several drawings.";

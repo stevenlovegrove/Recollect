@@ -8,10 +8,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use recollect_graph::chance::{Rand, Reader, Share, Term};
 use recollect_graph::worlds::{Bool, DrawGroup, Picks, Var};
-use recollect_graph::{Backed, CellDef, CellType, ComponentDef, ComponentType, Entity, Error, Event, Graph, Log, Named, On, Op, Origin, Shown, Source, Stored, Violation};
+use recollect_graph::{Backed, CellDef, CellType, ComponentDef, Entity, Error, Event, Graph, Log, On, Op, Origin, Shown, Source, Stored, Violation};
 use recollect_systems::formulas::{CHOICE, Called, EVIDENCE, FOUND, Found, LABEL, VALUE, ValueCell, draws_found, is_chance, known_draws, narrows, shown_free, worlds_left};
 use recollect_systems::expr::Val;
-use recollect_systems::notes::Body;
 use recollect_systems::plan::{self, Matrix, UNCERTAIN, WorkItem};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -1261,119 +1260,21 @@ pub fn history(o: &Workspace, node: Option<Entity>) -> Vec<EventView> {
     o.log.events().iter().rev().filter(|ev| node.is_none_or(|n| ev.ops.iter().any(|op| op.target().nodes().contains(&n)))).map(event_view).collect()
 }
 
-// ---------- for reading in smaller pieces, as Claude does ----------
-
-#[derive(Debug, Serialize)]
-pub struct Brief {
-    pub id: Entity,
-    pub name: String,
-    pub components: Vec<String>,
-}
-
-fn brief(o: &Workspace, e: Entity) -> Brief {
-    let g = o.log.graph();
-    Brief { id: e, name: recollect_systems::label_of(g, e), components: g.components_of(e).keys().filter(|c| *c != Named::NAME).cloned().collect() }
-}
-
-pub fn list(o: &Workspace, component: Option<&str>) -> Vec<Brief> {
-    let g = o.log.graph();
-    g.entities().filter(|e| component.is_none_or(|c| g.has(*e, c))).map(|e| brief(o, e)).collect()
-}
-
-pub fn search(o: &Workspace, query: &str, limit: usize) -> Vec<Brief> {
-    let g = o.log.graph();
-    let terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-    let mut hits: Vec<(usize, Entity)> = g
-        .entities()
-        .filter_map(|e| {
-            let name = recollect_systems::label_of(g, e).to_lowercase();
-            let body = g.get::<Body>(e).ok().flatten().map_or(String::new(), |b| b.0.to_lowercase());
-            let all = terms.iter().all(|t| name.contains(t) || body.contains(t));
-            all.then(|| (terms.iter().filter(|t| name.contains(*t)).count(), e))
-        })
-        .collect();
-    hits.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-    hits.into_iter().take(limit).map(|(_, e)| brief(o, e)).collect()
-}
-
-#[derive(Debug, Serialize)]
-pub struct NodeDetail {
-    #[serde(flatten)]
-    pub node: NodeView,
-    pub outgoing: Vec<EdgeBrief>,
-    pub incoming: Vec<EdgeBrief>,
-    pub history: Vec<EventView>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct EdgeBrief {
-    pub components: Vec<String>,
-    pub node: Entity,
-    pub name: String,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub cells: BTreeMap<String, CellView>,
-}
-
-pub fn node(o: &Workspace, e: Entity, world: &World) -> NodeDetail {
-    let (copy, _) = looked_at(o.log.graph(), world);
-    let g: &Graph = copy.as_ref().unwrap_or_else(|| o.log.graph());
-    let labels = Labels::gather(g);
-    let lens = Lens::new(g, world);
-    let mut vars = BTreeMap::new();
-    let mine = cells(g, e, &lens, &labels, &mut vars);
-    let (mut outgoing, mut incoming) = (Vec::new(), Vec::new());
-    for (edge, from, to) in g.edges().filter(|(_, f, t)| *f == e || *t == e) {
-        let other = if from == e { to } else { from };
-        let brief = EdgeBrief { components: g.given(edge).into_iter().collect(), node: other, name: labels.of(&other.to_string()), cells: cells(g, edge, &lens, &labels, &mut vars) };
-        if from == e { outgoing.push(brief) } else { incoming.push(brief) }
-    }
-    NodeDetail { node: node_view(g, e, labels.of(&e.to_string()), mine), outgoing, incoming, history: history(o, Some(e)) }
-}
-
-#[derive(Debug, Serialize)]
-pub struct TreeNode {
-    #[serde(flatten)]
-    pub node: Brief,
-    pub need: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub children: Vec<TreeNode>,
-    /// Shown elsewhere in this tree, so what's beneath it isn't repeated.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub shared: bool,
-}
-
-/// What's beneath a node, over the kinds of link that give the graph its shape.
-pub fn tree(o: &Workspace, root: Entity, depth: usize) -> TreeNode {
-    let kinds = o.log.graph().registry().components().filter(|c| c.arranges).map(|c| c.name.clone()).collect::<Vec<_>>();
-    let labels = Labels::gather(o.log.graph());
-    fn walk(o: &Workspace, kinds: &[String], labels: &Labels, e: Entity, depth: usize, seen: &mut Vec<Entity>) -> TreeNode {
-        let g = o.log.graph();
-        let shared = seen.contains(&e);
-        seen.push(e);
-        let mut children = Vec::new();
-        if !shared && depth > 0 {
-            let mut below: Vec<Entity> = kinds.iter().flat_map(|k| if g.registry().component_def(k).is_some_and(|c| c.reversed) { g.targets_of(e, k) } else { g.sources_of(e, k) }).collect();
-            below.dedup();
-            for c in below {
-                children.push(walk(o, kinds, labels, c, depth - 1, seen));
-            }
-        }
-        let need = g.get::<plan::Need>(e).ok().flatten().map(|n| n.0.show_with(&|s| labels.of(s)));
-        TreeNode { node: brief(o, e), need, children, shared }
-    }
-    walk(o, &kinds, &labels, root, depth, &mut Vec::new())
-}
-
 /// What a workspace is, for whoever's starting on it: its own words first, and then what its systems give.
 #[derive(Serialize)]
 pub struct Overview {
     pub workspace: WorkspaceView,
     pub nodes: usize,
     pub events: usize,
+    /// The newest event, to ask `changes` for what's happened since.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_seq: Option<u64>,
     /// What this workspace says that no system does: its own cells, its kinds, and its tables.
     pub own: Vocabulary,
     /// What each system it uses gives: one line for each component, unless everything is asked for.
     pub systems: Vec<SystemView>,
+    /// The systems it doesn't use yet. Using anything from one takes it on.
+    pub available: Vec<SystemBrief>,
     pub checks: Vec<CheckView>,
     pub open_choices: Vec<VarView>,
 }
@@ -1416,7 +1317,15 @@ pub struct TableBrief {
 pub struct SystemView {
     pub name: String,
     pub about: String,
+    /// How to use it.
+    pub guide: String,
     pub components: Vec<ComponentBrief>,
+}
+
+#[derive(Serialize)]
+pub struct SystemBrief {
+    pub name: String,
+    pub about: String,
 }
 
 /// A component as one line, or, when everything is asked for, all that's said about it.
@@ -1424,35 +1333,38 @@ pub struct SystemView {
 #[serde(untagged)]
 pub enum ComponentBrief {
     Line { name: String, about: String, #[serde(skip_serializing_if = "Vec::is_empty")] cells: Vec<String> },
-    Full { #[serde(flatten)] def: ComponentDef, cell_defs: Vec<CellInfo> },
+    Full { #[serde(flatten)] def: Box<ComponentDef>, cell_defs: Vec<CellInfo> },
 }
 
-pub fn overview(o: &Workspace, full: bool) -> Overview {
+/// What a workspace is. `also` names systems it doesn't use yet whose guides and components to give too.
+pub fn overview(o: &Workspace, full: bool, also: &[String]) -> Overview {
     let v = view(o, &World::new());
     let g = o.log.graph();
     let all = recollect_systems::everything();
-    let systems = o
-        .built
-        .names
-        .iter()
+    let shown: Vec<&String> = o.built.names.iter().chain(also.iter().filter(|a| !o.built.names.contains(a))).collect();
+    let available = recollect_systems::SYSTEMS.iter().filter(|s| !shown.iter().any(|n| n.as_str() == s.name)).map(|s| SystemBrief { name: s.name.to_string(), about: s.about.to_string() }).collect();
+    let systems = shown
+        .into_iter()
         .map(|name| {
-            let about = recollect_systems::SYSTEMS.iter().find(|s| s.name == name).map_or(String::new(), |s| s.about.to_string());
+            let system = recollect_systems::SYSTEMS.iter().find(|s| s.name == name);
+            let about = system.map_or(String::new(), |s| s.about.to_string());
+            let guide = system.map_or(String::new(), |s| s.guide.to_string());
             let components = all
                 .components()
                 .filter(|c| &c.system == name)
                 .map(|c| {
                     if full {
-                        ComponentBrief::Full { def: c.clone(), cell_defs: c.cells.iter().filter_map(|n| all.cell_def(n)).filter(|d| !d.internal).map(cell_info).collect() }
+                        ComponentBrief::Full { def: Box::new(c.clone()), cell_defs: c.cells.iter().filter_map(|n| all.cell_def(n)).filter(|d| !d.internal).map(cell_info).collect() }
                     } else {
                         let cells = c.cells.iter().filter(|n| all.cell_def(n).is_some_and(|d| !d.internal)).cloned().collect();
                         ComponentBrief::Line { name: c.name.clone(), about: c.about.clone(), cells }
                     }
                 })
                 .collect();
-            SystemView { name: name.clone(), about, components }
+            SystemView { name: name.clone(), about, guide, components }
         })
         .collect();
-    Overview { nodes: v.nodes.len(), workspace: v.workspace, events: o.log.events().len(), own: vocabulary(g), systems, checks: v.checks, open_choices: v.worlds.vars }
+    Overview { nodes: v.nodes.len(), workspace: v.workspace, events: o.log.events().len(), last_seq: o.log.last_seq(), own: vocabulary(g), systems, available, checks: v.checks, open_choices: v.worlds.vars }
 }
 
 fn vocabulary(g: &Graph) -> Vocabulary {

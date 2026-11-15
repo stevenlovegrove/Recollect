@@ -2247,3 +2247,53 @@ pub fn install(reg: &mut Registry) {
     reg.edge(IS_A, "What kind of thing this is: it has its kind's components, and takes any cell it doesn't say from there.");
     reg.inherit_through(IS_A);
 }
+
+/// How to use what this system gives, for an agent: see `mcp.rs` in the server.
+pub const GUIDE: &str = "\
+A workspace can have cells of its own, such as `price` or `layer`, which no component brings and any node or edge can have. When \
+several nodes are the same kind of thing, make a node for the kind and link each to it with an `is_a` edge: they have its components, \
+and take any cell they don't write themselves from it (except a node's own `name` and `value`), and a formula on the kind runs for each \
+of them, with `self` meaning that node and its other names labelled once on the kind. A read can pick out a kind's instances with \
+`nodes: {kind: Concept}`, and a formula can count them with `count(k.in.is_a)` where `k` labels the kind.\n\
+\n\
+A node's `value` can be typed in, or a formula, and so can any of the workspace's own cells. That's how to state a claim the app can hold \
+you to, rather than only describing it. Write {op: set, id, cell: value, formula: \"prev * (1 + rate)\", labels: {prev: \"Year 2\", \
+rate: \"Rate\"}}. A label is an edge whose `called` cell is the name a formula on its source uses for its target, and several nodes under \
+one name make a group. A formula means the same thing in every world: what you'd get with ordinary values there, so `a + b` works whether \
+or not either varies. Operators: + - * / = != < <= > >= && || !. A number, \\\"text\\\", true, false or undefined. `rate` is that node's \
+value, `rate.finish` another of its cells, and `self.need` one of this node's. Functions: if(c, a, b), defined(x), or(x, fallback), abs, \
+min(a, b), max(a, b), round(x, places?), floor, ceil, has(x.c), and chose(choice, option), which is true where that choice lands on that \
+option. Over a group, which is a label, in.component or out.component (the nodes at the other end of those edges), with.component (the \
+nodes with it), or any of those followed by more steps such as `k.in.is_a` or `x.out.part_of`: sum, product, all, any, count and \
+distinct, as sum(line) or sum(t in task: if(t.need, t.estimate, 0)). In a fold over edges, `o.via.weight` reads a cell of the edge `o` \
+was reached along, and a formula on an edge reads its ends as `from` and `to`. with.component is every such node in the workspace, so \
+only use it when that's what's meant. Division by zero and missing inputs are undefined, only in the worlds where that's so. A formula \
+with a type error or an unknown input is refused, with the reason.\n\
+\n\
+A choice's `chosen` cell is the node it lands on in each world, and a dot reads through it: with `car` labelling a choice, \
+`car.chosen.range >= trip` reads the range of whichever car it lands on. `car.chosen = tom` compares nodes. A node with `options` (a \
+plain list, such as [\"red\", \"green\"]) is a choice between them: each option is a node nobody wrote, whose `name` and `value` are the \
+option, so `a.chosen.value = \"red\"`, and `a.chosen != b.chosen` says two choices differ.\n\
+\n\
+A name makes a table. A node named `Year[3]` is row 3 of the table `Year`, and `Car[Hatchback]` is the Hatchback row of `Car`: each takes \
+what it doesn't say from the node named `Year` or `Car`, as from a kind. A formula there reads `prev.balance` for the row before (`next`, \
+`prev.prev`, `row` for which row this is, and `rows` for all of them), so a recurrence is one formula on the table and a starting value on \
+the first row. A numbered table goes on past its last row by itself. A table's columns are cells of the workspace's own, since `value` is \
+each node's own answer. A table can be a table of choices: give the table node `options` and each row is a choice from them. For a \
+puzzle, make a table for each kind of thing and write each clue as a formula naming the rows it's about: \
+`Nationality[English].chosen = Colour[Red].chosen`. Say all different with `distinct(r in rows: r.chosen)`. `Arrived.rows` is a table's \
+rows by its name and `Left[v.row]` the row with the same key as one being gone over. Write a whole table with one op: {op: table, name: \
+\"Year\", columns: {balance: {formula: \"prev.balance * (1 + rate)\", labels: {rate: \"Rate\"}}}, range: [0, 10], rows: [{key: 0, \
+balance: 1000}]}, with `is_a` for a table that's a kind of another, `components` for what every row is, and `alternative_of` to make \
+every row an option of a decision.\n\
+\n\
+A node with `requires` and a true-or-false value is a demand on choices: only the ways they could go that make it true count. Where it \
+depends on chance, its `at_least` cell says how surely, from 0 to 1. A node with `evidence` is something known to be true: it rules out \
+the worlds, and the draws, where it's false, and never a choice. Use `evidence` for what was observed and `requires` for what's wanted.\n\
+\n\
+A number can be uncertain: normal(mean, sd), lognormal(mean, sd), uniform(low, high), triangular(low, likely, high), exponential(mean), \
+between(low, high) for about that nine times in ten, integers(low, high) and bernoulli(p). Each place one is written is its own draw, and \
+a cell read twice is the same one. chance(x) is how likely x is, and mean(x) what it comes to on average, over everything that's a matter \
+of chance and never over a choice, so `requires` can say chance(cost < 4000) >= 0.9.\n\
+\n\
+To reuse logic, a node with a `macro` cell {params: [t], body: \"t.estimate * 100\"} is a function its callers link to with a label.";

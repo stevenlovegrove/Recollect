@@ -1118,3 +1118,23 @@ pub fn work(g: &Graph, world: &BTreeMap<String, String>) -> Result<Vec<WorkItem>
     }
     Ok(out)
 }
+
+/// How to use what this system gives, for an agent: see `mcp.rs` in the server.
+pub const GUIDE: &str = "\
+Structure is coarse to fine. `part_of` edges point child to parent, and all of a node's parts are needed. A `decision` node's options are \
+ordinary nodes with an `alternative` edge to it, and only the option taken is needed, so work several options share is simply part_of \
+each of them, and is safe to do before deciding. Finding that overlap is worth effort. Decide with {op: set, id: <decision>, cell: \
+chosen, value: {ref: <option's handle>}}, and rule an option out with {op: set, from: <option>, to: <decision>, cell: ruled_out, value: \
+\"why\"}. Give a decision `uncertain` when it isn't anyone's to choose: its options' weights then say how far each is believed, and \
+what's expected averages over it. A `knowing` edge from a decision to something says it's made knowing how that turns out.\n\
+\n\
+`depends_on` is ordering, inherited by what's inside. An `unknown` node is a gap: it says something here isn't specified yet, and \
+removing it is the claim that it's closed. `done` is true or false, and is worked out from what's beneath unless a node says otherwise. \
+A stated `done` that disagrees with what's beneath gets a notice, so to finish something early, say so and drop what's left. `dropped` \
+means deliberately out of the picture: prefer dropping to deleting.\n\
+\n\
+Reading a plan: `read {plan: true}` says where each piece of work stands (could start now, depends on a decision, waiting and on what, \
+finished, or not needed) and what each decision is holding up (pressure: free, blocking, idle, decided). `read {nodes: {tree: {root: \
+<node>}}, cells: [need]}` is what's beneath a node: read it before decomposing further, and reuse nodes wherever the same work appears. \
+Stop when a leaf could be started today. Surface risks with a `contradicts` edge to what they threaten, and suggest what would \
+discriminate between a decision's options.";

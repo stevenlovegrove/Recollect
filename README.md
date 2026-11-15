@@ -51,7 +51,7 @@ Connect Claude Code:
 claude mcp add --transport http recollect http://127.0.0.1:7878/mcp
 ```
 
-Then ask Claude to call `get_overview` and build or critique the graph. Its changes land directly, as yours do, and you see them as they arrive. Each is in History with Claude's reason, and any one can be taken back on its own. The same folder can be open in the static site at the same time: each sees the other's changes.
+Then ask Claude to call `overview` and build or critique the graph. Its changes land directly, as yours do, and you see them as they arrive. Each is in History with Claude's reason, and any one can be taken back on its own. The same folder can be open in the static site at the same time: each sees the other's changes.
 
 UI development against the server: `RECOLLECT_BACKEND=http://127.0.0.1:7878 npm run dev` in `web/`. Vite serves on :5173 and proxies `/api` and `/mcp` to it.
 

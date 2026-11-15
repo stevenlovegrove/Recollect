@@ -91,3 +91,8 @@ pub fn install(reg: &mut Registry) {
     reg.cell::<Slack>(PART, "How far it could slip without moving the end of the plan.").compiles(compiler::<Slack>(Type::Number, |c| number_cases(c, "slack").map(Slack))).default_formula(SLACK).shown(|s| Shown::cond(&s.0.0));
     reg.cell::<Dates>(PART, "When it happens, in the worlds that need it.").builtin(dates).shown(|d| Shown::cond(&d.0)).quiet();
 }
+
+/// How to use what this system gives, for an agent: see `mcp.rs` in the server.
+pub const GUIDE: &str = "\
+A task's `estimate` is how long it takes, in days, typed in or a formula, and may be uncertain. Dates and slack are worked out in every \
+world from estimates and `depends_on`, and a goal's `finish` is when the last of what it needs ends.";

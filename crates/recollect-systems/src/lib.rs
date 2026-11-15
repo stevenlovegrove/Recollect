@@ -21,14 +21,16 @@ pub struct System {
     pub name: &'static str,
     pub about: &'static str,
     pub install: fn(&mut Registry),
+    /// How to use it, for an agent that's starting on a workspace that does.
+    pub guide: &'static str,
 }
 
 /// Every system there is. A plugin would add to this.
 pub const SYSTEMS: &[System] = &[
-    System { name: "notes", about: "Names, notes and sources, and edges that say how ideas relate.", install: notes::install },
-    System { name: "formulas", about: "Values typed in or worked out, choices, and requirements on the worlds that count.", install: formulas::install },
-    System { name: "plan", about: "Work, decisions held open, and what can safely start.", install: plan::install },
-    System { name: "schedule", about: "Dates and slack in every world. Needs plan.", install: schedule::install },
+    System { name: "notes", about: "Names, notes and sources, and edges that say how ideas relate.", install: notes::install, guide: notes::GUIDE },
+    System { name: "formulas", about: "Values typed in or worked out, choices, and requirements on the worlds that count.", install: formulas::install, guide: formulas::GUIDE },
+    System { name: "plan", about: "Work, decisions held open, and what can safely start.", install: plan::install, guide: plan::GUIDE },
+    System { name: "schedule", about: "Dates and slack in every world. Needs plan.", install: schedule::install, guide: schedule::GUIDE },
 ];
 
 /// The systems every workspace has, so they aren't anything to choose.

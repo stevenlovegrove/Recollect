@@ -37,7 +37,7 @@ export function ChecksView({ ws, onSelect }: ViewProps) {
     <div className="scroll pad">
       <div className="map-toolbar flat">
         <span className="muted">
-          Checks worked out from the graph. Ask Claude to run <code>find_checks</code> and look beyond them.
+          Checks worked out from the graph. Ask Claude to run <code>checks</code> and look beyond them.
         </span>
       </div>
       {groups.length === 0 && <p className="muted">Nothing to report.</p>}
