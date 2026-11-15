@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use recollect_graph::{CommitError, Entity, Log, Op, SavedGraph, SavedNode, Stored, is_node_path, node_of_path, node_text, parse_node, path_of};
+use recollect_graph::{CellType, CommitError, Entity, Graph, Log, Name, Op, SavedGraph, SavedNode, Stored, is_node_path, node_of_path, node_text, parse_node, path_of};
 use recollect_systems::samples::{FORMAT, SAMPLES, config_text, ops_of};
 use recollect_systems::{Built, build, needed};
 use serde::{Deserialize, Serialize};
@@ -76,11 +76,30 @@ pub const CONFIG: &str = "recollect.toml";
 pub const SAMPLE_MARKER: &str = "sample-format";
 pub const SAMPLE_FORMAT: &str = FORMAT;
 
-fn refusal(e: CommitError) -> Error {
+fn refusal(e: CommitError, g: &Graph, ops: &[Op]) -> Error {
     match e {
-        CommitError::Refused(v) => Error::Refused(v.iter().map(|v| format!("{}: {}", v.rule, v.detail)).collect::<Vec<_>>().join("; ")),
+        CommitError::Refused(v) => Error::Refused(violations(&v, g, ops)),
         CommitError::NoSuchEvent(seq) => Error::NotFound(format!("event {seq}")),
     }
+}
+
+/// What was refused, with each node it mentions named as well as given by its handle, so whoever reads
+/// it knows which node is meant and can still refer to it. A node the refused change would have named
+/// is named as it would have been.
+fn violations(v: &[recollect_graph::Violation], g: &Graph, ops: &[Op]) -> String {
+    let mut names: BTreeMap<String, String> = g.entities().filter_map(|e| match g.get_value(e, Name::NAME) {
+        Ok(Some(Value::String(n))) => Some((e.to_string(), n)),
+        _ => None,
+    }).collect();
+    for op in ops {
+        if let Op::Set { on, cell, to: Some(Stored::Value(Value::String(n))) } = op
+            && cell == Name::NAME
+        {
+            names.insert(on.entity().to_string(), n.clone());
+        }
+    }
+    let named = |text: &str| names.iter().filter(|(id, _)| text.contains(id.as_str())).fold(text.to_string(), |t, (id, n)| t.replace(id.as_str(), &format!("“{n}” ({id})")));
+    v.iter().map(|v| format!("{}: {}", v.rule, named(&v.detail))).collect::<Vec<_>>().join("; ")
 }
 
 /// What a change to the files brought in.
@@ -334,7 +353,7 @@ impl Workspace {
     /// A formula written through the app or by Claude has to work when it's written, or it's refused,
     /// saying why. A hand edit can't be refused, so it stands and its cell says what's wrong.
     fn formulas_work(&self, ops: &[Op]) -> Result<(), Error> {
-        let g = self.log.what_if(ops).map_err(|v| Error::Refused(v.iter().map(|v| format!("{}: {}", v.rule, v.detail)).collect::<Vec<_>>().join("; ")))?;
+        let g = self.log.what_if(ops).map_err(|v| Error::Refused(violations(&v, self.log.graph(), ops)))?;
         for op in ops {
             if let Op::Set { on, cell, to: Some(Stored::Formula(_)) } = op
                 && let Err(e) = g.get_value(on.entity(), cell)
@@ -354,7 +373,7 @@ impl Workspace {
         let systems = with_needed(&self.config.systems, needed(components, cells));
         if systems == self.config.systems {
             self.formulas_work(&resolved.ops)?;
-            self.log.commit(author, why, resolved.ops.clone()).map_err(refusal)?;
+            self.log.commit(author, why, resolved.ops.clone()).map_err(|e| refusal(e, self.log.graph(), &resolved.ops))?;
             return Ok(resolved);
         }
         let built = build(&systems).map_err(Error::Refused)?;
@@ -363,7 +382,7 @@ impl Workspace {
         // Again, now that what it uses is known, so its cells bring their components.
         let done = resolve_ops(ops, self.log.graph()).map_err(Error::Refused).and_then(|r| {
             self.formulas_work(&r.ops)?;
-            self.log.commit(author, why, r.ops.clone()).map_err(refusal)?;
+            self.log.commit(author, why, r.ops.clone()).map_err(|e| refusal(e, self.log.graph(), &r.ops))?;
             Ok(r)
         });
         match done {
@@ -382,17 +401,17 @@ impl Workspace {
 
     /// Take back any one event.
     pub fn undo(&mut self, seq: u64, author: &str, why: &str) -> Result<u64, Error> {
-        self.log.undo(seq, author, why).map_err(refusal)
+        self.log.undo(seq, author, why).map_err(|e| refusal(e, self.log.graph(), &[]))
     }
 
     /// Take back the newest change, if there's one to take back.
     pub fn undo_last(&mut self, author: &str) -> Result<Option<u64>, Error> {
-        self.log.undo_last(author).map_err(refusal)
+        self.log.undo_last(author).map_err(|e| refusal(e, self.log.graph(), &[]))
     }
 
     /// Take back the newest undo, if nothing's changed since.
     pub fn redo(&mut self, author: &str) -> Result<Option<u64>, Error> {
-        self.log.redo(author).map_err(refusal)
+        self.log.redo(author).map_err(|e| refusal(e, self.log.graph(), &[]))
     }
 
 }

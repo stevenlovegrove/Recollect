@@ -494,6 +494,8 @@ export function reading(cell: Cell | undefined): Reading | undefined {
 export function casesOf(cell: Cell | undefined): unknown[] {
   if (!cell) return [];
   if (cell.shown?.kind === "cond") return cell.shown.cases.map((c) => c.value);
+  // A set of worlds is read through its reading, not as a value, though it has one when it's settled.
+  if (cell.shown?.kind === "bool") return [];
   return cell.value === undefined ? [] : [cell.value];
 }
 

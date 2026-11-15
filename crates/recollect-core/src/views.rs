@@ -644,6 +644,9 @@ fn cell_view(g: &Graph, e: Entity, c: &str, lens: &Lens, labels: &Labels, vars: 
                         [(_, only)] => Some((*only).clone()),
                         _ => None,
                     },
+                    // A truth that's the same in every world left is that truth.
+                    Shown::Bool(b) if b.holds_given(in_play) => Some(Value::Bool(true)),
+                    Shown::Bool(b) if (!b).holds_given(in_play) => Some(Value::Bool(false)),
                     _ => None,
                 };
                 // A puzzle's constraint differs over its choices, but not between the worlds that are left.

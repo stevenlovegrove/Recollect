@@ -213,6 +213,39 @@ fn a_refused_change_takes_on_no_system() {
 }
 
 #[test]
+fn a_refusal_names_the_node_it_means_as_well_as_its_handle() {
+    let mut ws = open(new_files("Mine").unwrap());
+    let bad = dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "add_node", "id": "new:c", "name": "Header", "components": ["concept"] }] }), "t");
+    let Err(Error::Refused(why)) = bad else { panic!("should be refused: {bad:?}") };
+    assert!(why.contains("“Header” ("), "a node being made is named as it would have been: {why}");
+    assert!(why.contains("unknown_component"), "{why}");
+
+    dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "add_node", "id": "new:a", "name": "Delta" }] }), "t").unwrap();
+    let delta = id(&view(&mut ws), "Delta");
+    let bad = dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "add", "id": delta, "component": "concept" }] }), "t");
+    let Err(Error::Refused(why)) = bad else { panic!("should be refused: {bad:?}") };
+    assert!(why.contains(&format!("“Delta” ({delta})")), "a node already there is named: {why}");
+}
+
+#[test]
+fn a_truth_settled_in_every_world_left_has_a_value() {
+    let mut ws = open(sample_files("critical-path").unwrap());
+    let v = view(&mut ws);
+    let truths: Vec<&Value> = v["nodes"].as_array().unwrap().iter().flat_map(|n| n["cells"].as_object().unwrap().values()).filter(|c| c["shown"]["kind"] == "bool").collect();
+    assert!(!truths.is_empty(), "the sample has truths to read");
+    for c in truths {
+        let r = &c["shown"];
+        if r["always"] == true || r["prob"] == json!(1.0) {
+            assert_eq!(c["value"], json!(true), "{c}");
+        } else if r["never"] == true || r["prob"] == json!(0.0) {
+            assert_eq!(c["value"], json!(false), "{c}");
+        } else {
+            assert!(c.get("value").is_none(), "{c}");
+        }
+    }
+}
+
+#[test]
 fn nodes_written_by_hand_bring_their_systems_with_them() {
     let mut files = new_files("Mine").unwrap();
     let id = recollect_graph::Entity::new();
