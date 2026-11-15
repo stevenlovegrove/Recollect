@@ -41,6 +41,13 @@ pub const EVIDENCE: &str = "evidence";
 /// What a view has found out by pinning, on a copy of the graph it looks through. Never saved.
 pub const FOUND: &str = "found";
 pub const MACRO: &str = "macro";
+/// What should be true, said so a notice can say where it isn't: it never rules any world out.
+pub const SHOULD: &str = "should";
+
+/// A truth that should hold, as a formula. Written on a kind, each instance is held to it, with `self`
+/// meaning that instance.
+#[cell("should")]
+pub struct Should(pub Worldly<Option<bool>>);
 pub const LABEL: &str = "label";
 pub const IS_A: &str = "is_a";
 
@@ -745,6 +752,10 @@ impl<'c, 'a> Expander<'c, 'a> {
         }
         if root == "rows" {
             return self.go_on(root, plain(self.cx.rows()), rest);
+        }
+        // From this node, as `self.in.realises`, which on a kind is each instance in turn.
+        if root == "self" {
+            return self.go_on(root, vec![(self.cx.id(), None)], rest);
         }
         if rest.first().is_some_and(|r| r == "rows") && !self.labels.contains_key(root) {
             // Another table's rows, by its name, as `Arrived.rows`.
@@ -2237,6 +2248,28 @@ pub fn install(reg: &mut Registry) {
     reg.component(FOUND, "What a view has found out by pinning: never saved, and only on the copy of the graph it looks through.");
     reg.cell::<Found>(FOUND, "Each matter of chance found out, and how it landed.").internal().initial(json!({}));
 
+    reg.component(SHOULD, "What should be true here. Where it isn't, a notice says so, and no world is ruled out.").icon("✓");
+    reg.cell::<Should>(SHOULD, "A truth that should hold: written on a kind, each instance is held to it.")
+        .compiles(compiler::<Should>(Type::Bool, |c| flag_cases(c, "should").map(Should)))
+        .shown(|s| Shown::cond(&s.0.0));
+    reg.check(SHOULD, "should_hold", Severity::Notice, |cx| {
+        // A kind says what its instances should be; it isn't held to it itself.
+        if !cx.incoming(IS_A).is_empty() {
+            return Ok(vec![]);
+        }
+        let Some(Should(holds)) = cx.own::<Should>()? else { return Ok(vec![]) };
+        let fails = holds.0.holds(|v| *v == Some(false));
+        let unknown = holds.0.holds(|v| v.is_none());
+        Ok(if fails.is_always() {
+            vec!["isn't so".to_string()]
+        } else if !fails.is_never() {
+            vec![format!("isn't so where {}", fails.show())]
+        } else if unknown.is_always() {
+            vec!["can't be told".to_string()]
+        } else {
+            vec![]
+        })
+    });
     reg.component(MACRO, "A function of your own, which formulas call by labelling this node.").icon("ƒ");
     reg.cell::<Macro>(MACRO, "Its parameters, and the formula it stands for.").initial(json!({ "params": [], "body": "0" }));
     reg.cell::<MacroBody>(MACRO, "").builtin(macro_of).internal();

@@ -1063,7 +1063,84 @@ fn checks(log: &Log, labels: &Labels) -> Vec<CheckView> {
     let mut out: Vec<CheckView> = log.violations().into_iter().map(|v| check("broken", v)).collect();
     out.extend(log.notices().into_iter().map(|v| check("notice", v)));
     out.extend(log.graph().registry().all_advice(log.graph()).into_iter().map(|a| CheckView { severity: "notice", rule: a.rule, on: vec![a.on], detail: relabel(&a.detail, labels) }));
+    out.extend(unresolved(log.graph()));
     out
+}
+
+/// What's unresolved: things that aren't wrong, and may be on their way somewhere, but that whoever
+/// reads the workspace next would want to know about. Worked out when asked for, never on a change, and
+/// there until it's fixed, for the person and the agent alike.
+pub fn unresolved(g: &Graph) -> Vec<CheckView> {
+    let all = recollect_systems::everything();
+    let name = |e: Entity| recollect_systems::label_of(g, e);
+    let note = |rule: &str, on: Vec<Entity>, detail: String| CheckView { severity: "unresolved", rule: rule.to_string(), on, detail };
+    let mut out = Vec::new();
+
+    // A cell of the workspace's own written once, whose name is a letter or two from one used more: a typo,
+    // like `rol` for `role`.
+    let mut uses: BTreeMap<String, Vec<Entity>> = BTreeMap::new();
+    for e in g.entities().chain(g.edges().map(|(e, _, _)| e)) {
+        for c in g.written(e).into_keys().filter(|c| all.cell_def(c).is_none()) {
+            uses.entry(c).or_default().push(e);
+        }
+    }
+    let system: Vec<&str> = all.cells().map(|c| c.name.as_str()).collect();
+    for (c, at) in uses.iter().filter(|(_, at)| at.len() == 1) {
+        // Against a system's cell, or another of the workspace's own, each pair said once.
+        let near = system.iter().copied().chain(uses.keys().map(String::as_str)).find(|k| *k != c && close(c, k) && !(uses.get(*k).is_some_and(|u| u.len() == 1) && *k < c.as_str()));
+        if let Some(near) = near {
+            let on = at[0];
+            let whose = g.ends(on).map_or_else(|| name(on), |(f, t)| format!("the edge from {} to {}", name(f), name(t)));
+            out.push(note("cell_used_once", vec![g.ends(on).map_or(on, |(f, _)| f)], format!("{c} is written once, on {whose}, and is a letter or two from {near}: is one of them a typo?")));
+        }
+    }
+
+    // Two nodes with one name, which a reader can't tell apart by it.
+    let mut named: BTreeMap<String, Vec<Entity>> = BTreeMap::new();
+    for e in g.entities() {
+        if let Ok(Some(Value::String(n))) = g.get_value(e, recollect_graph::Name::NAME)
+            && !n.is_empty()
+        {
+            named.entry(n).or_default().push(e);
+        }
+    }
+    for (n, at) in named.into_iter().filter(|(_, at)| at.len() > 1) {
+        out.push(note("name_shared", at.clone(), format!("{} nodes are called {n}, so a name alone doesn't say which", at.len())));
+    }
+
+    // An edge that says two things relate without saying how.
+    for (e, from, to) in g.edges() {
+        if g.given(e).contains(recollect_systems::notes::RELATES) && g.edge_kind_of(e).is_none() {
+            out.push(note("relates_without_a_kind", vec![from], format!("{} relates to {} without saying how: give it a relation as its kind", name(from), name(to))));
+        }
+    }
+
+    // A relation with a single edge, which may be another's name for the same thing.
+    for r in relations(g).into_iter().filter(|r| r.edges == 1) {
+        out.push(note("relation_used_once", vec![r.id], format!("{} is the kind of one edge: is it another relation by a different name?", r.name)));
+    }
+    out
+}
+
+/// Whether two names are a letter or two apart, as a typo makes them.
+fn close(a: &str, b: &str) -> bool {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    if a.len().abs_diff(b.len()) > 2 || a.len().min(b.len()) < 3 {
+        return false;
+    }
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for i in 1..=a.len() {
+        let mut prev = row[0];
+        row[0] = i;
+        for j in 1..=b.len() {
+            let here = row[j];
+            row[j] = (row[j] + 1).min(row[j - 1] + 1).min(prev + usize::from(a[i - 1] != b[j - 1]));
+            prev = here;
+        }
+    }
+    // One letter apart, or two in a longer name, as a typo is.
+    let most = if a.len().min(b.len()) >= 6 { 2 } else { 1 };
+    row[b.len()] <= most && row[b.len()] > 0
 }
 
 /// Checks say what they found in handles, because that's what they have.

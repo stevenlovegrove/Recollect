@@ -413,3 +413,42 @@ fn coverage_is_what_realises_each_concept_in_each_later_layer() {
     assert_eq!(row("Header")["gaps"], json!(["exchange", "implementation"]), "nothing realises the header yet");
     assert!(v["nodes"].as_array().unwrap().is_empty());
 }
+
+fn checks_of(ws: &Workspace) -> Vec<Value> {
+    serde_json::to_value(views::view(ws, &World::new()).checks).unwrap().as_array().unwrap().clone()
+}
+
+#[test]
+fn a_workspace_says_what_should_be_true_and_hears_where_it_isnt() {
+    let mut ws = design();
+    let ops = json!([
+        { "op": "set", "id": "Concept", "cell": "should", "formula": "count(self.in.realises) > 0" },
+        { "op": "add_node", "id": "new:wire", "name": "Delta wire format", "links": [{ "to": "Delta", "component": "realises" }] }
+    ]);
+    let done = dispatch(&mut ws, "apply", json!({ "ops": ops }), "t");
+    assert!(done.is_ok(), "{done:?}");
+    let failing: Vec<String> = checks_of(&ws).iter().filter(|c| c["rule"] == "should_hold").map(|c| c["detail"].as_str().unwrap().to_string()).collect();
+    assert_eq!(failing.len(), 1, "Header isn't realised, Delta is, and the kind isn't held to it: {failing:?}");
+    let header = handle(&mut ws, "Header");
+    assert!(checks_of(&ws).iter().any(|c| c["rule"] == "should_hold" && c["on"][0] == header), "it's Header that fails");
+    // And it narrows nothing.
+    let v = dispatch(&mut ws, "view", json!({}), "t").unwrap().0;
+    assert_eq!(v["worlds"]["count"], "2");
+}
+
+#[test]
+fn whats_unresolved_is_a_standing_list() {
+    let mut ws = design();
+    let ops = json!([
+        { "op": "add_node", "id": "new:a", "name": "Trailer", "cells": { "layr": "data model" } },
+        { "op": "add_node", "id": "new:b", "name": "Delta" },
+        { "op": "link", "from": "Header", "to": "Parent size", "component": "relates" }
+    ]);
+    dispatch(&mut ws, "apply", json!({ "ops": ops }), "t").unwrap();
+    let rules: Vec<(String, String)> = checks_of(&ws).iter().filter(|c| c["severity"] == "unresolved").map(|c| (c["rule"].as_str().unwrap().to_string(), c["detail"].as_str().unwrap().to_string())).collect();
+    assert!(rules.iter().any(|(r, d)| r == "cell_used_once" && d.contains("layr") && d.contains("layer")), "{rules:?}");
+    assert!(rules.iter().any(|(r, d)| r == "name_shared" && d.contains("Delta")), "{rules:?}");
+    // The design's own Header relates to Delta without a kind, as well as the new one.
+    assert_eq!(rules.iter().filter(|(r, _)| r == "relates_without_a_kind").count(), 2, "{rules:?}");
+    assert_eq!(rules.len(), 4, "and nothing else, such as role for done: {rules:?}");
+}

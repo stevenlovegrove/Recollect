@@ -225,7 +225,8 @@ export interface WorldsView {
 }
 
 export interface Check {
-  severity: "broken" | "notice";
+  /** Broken, worth a look, or only unresolved: not wrong, but worth knowing. */
+  severity: "broken" | "notice" | "unresolved";
   rule: string;
   on: string[];
   detail: string;
