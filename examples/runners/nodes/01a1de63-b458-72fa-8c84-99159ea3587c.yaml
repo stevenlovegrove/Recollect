@@ -1,0 +1,21 @@
+id: 01a1de63-b458-72fa-8c84-99159ea3587c
+components:
+- evidence
+- notes
+- value
+cells:
+  body: Forty runners' times over 5k and 10k, in minutes, and their ages.
+  name: Runners
+formulas:
+  value: 'all(r in rows: r.t10k ~ normal(slope * r.t5k + height, 1))'
+links:
+- to: 01a1de63-b458-72fa-8c84-991a38f7ac6e
+  components:
+  - label
+  cells:
+    called: slope
+- to: 01a1de63-b458-72fa-8c84-991b11f9485f
+  components:
+  - label
+  cells:
+    called: height

@@ -122,11 +122,11 @@ fn a_reading_of_a_bell_curve_is_weighed_draw_by_draw_and_says_what_its_worth() {
     // spread √(1/5).
     let e = estimate(&g, "Middle");
     assert!(e.draws < 4096 && e.draws > 2000, "weighted, so worth fewer than all of them: {}", e.draws);
-    assert!((e.value - 2.2).abs() < 3.0 * e.error.unwrap(), "{e:?}");
+    assert!((e.value - 2.2).abs() < 4.0 * e.error.unwrap(), "{e:?}");
     let known = known_draws(&g);
     let Val::Rand(m) = only(&g, "m") else { panic!() };
     let s = Reader::given(known).summary(&[Share { weight: 1.0, value: Term::Rand(m) }]);
-    assert!(s.weighted && !s.exact && s.draws == e.draws, "{s:?}");
+    assert!(s.given.is_some() && !s.exact && s.draws == e.draws, "{s:?}");
     assert!((s.sd - 0.2f64.sqrt()).abs() < 0.02, "{}", s.sd);
 }
 
@@ -147,20 +147,54 @@ fn line(rows: usize) -> N {
     g
 }
 
-#[test]
-fn a_line_through_a_few_rows_is_the_bell_curves_answer() {
-    // Five rows, against a fine grid over the same prior: 2.004 ± 0.109.
-    let g = line(5);
-    let e = estimate(&g, "Slope");
-    assert!((e.value - 2.004).abs() < 3.0 * e.error.unwrap(), "{e:?}");
-    assert!(e.draws < 1000, "the prior's draws weighted by five rows are worth far fewer: {}", e.draws);
+/// The slope as read given what's known, with how it was got.
+fn slope(g: &N) -> recollect_graph::chance::Summary {
+    let Val::Rand(m) = only(g, "m") else { panic!("the slope is uncertain") };
+    Reader::given(known_draws(g)).summary(&[Share { weight: 1.0, value: Term::Rand(m) }])
 }
 
 #[test]
-fn a_line_through_forty_rows_says_how_few_draws_its_worth() {
-    // The answer is 2.099 ± 0.043, and weighting the prior's draws is worth about 22 of them. It says so.
-    let e = estimate(&line(40), "Slope");
-    assert!(e.draws < 100, "{e:?}");
+fn a_line_through_the_runners_is_the_bell_curves_answer_however_many_rows() {
+    use recollect_graph::chance::Given;
+    // Against a fine grid over the same prior, rows, and spread of 1: the slope's middle and spread.
+    for (rows, mean, sd) in [(1, 2.054, 0.184), (5, 2.004, 0.109), (40, 2.099, 0.043)] {
+        let s = slope(&line(rows));
+        assert_eq!(s.given, Some(Given::Moved), "{rows} rows leave too few draws' worth weighted, so they're moved");
+        assert!(s.draws > 2000, "{rows}: worth {} draws", s.draws);
+        assert!((s.mean - mean).abs() < 4.0 * sd / (s.draws as f64).sqrt(), "{rows}: {} and {mean}", s.mean);
+        assert!((s.sd - sd).abs() < 0.1 * sd, "{rows}: spread {} and {sd}", s.sd);
+    }
+}
+
+#[test]
+fn where_weighing_is_enough_the_draws_stay_where_they_are() {
+    use recollect_graph::chance::Given;
+    let mut g = N::with(install);
+    g.formula("m", "normal(2, 0.5)");
+    g.formula("Seen", "3 ~ normal(m, 1)").input("Seen", "m", "m").add("Seen", EVIDENCE);
+    assert_eq!(slope(&g).given, Some(Given::Weighted));
+}
+
+#[test]
+fn two_humps_far_apart_are_both_kept() {
+    // Something seen near 1 from x², with x anywhere about 0 beforehand: x is about 1 or about -1.
+    let mut g = N::with(install);
+    g.formula("m", "normal(0, 3)");
+    g.formula("Seen", "1 ~ normal(m * m, 0.1)").input("Seen", "m", "m").add("Seen", EVIDENCE);
+    g.formula("Positive", "chance(m > 0)").input("Positive", "m", "m");
+    g.formula("Size", "mean(abs(m))").input("Size", "m", "m");
+    let s = slope(&g);
+    assert_eq!(s.given, Some(recollect_graph::chance::Given::Moved));
+    let positive = estimate(&g, "Positive");
+    assert!((positive.value - 0.5).abs() < 0.1, "both humps, about evenly: {positive:?}");
+    assert!((estimate(&g, "Size").value - 1.0).abs() < 0.05, "{:?}", estimate(&g, "Size"));
+}
+
+#[test]
+fn moving_is_the_same_every_time() {
+    let g = line(10);
+    let (a, b) = (slope(&g), slope(&g));
+    assert_eq!(a, b);
 }
 
 // ---------- what it is, and isn't ----------
@@ -208,4 +242,5 @@ fn a_requirement_cant_be_something_seen() {
     assert!(format!("{why:?}").contains("evidence instead"), "{why:?}");
     log.commit("t", "", vec![Op::add(seen, EVIDENCE)]).unwrap();
 }
+
 

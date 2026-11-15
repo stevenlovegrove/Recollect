@@ -1,6 +1,6 @@
 # Inference: what's seen, and how likely it was
 
-**Status:** step 1 is built: `~`, evidence that's a weight, exact over short lists, and read with weights over draws, saying how many they're worth. [Order of building](#order-of-building) says what's next, and [What step 1 is](#what-step-1-is) how it's done and what it leaves out. It follows from [data.md](data.md#fitting), where a straight line through forty runners, written as equations, can only be told about the data with a truth, and runs out of draws. It extends [What's known, and what's demanded](distributions.md#whats-known-and-whats-demanded).
+**Status:** steps 1 and 3 are built: `~`, evidence that's a weight, exact over short lists, read with weights over draws where that's enough, and with the draws moved to fit it where it isn't, each saying how it was got. [Order of building](#order-of-building) says what's left, and [What step 1 is](#what-step-1-is) and [What step 3 is](#what-step-3-is) how they're done and what they leave out. It follows from [data.md](data.md#fitting), where a straight line through forty runners, written as equations, can only be told about the data with a truth, and runs out of draws. It extends [What's known, and what's demanded](distributions.md#whats-known-and-whats-demanded).
 
 ## Why
 
@@ -65,7 +65,7 @@ What a reader is given changes from a truth, which keeps or drops each draw, to 
 - **Where worlds and draws are both involved,** a world's weight is multiplied by how likely it makes what's seen, averaged over its draws. That average is read from draws, so beliefs about the worlds become estimates, and say so. (Today evidence that's a matter of draws in some worlds and not others is refused. That can stay refused until this is built.)
 - **`chance`, `mean` and requirements** are read with the weights, and "too close to call" uses the effective draws.
 
-That's enough for a few rows, or wide observations, and it's honest about the rest. With forty runners it's 22 draws, which is why the next part is needed.
+That's enough for a few rows, or wide observations, and it's honest about the rest. With forty runners it's about 20 draws, which is why the next part is needed.
 
 ## Drawing that follows the weights
 
@@ -107,7 +107,7 @@ Everything `predict` did is here, in the open. The prior is two cells anyone can
 |---|---|
 | 1 | `~` and the families' densities, as evidence, read with weights and effective draws, and exact over short lists. **Built** |
 | 2 | Named arguments, and the editor saying what a function takes and gives, and a statement shown as one |
-| 3 | Moving the draws: tempering, resampling and moves, with its budget and what it says |
+| 3 | Moving the draws: tempering, resampling and moves, with its budget and what it says. **Built** |
 | 4 | Bell curves seen through straight lines, exactly |
 
 ## What step 1 is
@@ -116,12 +116,26 @@ Everything `predict` did is here, in the open. The prior is two cells anyone can
 - **How likely each family makes a value is written as arithmetic** on the same expressions everything else is, in `log_likely` in `formulas.rs`, so it's the same whether what goes in is plain or uncertain, and where what was seen couldn't have come from it, or it isn't a distribution, as with a spread below nothing, it's undefined, and weighs nothing.
 - **Over short lists, it's a chance of its own.** Where how likely it was is the same in every draw, what's seen is a coin whose chance of heads in each world is how likely it was there, which is `bernoulli` with a chance that differs between worlds. Evidence keeps the heads, so the worlds are weighed by Bayes' rule by the diagram, exactly, and every belief, requirement and view that reads the worlds is right with nothing new. For a density the chances are each relative to the likeliest world, which changes nothing evidence does. The coin is bookkeeping, so it's called for where it's written with `seen` after it, and isn't shown as a question.
 - **Over draws, a reader weighs them.** `Known` is a truth and the log of how likely what was seen is. A truth gives each draw 1 or 0, as before, so nothing that was right changed. What's read under weights is `weighted`, and its `draws` are how many they're worth, `(Σw)²/Σw²`. A mean or a chance carries that into the cell, and the app says *read from draws weighted by how likely each makes what's been seen, worth 22 of them*.
-- **Something seen that isn't known yet** is shown as how many draws it would leave worth reading if it were: `{"seen": {"draws": …}}`, *seen: worth 22 of 4,096 draws, known*.
+- **Something seen that isn't known yet** is shown as how many draws it would leave worth reading if it were: `{"seen": {"draws": …}}`, *seen: weighed alone, leaves 17 of 4,096 draws' worth*. That's weighing alone, never moving, since it says how much the statement says on its own.
 
 It leaves out, beyond the later steps:
 
 - **Evidence that's a matter of draws in some worlds and not others** is still refused, weights or not. So is something seen whose likelihood depends on draws and differs between worlds.
 - **A statement's own chance, shown in its cell, isn't a likelihood.** Where it's a coin, a cell that reads one shows it as true or false, as `bernoulli` would. Only evidence gives it a meaning.
+
+## What step 3 is
+
+- **When:** where weighing the draws by what's been seen would leave less than half of them worth anything. Otherwise they're weighed, as in step 1, which is cheaper and as good. A truth alone never moves anything: what's known only as a truth keeps or drops draws, exactly as before.
+- **What moves:** the standard draws the evidence depends on, and nothing else. Anything that shares none of them is read as it was, law and all.
+- **How:** in `move_draws`, in `chance.rs`. Each draw's place is held as its bell-curve score. Whatever's impossible goes first. Then the weight is brought in a step at a time, each step as far as leaves half the draws' worth; after each, the draws are kept as often as they weigh (systematic resampling) and moved, all 4,096 at once, by Metropolis steps scaled by their own spread, until each has moved about three times. A step that's taken too often gets longer, and too rarely, shorter. At most 200 steps and 20 moves after each.
+- **Every choice it makes** comes from a stream seeded with the moved draws' names, so the same graph gives the same answer.
+- **What it says:** what's read is `given: moved`, and its `draws` are what the last step's weight was worth before it was resampled, never more than how many are distinct, since moved draws are related to where they came from. The app says *read from draws moved to fit what's been seen, taken to be worth 3,913*. A notice on the evidence says how many steps, how many distinct, and how often the last moves were taken, and warns when that's under one in ten.
+- **What it costs:** the line through forty runners is six steps and about 0.2 seconds natively.
+
+It leaves out:
+
+- **How related the moved draws are** isn't measured. What's said is what the last step was worth, which the usual practice takes as the figure, and the notice says how often moves were taken. A run of rarely taken moves is warned of, not corrected.
+- **The budget** isn't a setting. Running out of it before the weight is all the way in is a notice that says how far it got, and that what's read is wrong; what's read doesn't say so itself.
 
 ## How it'd be checked
 
@@ -131,6 +145,6 @@ It leaves out, beyond the later steps:
 | **An observation over short lists is Bayes' rule** | A coin's bias from tosses, a middle from a reading, and a die from a roll, against the sums done by hand (`tests/seen.rs`) |
 | **Weighted reading is honest** | A bell curve seen through a bell curve against its exact answer, 2.2 ± 0.45, and a line through five rows against a grid, 2.004. Forty rows say they're worth a few dozen draws (`tests/seen.rs`) |
 | **What's seen isn't asked about** | Another roll of 7 moves which die it was by Bayes' rule, with nothing new among the questions (`recollect-server`'s tests) |
-| **Moving gets there** | The line through forty runners against a grid, 2.099 ± 0.043 with σ = 1. The tea's six humps, each the right size. Two humps far apart, both kept |
-| **It's repeatable** | The same graph, built twice, the same answer |
+| **Moving gets there** | The line through one, five and forty runners against a grid, the forty 2.099 ± 0.043 with σ = 1, middle and spread. Two humps far apart, both kept about evenly (`tests/seen.rs`). Not yet: the tea's six humps, whose inference is over short lists and so never moves |
+| **It's repeatable** | The same graph read twice, the same answer to the last figure |
 | **Exact is exact** | Bell curves seen through straight lines, exactly, against moving draws, within what drawing allows |

@@ -1254,9 +1254,10 @@ pub struct Summary {
     /// The numbers here are exactly right. Otherwise they were read from `draws` draws.
     pub exact: bool,
     pub draws: usize,
-    /// The draws were weighted by how likely each makes what was seen, so `draws` is how many they're worth.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub weighted: bool,
+    /// How what's been seen was taken into account, if it says anything about this: the draws weighted by
+    /// it, so `draws` is how many they're worth, or moved to fit it, so `draws` is how many are distinct.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub given: Option<Given>,
     /// How far out the mean could reasonably be: its standard error. 0 if it's exact.
     pub error: f64,
 }
@@ -1265,7 +1266,7 @@ impl Summary {
     /// What a number comes to where there's nothing it could be: undefined, all of the time. Its numbers are
     /// 0 rather than nothing, so whatever reads them never has to ask, and `undefined` says not to.
     pub fn nothing() -> Summary {
-        Summary { mean: 0.0, sd: 0.0, low: 0.0, mid: 0.0, high: 0.0, least: None, most: None, undefined: 1.0, hist: Hist { from: 0.0, to: 0.0, bars: vec![] }, below0: None, points: None, law: None, exact: true, draws: 0, weighted: false, error: 0.0 }
+        Summary { mean: 0.0, sd: 0.0, low: 0.0, mid: 0.0, high: 0.0, least: None, most: None, undefined: 1.0, hist: Hist { from: 0.0, to: 0.0, bars: vec![] }, below0: None, points: None, law: None, exact: true, draws: 0, given: None, error: 0.0 }
     }
 }
 
@@ -1277,9 +1278,10 @@ pub struct Chance {
     pub undefined: f64,
     pub exact: bool,
     pub draws: usize,
-    /// The draws were weighted by how likely each makes what was seen, so `draws` is how many they're worth.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub weighted: bool,
+    /// How what's been seen was taken into account, if it says anything about this: the draws weighted by
+    /// it, so `draws` is how many they're worth, or moved to fit it, so `draws` is how many are distinct.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub given: Option<Given>,
     /// In how many of the draws it was true. Where it's several things, each drawn, that's of all their draws.
     pub hits: usize,
     /// How far out the chance could reasonably be: its standard error. 0 if it's exact.
@@ -1305,6 +1307,96 @@ pub struct Reader {
     /// counts as much as how likely it makes what was seen.
     known: Known,
     weights: Option<Arc<Vec<f64>>>,
+    /// Where weighting the draws would leave too few worth anything, the draws what's known depends on are
+    /// moved to fit it instead, and this says how that went.
+    moved: Option<Moved>,
+}
+
+/// How what's known was taken into account, where it says anything about what's read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Given {
+    /// Each draw counts as much as it makes what was seen likely.
+    Weighted,
+    /// The draws what's known depends on were moved to fit it, and each counts the same.
+    Moved,
+}
+
+/// How moving the draws went.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Moved {
+    /// How many of the draws are different from each other afterwards.
+    pub distinct: usize,
+    /// How many draws they're taken to be worth: what the last step's weight was worth before it was
+    /// resampled, which moving then spreads out again. Moved draws are related to where they came from,
+    /// so this, which is never more than `distinct`, is what's said, not how many there are.
+    pub worth: usize,
+    /// Of the moves tried at the end, the share taken. Rarely is when moving can be wrong without the
+    /// numbers showing it.
+    pub accepted: f64,
+    /// How many times the weight was brought in a step further, each followed by moves.
+    pub steps: usize,
+    /// How much of the weight was brought in: 1, unless the steps ran out first, when what's read is given
+    /// only that much of what's been seen.
+    pub reached: f64,
+}
+
+/// Where weighting leaves fewer than this share of the draws' worth, they're moved instead.
+const MOVE_BELOW: f64 = 0.5;
+/// The most steps the weight is brought in by, and the most moves after each.
+const MOST_STEPS: usize = 200;
+const MOST_MOVES: usize = 20;
+/// Each draw is moved, on average, at least this many times after each step.
+const MOVES_EACH: f64 = 3.0;
+
+/// Numbers that look random, from a seed: SplitMix64. Every choice moving draws makes comes from one of
+/// these, seeded from the draws' names, so the same graph moves them the same way.
+struct Stream(u64);
+
+impl Stream {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// Strictly between 0 and 1.
+    fn unit(&mut self) -> f64 {
+        ((self.next() >> 11) as f64 + 0.5) / (1u64 << 53) as f64
+    }
+
+    /// A standard bell curve, by Box and Muller.
+    fn normal(&mut self) -> f64 {
+        let (u, v) = (self.unit(), self.unit());
+        (-2.0 * u.ln()).sqrt() * (2.0 * std::f64::consts::PI * v).cos()
+    }
+}
+
+/// How many of these weights are worth, `(Σw)²/Σw²`.
+fn worth(w: &[f64]) -> f64 {
+    let (sum, squares) = w.iter().fold((0.0, 0.0), |(s, q), w| (s + w, q + w * w));
+    if squares > 0.0 { sum * sum / squares } else { 0.0 }
+}
+
+/// Which of `n` to keep, each as often as its weight says, by systematic resampling: one start, from
+/// `stream`, and evenly spaced from there.
+fn resample(w: &[f64], stream: &mut Stream) -> Vec<usize> {
+    let n = w.len();
+    let total: f64 = w.iter().sum();
+    let step = total / n as f64;
+    let mut at = stream.unit() * step;
+    let (mut out, mut i, mut below) = (Vec::with_capacity(n), 0, w[0]);
+    for _ in 0..n {
+        while below < at && i + 1 < n {
+            i += 1;
+            below += w[i];
+        }
+        out.push(i);
+        at += step;
+    }
+    out
 }
 
 /// What a reader is given as known about draws: a truth that holds, and how likely what was seen is, as
@@ -1410,17 +1502,21 @@ impl Reader {
         }
         let mut w = vec![1.0; DRAWS];
         if let Some(truth) = self.known.truth {
-            for (w, v) in w.iter_mut().zip(self.column(&truth).iter()) {
+            for (w, v) in w.iter_mut().zip(self.compute(truth.0, None).iter()) {
                 if *v != 1.0 {
                     *w = 0.0;
                 }
             }
         }
         if let Some(log) = self.known.log_weight {
-            let log = self.column(&log);
-            let most = log.iter().zip(w.iter()).filter(|(l, w)| !l.is_nan() && **w > 0.0).map(|(l, _)| *l).fold(f64::NEG_INFINITY, f64::max);
-            for (w, l) in w.iter_mut().zip(log.iter()) {
+            let column = self.compute(log.0, None);
+            let most = column.iter().zip(w.iter()).filter(|(l, w)| !l.is_nan() && **w > 0.0).map(|(l, _)| *l).fold(f64::NEG_INFINITY, f64::max);
+            for (w, l) in w.iter_mut().zip(column.iter()) {
                 *w = if l.is_nan() || !most.is_finite() { 0.0 } else { *w * (l - most).exp() };
+            }
+            // Too few worth anything: move the draws to where the weight is instead.
+            if worth(&w) > 0.0 && worth(&w) < MOVE_BELOW * DRAWS as f64 {
+                w = self.move_draws(log);
             }
         }
         let w = Arc::new(w);
@@ -1432,8 +1528,10 @@ impl Reader {
     /// counts counts the same, as for a truth, and fewer the more unevenly they're weighted, (Σw)²/Σw².
     pub fn effective_draws(&mut self) -> f64 {
         let w = self.weights();
-        let (sum, squares) = w.iter().fold((0.0, 0.0), |(s, q), w| (s + w, q + w * w));
-        if squares > 0.0 { sum * sum / squares } else { 0.0 }
+        match self.moved {
+            Some(m) => m.worth as f64,
+            None => worth(&w),
+        }
     }
 
     /// How many draws what's known leaves, or is worth: all of them, if nothing is.
@@ -1442,20 +1540,167 @@ impl Reader {
         (self.effective_draws() + 1e-9).floor() as usize
     }
 
-    /// Whether what's read under what's known is weighted, rather than only kept or dropped.
-    pub fn weighted(&self) -> bool {
-        self.known.log_weight.is_some()
+    /// How what's known was taken into account, where it's more than keeping or dropping draws.
+    pub fn given_how(&mut self) -> Option<Given> {
+        self.known.log_weight?;
+        self.weights();
+        Some(if self.moved.is_some() { Given::Moved } else { Given::Weighted })
+    }
+
+    /// How many of the draws weighing them by this alone would leave worth reading, without moving any:
+    /// how much something seen says on its own, the fewer the more.
+    pub fn worth_weighed(&mut self, log: Rand) -> f64 {
+        let column = self.compute(log.0, None);
+        let most = column.iter().filter(|l| !l.is_nan()).copied().fold(f64::NEG_INFINITY, f64::max);
+        if !most.is_finite() {
+            return 0.0;
+        }
+        worth(&column.iter().map(|l| if l.is_nan() { 0.0 } else { (l - most).exp() }).collect::<Vec<_>>())
+    }
+
+    /// How moving the draws went, if they were moved.
+    pub fn moved(&mut self) -> Option<Moved> {
+        self.weights();
+        self.moved
+    }
+
+    /// Move the draws what's known depends on to fit it, by sequential Monte Carlo with tempering: start
+    /// from the draws as they are, bring the weight in a step at a time, each step as far as leaves half
+    /// the draws' worth, and after each, keep each draw as often as it weighs and move every one a few
+    /// times, in the space of its bell-curve score, taking a move as often as the weight says it should
+    /// (Metropolis). Each move is one pass over a column. The draws end up each counting the same, and
+    /// what's read through them is read from where they ended. Every choice comes from the draws' names,
+    /// so it's the same every time. Gives each draw's weight afterwards: 1, or 0 if nothing fits.
+    fn move_draws(&mut self, log: Rand) -> Vec<f64> {
+        let n = DRAWS;
+        let truth = self.known.truth;
+        // The draws what's known depends on, in an order of their names.
+        let mut tied: std::collections::BTreeSet<u32> = (*self.draws_of(log.0)).clone();
+        if let Some(t) = truth {
+            tied.extend(self.draws_of(t.0).iter().copied());
+        }
+        let names: Vec<String> = {
+            let a = arena();
+            tied.iter().map(|i| a.draws[*i as usize].clone()).collect()
+        };
+        let mut order: Vec<(String, u32)> = names.into_iter().zip(tied.iter().copied()).collect();
+        order.sort();
+        let dims: Vec<u32> = order.iter().map(|(_, i)| *i).collect();
+        let seed = order.iter().flat_map(|(name, _)| name.bytes()).fold(0xCBF2_9CE4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3));
+        let mut stream = Stream(seed);
+        // What's been worked out from the draws as they were is kept only where it doesn't depend on them.
+        let cached: Vec<X> = self.columns.keys().copied().collect();
+        let stale: Vec<X> = cached.into_iter().filter(|x| !self.draws_of(*x).is_disjoint(&tied)).collect();
+        for x in stale {
+            self.columns.remove(&x);
+        }
+        // Each draw's bell-curve score, draw by draw.
+        let mut z: Vec<Vec<f64>> = dims
+            .iter()
+            .map(|i| {
+                let name = order.iter().find(|(_, j)| j == i).map(|(n, _)| n.clone()).expect("listed above");
+                self.uniforms.entry(*i).or_insert_with(|| Arc::new(uniforms(&name))).iter().map(|u| probit(*u)).collect()
+            })
+            .collect();
+        let as_uniforms = |z: &[Vec<f64>]| -> HashMap<u32, Arc<Vec<f64>>> { dims.iter().zip(z.iter()).map(|(i, col)| (*i, Arc::new(col.iter().map(|v| phi(*v)).collect()))).collect() };
+        // How likely what's known makes each draw, as a log: nothing where a truth doesn't hold.
+        let likely = |me: &mut Reader, z: &[Vec<f64>]| -> Vec<f64> {
+            let over = as_uniforms(z);
+            let log = me.compute(log.0, Some(&over));
+            let holds = truth.map(|t| me.compute(t.0, Some(&over)));
+            (0..n).map(|i| if holds.as_ref().is_none_or(|h| h[i] == 1.0) && !log[i].is_nan() { log[i] } else { f64::NEG_INFINITY }).collect()
+        };
+        let mut l = likely(self, &z);
+        let keep = |z: &mut Vec<Vec<f64>>, l: &mut Vec<f64>, picks: &[usize]| {
+            for col in z.iter_mut() {
+                *col = picks.iter().map(|p| col[*p]).collect();
+            }
+            *l = picks.iter().map(|p| l[*p]).collect();
+        };
+        // Only what's possible at all: what a truth rules out, or what couldn't have been seen, goes first.
+        let possible: Vec<f64> = l.iter().map(|v| if v.is_finite() { 1.0 } else { 0.0 }).collect();
+        if !(possible.iter().sum::<f64>() > 0.0) {
+            self.moved = Some(Moved { distinct: 0, worth: 0, accepted: 0.0, steps: 0, reached: 0.0 });
+            return vec![0.0; n];
+        }
+        let picks = resample(&possible, &mut stream);
+        keep(&mut z, &mut l, &picks);
+        let (mut beta, mut steps, mut accepted, mut stride, mut last_worth) = (0.0f64, 0, 1.0, 2.38 / (dims.len() as f64).sqrt(), n as f64);
+        while beta < 1.0 && steps < MOST_STEPS {
+            steps += 1;
+            let most = l.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let weigh = |by: f64| -> Vec<f64> { l.iter().map(|v| (by * (v - most)).exp()).collect() };
+            // As far as leaves half the draws' worth, or all the way.
+            let by = if worth(&weigh(1.0 - beta)) >= MOVE_BELOW * n as f64 {
+                1.0 - beta
+            } else {
+                let (mut lo, mut hi) = (0.0, 1.0 - beta);
+                for _ in 0..60 {
+                    let mid = 0.5 * (lo + hi);
+                    if worth(&weigh(mid)) >= MOVE_BELOW * n as f64 { lo = mid } else { hi = mid }
+                }
+                lo.max(1e-12)
+            };
+            last_worth = worth(&weigh(by));
+            let picks = resample(&weigh(by), &mut stream);
+            keep(&mut z, &mut l, &picks);
+            beta = (beta + by).min(1.0);
+            // Move each draw a few times, a step at a time, as far as the draws' own spread.
+            let spread: Vec<f64> = z.iter().map(|col| {
+                let mean = col.iter().sum::<f64>() / n as f64;
+                (col.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>() / n as f64).sqrt().max(1e-6)
+            }).collect();
+            let mut moved_each = 0.0;
+            for round in 0..MOST_MOVES {
+                let tried: Vec<Vec<f64>> = z.iter().zip(spread.iter()).map(|(col, s)| col.iter().map(|v| v + stride * s * stream.normal()).collect()).collect();
+                let l2 = likely(self, &tried);
+                let mut taken = 0usize;
+                for i in 0..n {
+                    let prior = |z: &[Vec<f64>]| -0.5 * z.iter().map(|col| col[i] * col[i]).sum::<f64>();
+                    let odds = beta * (l2[i] - l[i]) + prior(&tried) - prior(&z);
+                    if l2[i].is_finite() && (odds >= 0.0 || stream.unit().ln() < odds) {
+                        for (col, t) in z.iter_mut().zip(tried.iter()) {
+                            col[i] = t[i];
+                        }
+                        l[i] = l2[i];
+                        taken += 1;
+                    }
+                }
+                accepted = taken as f64 / n as f64;
+                moved_each += accepted;
+                // Steps that are taken too often are too short, and too rarely, too long.
+                stride *= if accepted < 0.2 { 0.7 } else if accepted > 0.5 { 1.3 } else { 1.0 };
+                if moved_each >= MOVES_EACH && round >= 1 {
+                    break;
+                }
+            }
+        }
+        let distinct = (0..n).map(|i| z.iter().map(|col| col[i].to_bits()).collect::<Vec<u64>>()).collect::<std::collections::HashSet<_>>().len();
+        let over = as_uniforms(&z);
+        self.uniforms.extend(over);
+        self.moved = Some(Moved { distinct, worth: (last_worth.floor() as usize).min(distinct), accepted, steps, reached: beta });
+        vec![1.0; n]
     }
 
     /// What it comes to in each of `DRAWS` draws. Undefined is NaN, and a truth is 1 or 0. Every column
     /// is over the same draws, so two of them can be compared draw by draw.
     pub fn column(&mut self, r: &Rand) -> Arc<Vec<f64>> {
-        if let Some(c) = self.columns.get(&r.0) {
+        // What's known has to be taken into account first, since that can move the draws.
+        if self.known.is_some() && self.weights.is_none() {
+            self.weights();
+        }
+        self.compute(r.0, None)
+    }
+
+    /// What it comes to in each draw, with these draws in place of their own, if any are given. Only
+    /// what's worked out with the draws as they are is kept.
+    fn compute(&mut self, root: X, over: Option<&HashMap<u32, Arc<Vec<f64>>>>) -> Arc<Vec<f64>> {
+        if let Some(c) = self.columns.get(&root) {
             return c.clone();
         }
         let (parts, names) = {
             let t = arena();
-            let parts = t.reach(r.0, |x| self.columns.contains_key(&x));
+            let parts = t.reach(root, |x| self.columns.contains_key(&x));
             let names: HashMap<u32, String> = parts.iter().filter_map(|(_, n)| if let Node::Draw(_, i) = n { Some((*i, t.draws[*i as usize].clone())) } else { None }).collect();
             (parts, names)
         };
@@ -1467,7 +1712,10 @@ impl Reader {
                 Node::Num(b) => vec![f64::from_bits(*b); DRAWS],
                 Node::Flag(b) => vec![f64::from(u8::from(*b)); DRAWS],
                 Node::Draw(std, i) => {
-                    let u = self.uniforms.entry(*i).or_insert_with(|| Arc::new(uniforms(&names[i]))).clone();
+                    let u = match over.and_then(|o| o.get(i)) {
+                        Some(u) => u.clone(),
+                        None => self.uniforms.entry(*i).or_insert_with(|| Arc::new(uniforms(&names[i]))).clone(),
+                    };
                     u.iter().map(|u| apply_std(*std, *u)).collect()
                 }
                 Node::Un(op, a) => of(a).iter().map(|v| apply_un(*op, *v)).collect(),
@@ -1486,8 +1734,10 @@ impl Reader {
             };
             working.insert(x, Arc::new(column));
         }
-        let column = working.remove(&r.0).expect("just worked out");
-        self.columns.insert(r.0, column.clone());
+        let column = working.remove(&root).expect("just worked out");
+        if over.is_none() {
+            self.columns.insert(root, column.clone());
+        }
         column
     }
 
@@ -1832,7 +2082,7 @@ impl Reader {
                 (hist.from, hist.to) = (points[0].0, points[points.len() - 1].0);
             }
             let below0 = (hist.from < 0.0 && hist.to > 0.0).then(|| law.mass(0.0, false));
-            return Summary { mean: law.mean(), sd: law.sd(), low: law.quantile(0.05), mid: law.quantile(0.5), high: law.quantile(0.95), least, most, undefined, hist, below0, points, law: named, exact: true, draws: 0, weighted: false, error: 0.0 };
+            return Summary { mean: law.mean(), sd: law.sd(), low: law.quantile(0.05), mid: law.quantile(0.5), high: law.quantile(0.95), least, most, undefined, hist, below0, points, law: named, exact: true, draws: 0, given: None, error: 0.0 };
         }
 
         let mut values = Vec::new();
@@ -1853,16 +2103,16 @@ impl Reader {
         let draws = if tied { self.draws_kept() } else { DRAWS };
         let hist = values.hist();
         let below0 = (hist.from < 0.0 && hist.to > 0.0).then(|| values.0.iter().filter(|(v, _)| *v < 0.0).map(|(_, w)| w).sum::<f64>() / values.total());
-        Summary { mean: values.mean(), sd, low: values.quantile(0.05), mid: values.quantile(0.5), high: values.quantile(0.95), least, most, undefined, hist, below0, points: None, law: None, exact: false, draws, weighted: tied && self.weighted(), error: sd / (draws.max(1) as f64).sqrt() }
+        Summary { mean: values.mean(), sd, low: values.quantile(0.05), mid: values.quantile(0.5), high: values.quantile(0.95), least, most, undefined, hist, below0, points: None, law: None, exact: false, draws, given: if tied { self.given_how() } else { None }, error: sd / (draws.max(1) as f64).sqrt() }
     }
 
     /// How likely a truth is, if it's each of these this much of the time.
     pub fn chance(&mut self, shares: &[Share]) -> Chance {
         let whole: f64 = shares.iter().map(|s| s.weight).sum();
         if !(whole > 0.0) {
-            return Chance { chance: 0.0, undefined: 1.0, exact: true, draws: 0, weighted: false, hits: 0, error: 0.0 };
+            return Chance { chance: 0.0, undefined: 1.0, exact: true, draws: 0, given: None, hits: 0, error: 0.0 };
         }
-        let (mut yes, mut undefined, mut drawn, mut hits, mut read, mut weighted) = (0.0, 0.0, 0, 0, 0, false);
+        let (mut yes, mut undefined, mut drawn, mut hits, mut read, mut given) = (0.0, 0.0, 0, 0, 0, None);
         for share in shares.iter().filter(|s| s.weight > 0.0) {
             let w = share.weight / whole;
             match &share.value {
@@ -1890,7 +2140,9 @@ impl Reader {
                     hits += column.iter().zip(weights.iter()).filter(|(v, w)| **v == 1.0 && **w > 0.0).count();
                     drawn += 1;
                     read += if tied { self.draws_kept() } else { DRAWS };
-                    weighted |= tied && self.weighted();
+                    if tied {
+                        given = given.or(self.given_how());
+                    }
                 }
                 Term::Undefined => undefined += w,
                 _ => {}
@@ -1901,7 +2153,7 @@ impl Reader {
         // are about all of them.
         let exact = drawn == 0;
         let each = if drawn == 0 { DRAWS } else { (read / drawn).max(1) };
-        Chance { chance, undefined, exact, draws: read, weighted, hits, error: if exact { 0.0 } else { (chance * (1.0 - chance) / each as f64).sqrt() } }
+        Chance { chance, undefined, exact, draws: read, given, hits, error: if exact { 0.0 } else { (chance * (1.0 - chance) / each as f64).sqrt() } }
     }
 }
 

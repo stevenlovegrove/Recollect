@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use recollect_graph::table::Key;
-use recollect_graph::chance::{self, Known, Num, Rand, Reader, Share, Std, Term};
+use recollect_graph::chance::{self, Given, Known, Num, Rand, Reader, Share, Std, Term};
 use recollect_graph::worlds::{Bool, Cond, Picks, Space, Var, Worldly};
 use recollect_graph::{Advice, Backed, Cell, CellType, Compile, Computed, Cx, Entity, Error, Graph, Registry, Severity, Shown, cell};
 use serde_json::{Value, json};
@@ -150,8 +150,8 @@ struct Over {
     error: Cond<Option<f64>>,
     /// How many draws the most read was read from, if any were.
     draws: usize,
-    /// Those draws were weighted by what was seen.
-    weighted: bool,
+    /// How what was seen was taken into account in reading them, if it was.
+    given: Option<Given>,
 }
 
 fn over_chance(what: &Cond<Val>, known: &Bool, reader: &mut Reader, chancy: &dyn Fn(&str) -> bool, mean: bool) -> Result<Over, Error> {
@@ -160,7 +160,7 @@ fn over_chance(what: &Cond<Val>, known: &Bool, reader: &mut Reader, chancy: &dyn
     // Summed over the cases: the value, how far out it could be, and where it's undefined, each weighted
     // by how likely that case is for each way the choices could go.
     let (mut sum, mut err, mut lost) = (space.pure(0.0), space.pure(Some(0.0)), space.pure(0.0));
-    let (mut draws, mut weighted) = (0, false);
+    let (mut draws, mut given) = (0, None);
     for (when, v) in what.cases() {
         // What this case comes to, how far out that could be, and how much of it is undefined.
         let (value, error, undefined): (f64, Option<f64>, f64) = match (v, mean) {
@@ -170,19 +170,19 @@ fn over_chance(what: &Cond<Val>, known: &Bool, reader: &mut Reader, chancy: &dyn
             (Val::Rand(r), false) if r.is_truth() => {
                 let c = reader.chance(&[Share { weight: 1.0, value: Term::Rand(*r) }]);
                 draws = draws.max(c.draws);
-                weighted |= c.weighted;
+                given = given.or(c.given);
                 // Undefined isn't true.
                 (c.chance * (1.0 - c.undefined), Some(c.error), 0.0)
             }
             (Val::Rand(r), true) if !r.is_truth() => {
                 let s = reader.summary(&[Share { weight: 1.0, value: Term::Rand(*r) }]);
                 draws = draws.max(s.draws);
-                weighted |= s.weighted;
+                given = given.or(s.given);
                 (s.mean, Some(s.error), s.undefined)
             }
             (Val::Estimate(e), true) => {
                 draws = draws.max(e.draws);
-                weighted |= e.weighted;
+                given = given.or(e.given);
                 (e.value, e.error, 0.0)
             }
             (other, false) => return failed(format!("chance needs true or false, not {}", Type::of(other).word())),
@@ -197,7 +197,7 @@ fn over_chance(what: &Cond<Val>, known: &Bool, reader: &mut Reader, chancy: &dyn
     // What isn't true isn't undefined, so for a chance only the mean can be lost.
     let value = sum.zip(&lost, |s, l| (*s, *l)).zip(&possible, |(s, l), p| if *p <= 0.0 || (mean && *l > 1e-12) { None } else { Some(s / p) });
     let error = err.zip(&possible, |e, p| if *p > 0.0 { e.map(|e| e / p) } else { Some(0.0) });
-    Ok(Over { value, error, draws, weighted })
+    Ok(Over { value, error, draws, given })
 }
 
 /// A value from `Over`: a number where it's exact, an estimate where it was read from draws, and undefined
@@ -206,7 +206,7 @@ fn over_values(over: &Over) -> Cond<Val> {
     over.value.zip(&over.error, |v, e| match (v, e) {
         (None, _) => Val::Undefined,
         (Some(v), Some(e)) if *e == 0.0 => Val::num(*v),
-        (Some(v), e) => Val::Estimate(Estimate { value: *v, error: *e, draws: over.draws, weighted: over.weighted }),
+        (Some(v), e) => Val::Estimate(Estimate { value: *v, error: *e, draws: over.draws, given: over.given }),
     })
 }
 
@@ -414,6 +414,32 @@ fn judging(g: &Graph) -> Vec<Advice> {
         if let Some(e) = g.having(EVIDENCE).first() {
             out.push(Advice { rule: "evidence_never_drawn".to_string(), on: *e, detail: format!("what's known held in none of {} draws, so nothing that depends on it can be read", chance::DRAWS) });
         }
+    }
+    if let Some(moved) = reader.moved()
+        && moved.distinct > 0
+        && let Some(e) = g.having(EVIDENCE).into_iter().find(|e| matches!(g.get::<ValueCell>(*e), Ok(Some(v)) if v.0.0.cases().iter().any(|(_, v)| matches!(v, Val::Likely(_)))))
+    {
+        let rarely = moved.accepted < 0.1;
+        if moved.reached < 1.0 {
+            out.push(Advice {
+                rule: "evidence_moving_stopped_short".to_string(),
+                on: e,
+                detail: format!("moving the draws to fit what's been seen stopped after {} steps with only {:.0}% of its weight brought in, so what's read through them is given only that much of it, and is wrong", moved.steps, moved.reached * 100.0),
+            });
+        }
+        out.push(Advice {
+            rule: if rarely { "evidence_moves_rarely_taken" } else { "evidence_moved_draws" }.to_string(),
+            on: e,
+            detail: format!(
+                "weighing the draws by what's been seen left too few worth anything, so the draws it depends on were moved to fit it, in {} steps: {} of {} are distinct, taken to be worth {} since moved draws are related, and the last moves were taken {:.0}% of the time{}",
+                moved.steps,
+                moved.distinct,
+                chance::DRAWS,
+                moved.worth,
+                moved.accepted * 100.0,
+                if rarely { ". That's rarely, which is when what's read can be wrong without the numbers showing it" } else { "" }
+            ),
+        });
     }
     let known = g.registry().constrained(g).unwrap_or_else(|| Space::global().always());
     let picks = Space::global().picks(&BTreeMap::new());
@@ -1522,10 +1548,10 @@ fn pairs(a: &Cond<Val>, b: &Cond<Val>) -> Result<Cond<(Val, Val)>, Error> {
 }
 
 /// A number, if it's a plain one or an estimate of one, with how far out it could be and from how many draws.
-fn estimated(v: &Val) -> Option<(f64, Option<f64>, usize, bool)> {
+fn estimated(v: &Val) -> Option<(f64, Option<f64>, usize, Option<Given>)> {
     match v {
-        Val::Num(n) => Some((*n, Some(0.0), 0, false)),
-        Val::Estimate(e) => Some((e.value, e.error, e.draws, e.weighted)),
+        Val::Num(n) => Some((*n, Some(0.0), 0, None)),
+        Val::Estimate(e) => Some((e.value, e.error, e.draws, e.given)),
         _ => None,
     }
 }
@@ -1536,7 +1562,7 @@ fn estimated(v: &Val) -> Option<(f64, Option<f64>, usize, bool)> {
 /// two are further apart than they could be out by, and otherwise undefined, since it can't be called.
 fn estimate_op(a: &Val, b: &Val, op: chance::Op, f: &dyn Fn(f64, f64) -> Val) -> Val {
     let (Some((x, ex, dx, wx)), Some((y, ey, dy, wy))) = (estimated(a), estimated(b)) else { return Val::Undefined };
-    let (draws, weighted) = (dx.max(dy), wx || wy);
+    let (draws, given) = (dx.max(dy), wx.or(wy));
     let error = match op {
         chance::Op::Add | chance::Op::Sub => ex.zip(ey).map(|(p, q)| p + q),
         chance::Op::Mul if ey == Some(0.0) => ex.map(|e| e * y.abs()),
@@ -1552,7 +1578,7 @@ fn estimate_op(a: &Val, b: &Val, op: chance::Op, f: &dyn Fn(f64, f64) -> Val) ->
         _ => None,
     };
     match f(x, y) {
-        Val::Num(v) => Val::Estimate(Estimate { value: v, error, draws, weighted }),
+        Val::Num(v) => Val::Estimate(Estimate { value: v, error, draws, given }),
         other => other,
     }
 }
@@ -1586,7 +1612,7 @@ fn number(a: &Val, op: chance::Un, f: impl Fn(f64) -> f64, wrong: &StdCell<bool>
         Val::Undefined => Val::Undefined,
         Val::Rand(r) if !r.is_truth() => val(chance::un(op, &Term::Rand(*r))),
         Val::Estimate(e) => match Val::num(f(e.value)) {
-            Val::Num(v) => Val::Estimate(Estimate { value: v, error: if op == chance::Un::Neg { e.error } else { None }, draws: e.draws, weighted: e.weighted }),
+            Val::Num(v) => Val::Estimate(Estimate { value: v, error: if op == chance::Un::Neg { e.error } else { None }, draws: e.draws, given: e.given }),
             other => other,
         },
         _ => {

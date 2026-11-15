@@ -1,0 +1,9 @@
+id: 01a1de63-b458-72fa-8c84-991a38f7ac6e
+components:
+- notes
+- value
+cells:
+  body: 'How many minutes over 10k each minute over 5k is worth: about 2, give or take half, before anything''s seen.'
+  name: Slope
+formulas:
+  value: normal(2, 0.5)

@@ -6,7 +6,7 @@
 use std::cell::{Cell as StdCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use recollect_graph::chance::{Known, Rand, Reader, Share, Term};
+use recollect_graph::chance::{Rand, Reader, Share, Term};
 use recollect_graph::worlds::{Bool, DrawGroup, Picks, Var};
 use recollect_graph::{Backed, CellDef, CellType, ComponentDef, Entity, Error, Event, Graph, Log, On, Op, Origin, Shown, Source, Stored, Violation};
 use recollect_systems::formulas::{CHOICE, Called, EVIDENCE, FOUND, Found, LABEL, VALUE, ValueCell, draws_found, is_chance, known_draws, narrows, shown_free, worlds_left};
@@ -543,8 +543,7 @@ fn present(v: &Value, reader: &RefCell<Reader>) -> Value {
         && o.len() == 1
         && let Some(r) = o.get("likely").and_then(|l| serde_json::from_value::<Rand>(l.clone()).ok())
     {
-        let mut alone = Reader::given(Known { truth: None, log_weight: Some(r) });
-        return json!({ "seen": { "draws": alone.effective_draws(), "of": recollect_graph::chance::DRAWS } });
+        return json!({ "seen": { "draws": Reader::new().worth_weighed(r), "of": recollect_graph::chance::DRAWS } });
     }
     if let Some(r) = rand_of(v) {
         let one = [Share { weight: 1.0, value: Term::Rand(r) }];

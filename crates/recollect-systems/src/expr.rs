@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use recollect_graph::Entity;
-use recollect_graph::chance::Rand;
+use recollect_graph::chance::{Given, Rand};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A value in one world. Undefined is `null`, the same as `None` in a `Cond<Option<T>>`, so what a
@@ -47,9 +47,10 @@ pub struct Estimate {
     pub error: Option<f64>,
     /// How many draws it was read from: how many they're worth, where they were weighted.
     pub draws: usize,
-    /// The draws were weighted by how likely each makes what was seen. See `docs/inference.md`.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub weighted: bool,
+    /// How what's been seen was taken into account: the draws weighted by it, or moved to fit it. See
+    /// `docs/inference.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub given: Option<Given>,
 }
 
 #[derive(Serialize, Deserialize)]
