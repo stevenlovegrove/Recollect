@@ -1,12 +1,10 @@
 # Requirements: modelling a design, coarse to fine
 
-**Status:** for discussion. Nothing here is built. It comes from using Recollect to model the architecture of `kept`, a Rust crate for versioning and collaboration, in three layers: the conceptual data model, then data exchange, then implementation interfaces. An agent and a person work on it together over MCP and in the app.
+**Status:** agreed, and ready to plan. Nothing here is built. It comes from using Recollect to model the architecture of `kept`, a Rust crate for versioning and collaboration, in three layers: the conceptual data model, then data exchange, then implementation interfaces. An agent and a person work on it together over MCP and in the app.
 
 The first draft was discussed, and these were agreed: "in play" moves out of `plan`; relation kinds are nodes; leaning is a component and nothing more; what you're looking at is a formula; a read says what it wants and gets it in one batch, in YAML or JSON; MCP is redesigned with no overlapping tools; and gaps are a standing list rather than warnings on a commit. Saved scenarios are left out for now.
 
 **No backward compatibility.** Nobody uses MCP yet, and the examples are the only workspaces, so formats, names and tools change freely, and the examples are changed with the engine. Nothing reads an old form.
-
-What's still open is at the end.
 
 ## In short
 
@@ -67,7 +65,7 @@ format: yaml                        # or json
 - **Every reference is a full handle with the name beside it**, such as `to: 01a1dce9-2879-7010-b5c0-5126c9abb977` and `to_name: Deltas`. The handle is what `apply` takes, so an agent copies it rather than looking it up; the name is what it reasons with. Short handles would be one more thing to resolve, and names alone aren't unique.
 - **YAML or JSON is a choice at the MCP boundary.** The views are `Serialize`, the workspace already uses `serde_yaml_ng` for its files, and the engine doesn't care which. YAML is the default for an agent, since it reads and writes the same shape as the files.
 - **A value the same in every world is one value.** Where it differs, it's said once, as now, with the worlds it holds in.
-- **It replaces the reading tools.** MCP is redesigned around it with no overlapping tools, and what doesn't fit is deleted: `get_node`, `list_nodes`, `search_nodes`, `get_tree`, `read_world`, `get_decisions` and `get_work` all become specifications of one `read`. The proposed set is in the open questions.
+- **It replaces the reading tools.** MCP is redesigned around it with no overlapping tools, and what doesn't fit is deleted: `get_node`, `list_nodes`, `search_nodes`, `get_tree`, `read_world`, `get_decisions` and `get_work` all become specifications of one `read`. The tools that remain are in the decisions below.
 
 **R3. The overview shows the workspace's own vocabulary.** Beside what systems provide, and before it:
 
@@ -92,7 +90,7 @@ What systems provide can be shorter, or behind a flag, since it's the same in ev
 
 Then `link {kind: "names"}` works, an edge shows its kind on the Map, and a formula can say `in.names`. That needs the engine to index edges by their kind as it does by component. Since it's a node, defining one is in History, can be undone, and is in the files.
 
-There's no interim step reading `role` on `relates`: with no backward compatibility, kept's edges are rewritten once relation kinds exist.
+There's no interim step reading `role` on `relates`: with no backward compatibility, existing edges are rewritten once relation kinds exist.
 
 **R7. Leaning, and looking through a formula.**
 
@@ -141,7 +139,7 @@ The engine needs nothing new. The work is in views and the `where` parameter.
 
 It costs nothing on a commit, since it's worked out when asked for.
 
-**R15. Model and prose together.** Export a subtree as markdown, in the shape of a design document: each concept's notes, its parts, its relations, its decisions with their options, leaning and reasons, read through a formula such as *current intent*. Optionally, `sources` that point at a section of a file, with a notice when that section has changed since. Kept's `DESIGN.md` and its workspace could then be kept in step.
+**R15. Model and prose together.** Export a subtree as markdown, in the shape of a design document: each concept's notes, its parts, its relations, its decisions with their options, leaning and reasons, read through a formula such as *current intent*. Optionally, `sources` that point at a section of a file, with a notice when that section has changed since. A design document and its workspace could then be kept in step.
 
 **R16. Decision records.** For each decision: the arguments for and against each option, as `supports` and `contradicts` edges to the options; the leaning; the reasons any option was ruled out; and, once decided, why. Export as an ADR.
 
@@ -169,47 +167,22 @@ It costs nothing on a commit, since it's worked out when asked for.
 | MCP tools | Redesigned, with no overlapping tools, and what doesn't fit deleted | Nobody uses MCP yet |
 | Compatibility | None. The examples change with the engine | They're the only workspaces |
 | Gaps | A standing list of what's unresolved | Everyone sees it, it lasts until fixed, and it costs nothing on a commit |
+| The MCP tools | Five: `overview` (the vocabulary, R3, and the instructions that apply, R4), `read` (R2, covering what `get_node`, `list_nodes`, `search_nodes`, `get_tree`, `read_world`, `get_decisions` and `get_work` do now), `apply`, `changes` (history, and what changed since a seq, R12) and `checks` (R11, R14) | Each answers a different question, so an agent never has two ways to do one thing. Decisions and work are reads of particular components; a few named specifications in the instructions cover the common cases |
+| The app's reads | The same engine function as `read`, but the app's API unchanged for now | The app and the agent can't disagree about a value. The Map wants the whole graph, so the app gains nothing until it reads less |
+| Relation kinds that arrange | Allowed, if the relation kind's node says so, with a notice when arranging edges make a loop | A data model is naturally laid out by its own relations, and more than one edge can already arrange |
+| A relation kind having a kind | Not yet | Nothing needs it, and adding it later changes no file |
+| A `where` formula that's undefined in a world | The world is kept, and the read says it couldn't decide there | Dropping it would hide a design because of a gap in the data (R5) |
+| A `where` formula about something uncertain | Allowed, and the read says it's supposing that | Pinning already works this way; saying so stops it surprising anyone |
+| The worlds chip | It builds a formula, and can show and take one as text | Clicking and typing are one mechanism, and what's seen in the app can be pasted into a read |
+| A leaning's reason | An optional `why` cell beside the leaning | The log's reason isn't in the files; a `why` travels with the leaning and shows in reads |
+| The number of worlds | Shown, as now | Useful as it is; revisit if it gets in the way |
+| Layers | One workspace holds every layer | `realises` crosses layers, there are no references between workspaces, and lanes (R13) give each layer a band |
 
-**Why `part_of` and not `contains`.** The first draft suggested `contains`, but only to get away from plans, and that isn't needed. What makes kept's concepts plan parts is that `part_of` today requires the `part` component at both ends, and `part` carries `done`, `dropped` and blocking. Once the structure system owns `part_of` and `need`, the edge requires only that, and `part` is what `plan` adds for work. And `part_of` points the right way for the files: it goes from the child to its parent, so each node's file says where it sits, a node has one parent, and moving it changes one file. `contains` would go from the parent, putting every child in the parent's file.
+**Why `part_of` and not `contains`.** The first draft suggested `contains`, but only to get away from plans, and that isn't needed. What makes a model's concepts plan parts today is that `part_of` today requires the `part` component at both ends, and `part` carries `done`, `dropped` and blocking. Once the structure system owns `part_of` and `need`, the edge requires only that, and `part` is what `plan` adds for work. And `part_of` points the right way for the files: it goes from the child to its parent, so each node's file says where it sits, a node has one parent, and moving it changes one file. `contains` would go from the parent, putting every child in the parent's file.
 
 ## Open questions
 
-**Structure**
-
-Each has a suggested answer and the reason for it.
-
-**MCP**
-
-1. **Which tools are there?** Suggested: five.
-   - `overview`: the vocabulary (R3), and the instructions that apply (R4).
-   - `read`: the specification (R2), covering what `get_node`, `list_nodes`, `search_nodes`, `get_tree`, `read_world`, `get_decisions` and `get_work` do now.
-   - `apply`: ops, as now.
-   - `changes`: history, and what changed since a seq (R12), replacing `get_history`.
-   - `checks`: what's unresolved and what fails (R11, R14), replacing `find_checks`.
-
-   *Why:* each answers a different question (what words exist, what's there, change it, what happened, what's wrong), so an agent never has two ways to do one thing. Decisions and work are reads of particular components with what's worked out, so they don't need tools of their own; a few named specifications in the instructions, such as "decisions" or "work", cover the common cases.
-2. **Should the app read through the same specification?** Suggested: yes, inside the engine, but not yet in the app's API. *Why:* one read path means the app and the agent can't disagree about a value. But the app wants the whole graph at once for the Map, so it gains nothing until it reads less; the engine function can be shared now and the app moved onto it later.
-
-**Structure**
-
-3. **Can a relation kind arrange the Map and Outline?** Suggested: yes, if its node says so, with a notice when two arranging edges make a loop. *Why:* a data model is naturally laid out by its own relations, such as a header beneath what it names, and `ComponentDef.arranges` already lets more than one edge arrange.
-4. **Can a relation kind have a kind?** Suggested: not yet. *Why:* nothing in kept needs "*names by hash* is a kind of *names*" so far, and adding it later wouldn't change any file already written.
-
-**Looking through a formula**
-
-5. **What does a `where` formula do in a world where it's undefined,** such as a cell missing in that world? Suggested: it keeps the world and says it couldn't decide there. *Why:* dropping it would hide a design because of a gap in the data, which is a silent wrong answer (R5).
-6. **Can a `where` formula mention something uncertain?** Suggested: yes, and the read says it's supposing that. *Why:* "what if the backup is old" is a useful question and pinning already works this way; saying so is what stops it surprising someone who only meant to narrow their own choices.
-7. **Is the worlds chip a formula editor?** Suggested: yes, the chip builds a formula, and it can show and take one as text. *Why:* then clicking and typing are one mechanism, and what someone sees in the app can be pasted into a read.
-
-**Leaning and decisions**
-
-8. **Does a leaning need its own `why` cell?** Suggested: yes, optional. *Why:* a leaning is the choice most likely to be revisited, and the log's reason isn't in the files, so it's lost unless the history is kept; a `why` beside the leaning travels with it and shows in reads.
-9. **Should a model show how many worlds there are?** Suggested: show how many open decisions there are, and the worlds only when asked. *Why:* "four designs still possible" helps, but "a million worlds" for twenty decisions alarms without helping; open decisions is the number someone acts on.
-
-**Kept**
-
-10. **One workspace, or one per layer?** Suggested: one. *Why:* `realises` crosses layers, and there are no references between workspaces; lanes (R13) give each layer its own band.
-11. **When is kept's workspace rewritten, and by which session?** Suggested: once R1, R6 and R7 are built, by the kept session that owns its design, not the one changing the engine. *Why:* the rewrite is design work (which concepts, which relations, which leanings), and with no backward compatibility it has to happen in the same step as those changes land, or kept's workspace stops opening.
+None at present. Kept, which this came from, is left out of the plan: its workspace is its own concern.
 
 ## Suggested order
 
@@ -217,4 +190,4 @@ Each has a suggested answer and the reason for it.
 2. R1 and R10: structure without work, and kinds that don't leak notes.
 3. R7: leaning, then views narrowing by a formula.
 4. R6 and R8: relation kinds as nodes, then `realises` and the coverage view.
-5. R14, R11 and R12, then the rest, as kept's work shows which matter.
+5. R14, R11 and R12, then the rest, as modelling shows which matter.
