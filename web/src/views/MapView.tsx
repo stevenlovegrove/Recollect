@@ -18,7 +18,7 @@ import {
 import ELK from "elkjs/lib/elk.bundled.js";
 import type { GraphNode } from "../api";
 import type { Workspace } from "../workspace";
-import { badgesOf, compColor, dominant, isDropped, isNote, label as labelOf, nodeColor } from "../theme";
+import { badgesOf, compColor, dominant, isDropped, isNote, label as labelOf, linkLabel, nodeColor } from "../theme";
 import { renderMarkdown } from "../markdown";
 import { Brackets, CompBadges, TableIcon, beliefText, cellText, chanceOf, edgeKey, edgeText, parseEdgeKey, reading } from "../bits";
 import { type SummaryLine, summaryOf } from "../summary";
@@ -588,7 +588,7 @@ function LinkMenu({ ws, drop, onSwap, onDone }: { ws: Workspace; drop: LinkDrop;
         >
           <kbd>{i + 1}</kbd>
           <span className={`dd-swatch rel-${r.name}`} />
-          <span>{labelOf(r.name)}</span>
+          <span>{linkLabel(r.name)}</span>
           {exists(r.name) && <span className="muted small">exists</span>}
         </button>
       ))}
@@ -1029,19 +1029,17 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
   const setShapes = (rels: string[], on: boolean) => setLayoutPref({ ...layoutPref, layoutBy: { ...layoutPref.layoutBy, ...Object.fromEntries(rels.map((r) => [r, on])) } });
   const labelRels = rels.filter(([r]) => r.startsWith(LABEL_REL));
   const kindRels = rels.filter(([r]) => !r.startsWith(LABEL_REL));
-  // The Links menu by what each is, which ticking layout never changes: the structure the systems build
-  // in, the relations the workspace defines, the rest, and what says what kind each thing is, which is
-  // there only while setup is shown.
+  // The Links menu by what each is, which ticking layout never changes: the links the systems build in,
+  // the relations the workspace defines, and what says what kind each thing is, which is there only
+  // while setup is shown.
   const ownRels = new Set(view.relations.map((r) => r.name));
-  const builtIn = (r: string) => !ownRels.has(r) && !!view.components.find((c) => c.name === r)?.arranges;
   const relAbout = (name: string) => {
     const body = ws.byId.get(view.relations.find((x) => x.name === name)?.id ?? "")?.cells.body?.value;
     return typeof body === "string" ? body : undefined;
   };
   const relGroups = [
-    { title: "Structure", rels: kindRels.filter(([r]) => builtIn(r) && r !== "is_a") },
+    { title: "Built in", rels: kindRels.filter(([r]) => !ownRels.has(r) && r !== "is_a") },
     { title: "Relations of your own", rels: kindRels.filter(([r]) => ownRels.has(r)) },
-    { title: "Other links", rels: kindRels.filter(([r]) => !builtIn(r) && !ownRels.has(r) && r !== "is_a") },
     { title: "Setup", rels: kindRels.filter(([r]) => r === "is_a") },
   ].filter((group) => group.rels.length > 0);
 
@@ -1429,7 +1427,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
             source: ends.child,
             target: ends.parent,
             // What it is, and what it holds, such as an option's weight. A label says what a formula calls it.
-            label: [e.called ?? (e.kind === "label" ? String(e.value) : labelOf(e.kind)), e.holds].filter(Boolean).join(" · "),
+            label: [e.called ?? (e.kind === "label" ? String(e.value) : linkLabel(e.kind)), e.holds].filter(Boolean).join(" · "),
             className: `edge rel-${e.kind} ${arranges ? "" : "free"} ${hot ? "hot" : ""} ${isSel ? "picked" : ""}`,
             animated: e.kind === "depends_on" && hot,
             // Into what reads it or holds it: where it sits on the map doesn't say which way a formula reads.
@@ -1582,9 +1580,9 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
                 {group.map(([r, n]) => (
                   <DdItem key={r} checked={!hiddenRels.has(r)} onChange={() => setHiddenRels(toggle(hiddenRels, r))} title={ws.info(r)?.about ?? relAbout(r)}>
                     <span className={`dd-swatch rel-${r}`} />
-                    <span className="dd-label">{labelOf(r)}</span>
+                    <span className="dd-label">{linkLabel(r)}</span>
                     <span className="muted">{n}</span>
-                    <LayoutTick on={shapes(r)} name={labelOf(r)} onChange={(on) => setShapes([r], on)} />
+                    <LayoutTick on={shapes(r)} name={linkLabel(r)} onChange={(on) => setShapes([r], on)} />
                   </DdItem>
                 ))}
               </Fragment>
@@ -1605,7 +1603,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
                 title={ws.info("label")?.about}
               >
                 <span className="dd-swatch rel-label" />
-                <span className="dd-label">Label</span>
+                <span className="dd-label">label</span>
                 <span className="muted">{labelRels.reduce((sum, [, n]) => sum + n, 0)}</span>
                 <LayoutTick on={labelRels.every(([r]) => shapes(r))} name="every label" onChange={(on) => setShapes(labelRels.map(([r]) => r), on)} />
               </DdItem>

@@ -22,6 +22,9 @@ const LABEL: Record<string, string> = {
 
 export const label = (c: string) => LABEL[c] ?? (c[0]?.toUpperCase() ?? "") + c.slice(1).replace(/_/g, " ");
 
+/** What a kind of link is called: lower case, since it reads between two names, as "Kitchen part of Extension". */
+export const linkLabel = (c: string) => (LABEL[c] ?? c.replace(/_/g, " ")).toLowerCase();
+
 /** What a node can have that says nothing about what it is: words about it, and where it came from. */
 const ASIDES = ["notes", "sources"];
 
