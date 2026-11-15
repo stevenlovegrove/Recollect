@@ -504,11 +504,12 @@ pre {
   align-items: center;
   gap: 4px;
 }
-.kind-line .grow {
+.insp-head .kind-line {
   flex: 1;
+  min-width: 0;
+  padding-right: 6px;
 }
 .kind-of {
-  flex-basis: 100%;
   display: flex;
   flex-wrap: wrap;
   align-items: center;

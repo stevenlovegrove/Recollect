@@ -2,13 +2,13 @@ import { useMemo, useState } from "react";
 import type { Cell, Chance, Dist, Edge, Estimate, GraphNode, Op, Reading, Shown } from "./api";
 import { bracketRuns, partText } from "./brackets";
 import type { Workspace } from "./workspace";
-import { badgesOf, compColor, isDropped, isNote, label, nodeColor } from "./theme";
+import { badgesOf, compColor, isDropped, label, nodeColor } from "./theme";
 
 export function NodeChip({ ws, id, onSelect, fallback }: { ws: Workspace; id: string; onSelect: (id: string) => void; fallback?: string }) {
   const n = ws.byId.get(id);
   if (!n && fallback) return <span className="chip new">{fallback}</span>;
   return (
-    <button className={`chip ${n ? (isDropped(n) ? "dead" : "") : "missing"}`} onClick={() => n && onSelect(id)} title={n ? badgesOf(n).map(label).join(", ") || (isNote(n) ? "note" : "") : "not in this graph"}>
+    <button className={`chip ${n ? (isDropped(n) ? "dead" : "") : "missing"}`} onClick={() => n && onSelect(id)} title={n ? badgesOf(n).map(label).join(", ") : "not in this graph"}>
       <span className="chip-dot" style={{ background: n ? nodeColor(n) : "var(--danger)" }} />
       {n?.name ?? `${id.slice(-6)}`}
     </button>

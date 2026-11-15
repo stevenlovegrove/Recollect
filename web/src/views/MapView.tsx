@@ -18,7 +18,7 @@ import {
 import ELK from "elkjs/lib/elk.bundled.js";
 import type { GraphNode } from "../api";
 import type { Workspace } from "../workspace";
-import { badgesOf, compColor, dominant, isDropped, isNote, label as labelOf, linkLabel, nodeColor } from "../theme";
+import { badgesOf, compColor, dominant, isDropped, label as labelOf, linkLabel, nodeColor } from "../theme";
 import { renderMarkdown } from "../markdown";
 import { Brackets, CompBadges, TableIcon, beliefText, cellText, chanceOf, edgeKey, edgeText, parseEdgeKey, reading } from "../bits";
 import { type SummaryLine, summaryOf } from "../summary";
@@ -163,7 +163,6 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
             </span>
           ),
         )}
-        {isNote(node) && !kinds.length && <span className="muted small">note</span>}
         {data.table && data.onShowTable && <TableButton table={data.table} onShow={data.onShowTable} />}
         {/* Something true or false is only a value until it's required: then it's a principle, and only the worlds where it holds count. */}
         {truth && (
@@ -701,7 +700,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
   const linked = useMemo(() => new Set(baseLinks.flatMap((e) => [e.from, e.to])), [baseLinks]);
   const freeNote = (n: GraphNode): string | null => {
     const body = n.cells.body?.value;
-    return isNote(n) && !n.unwritten && !linked.has(n.id) && typeof body === "string" && body.trim() ? body : null;
+    return !badgesOf(n).length && !n.unwritten && !linked.has(n.id) && typeof body === "string" && body.trim() ? body : null;
   };
   // A table whose rows aren't cards has one of its own, if they've anything to say: what each says for
   // itself, and what it's part of, which nothing else on the map shows.

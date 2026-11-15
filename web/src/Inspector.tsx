@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, type Cell, type Edge, type EventView, type GraphNode, type Has, type Labels, type Op, type Written } from "./api";
 import { edgesOf, labelsOf, type Workspace } from "./workspace";
 import { NOT_NAMES, namesIn } from "./formula";
-import { badgesOf, compColor, isDropped, isNote, label, linkLabel, nodeColor } from "./theme";
+import { compColor, isDropped, label, linkLabel, nodeColor } from "./theme";
 import { DdItemButton, Dropdown } from "./Dropdown";
 import { Brackets, CellValue, CompBadge, NodeChip, RemoveButton, Resolved, RevertButton, TableIcon, TickBox, casesOf, distOf, edgeText, shownText } from "./bits";
 import { entryText, parseEntry } from "./cellEntry";
@@ -234,13 +234,16 @@ export function Inspector({
 
   return (
     <aside className="inspector">
+      {/* What it is: what kind of thing, and what it's been made besides. What a kind gives it is on its cards. */}
       <div className="insp-head" style={{ borderColor: nodeColor(node) }}>
-        <div className="insp-kind">
-          {badgesOf(node).map((c) => (
-            <CompBadge key={c} ws={ws} c={c} onClick={() => document.getElementById(`card-${c}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" })} />
-          ))}
-          {isNote(node) && <span className="muted">note</span>}
-        </div>
+        <KindLine ws={ws} id={id} run={run} onSelect={onSelect}>
+          {node.components
+            .filter((c) => c.why === "given" && !["named", "notes", "sources"].includes(c.name))
+            .map((c) => (
+              <CompBadge key={c.name} ws={ws} c={c.name} onClick={() => document.getElementById(`card-${c.name}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" })} />
+            ))}
+        </KindLine>
+        <CopyId id={id} />
         <button className="icon" onClick={onClose} title="Close (esc)">
           ×
         </button>
@@ -251,7 +254,7 @@ export function Inspector({
           <Key k="e" />
           <AutoText inputRef={nameRef} className="insp-title-input" aria-label="Name" placeholder="Name" {...name} onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()} />
         </div>
-        <KindLine ws={ws} id={id} run={run} onSelect={onSelect} />
+        <KindOf ws={ws} id={id} onSelect={onSelect} />
         {table && (
           <button className="link small table-link" onClick={() => onShowTable(table)} title={`Open the Table tab on ${table}: its rows as a grid, and a chart of a column down them`}>
             <TableIcon /> {node.row ? `Row ${String(node.row.key)} of ${table}` : `${table} is a table`}: show it as one →
@@ -362,11 +365,11 @@ function CopyId({ id }: { id: string }) {
 }
 
 /**
- * What kind of thing a node is, and what's a kind of it: the kinds it's linked to by `is_a`, each followed
- * up through what it's a kind of in turn, and the things that are a kind of it. Everything a kind says,
- * the things of that kind take, so this line is where what a node inherits comes from.
+ * What kind of thing a node is: the kinds it's linked to by `is_a`, each followed up through what it's a
+ * kind of in turn, then whatever else it's been made, which comes in as `children`. Everything a kind says,
+ * the things of that kind take, so this is where what a node inherits comes from.
  */
-function KindLine({ ws, id, run, onSelect }: { ws: Workspace; id: string; run: (ops: Op[], why?: string) => Promise<boolean>; onSelect: (id: string) => void }) {
+function KindLine({ ws, id, run, onSelect, children }: { ws: Workspace; id: string; run: (ops: Op[], why?: string) => Promise<boolean>; onSelect: (id: string) => void; children?: React.ReactNode }) {
   const [adding, setAdding] = useState(false);
   const edges = ws.view!.edges.filter((e) => e.components.includes("is_a"));
   const kindsOf = (n: string) => edges.filter((e) => e.from === n).map((e) => e.to);
@@ -376,11 +379,10 @@ function KindLine({ ws, id, run, onSelect }: { ws: Workspace; id: string; run: (
     for (let up = kindsOf(k)[0]; up && !chain.includes(up) && up !== id; up = kindsOf(up)[0]) chain.push(up);
     return chain;
   });
-  const instances = edges.filter((e) => e.to === id).map((e) => e.from);
   const kinds = [...new Set(edges.map((e) => e.to))].filter((k) => k !== id && !kindsOf(id).includes(k));
   return (
     <div className="kind-line small">
-      {chains.length > 0 ? (
+      {chains.length > 0 &&
         chains.map((chain) => (
           <span key={chain[0]} className="kind-chain" title={`It takes what ${chain.map((k) => ws.byId.get(k)?.name ?? k).join(", then ")} say${chain.length === 1 ? "s" : ""}, unless it says otherwise`}>
             <span className="muted">is a</span>
@@ -392,10 +394,8 @@ function KindLine({ ws, id, run, onSelect }: { ws: Workspace; id: string; run: (
               </span>
             ))}
           </span>
-        ))
-      ) : (
-        !instances.length && <span className="muted">no kind</span>
-      )}
+        ))}
+      {children}
       {adding ? (
         <input
           autoFocus
@@ -420,17 +420,21 @@ function KindLine({ ws, id, run, onSelect }: { ws: Workspace; id: string; run: (
           <option key={n!.id} value={n!.name} />
         ))}
       </datalist>
-      <span className="grow" />
-      <CopyId id={id} />
-      {instances.length > 0 && (
-        <div className="kind-of">
-          <span className="muted">{instances.length === 1 ? "1 thing is" : `${instances.length} things are`} this kind:</span>
-          {instances.slice(0, 8).map((i) => (
-            <NodeChip key={i} ws={ws} id={i} onSelect={onSelect} />
-          ))}
-          {instances.length > 8 && <span className="muted">and {instances.length - 8} more</span>}
-        </div>
-      )}
+    </div>
+  );
+}
+
+/** On a kind, the things of that kind, which take everything it says. */
+function KindOf({ ws, id, onSelect }: { ws: Workspace; id: string; onSelect: (id: string) => void }) {
+  const instances = ws.view!.edges.filter((e) => e.to === id && e.components.includes("is_a")).map((e) => e.from);
+  if (!instances.length) return null;
+  return (
+    <div className="kind-of small">
+      <span className="muted">{instances.length === 1 ? "1 thing is" : `${instances.length} things are`} this kind:</span>
+      {instances.slice(0, 8).map((i) => (
+        <NodeChip key={i} ws={ws} id={i} onSelect={onSelect} />
+      ))}
+      {instances.length > 8 && <span className="muted">and {instances.length - 8} more</span>}
     </div>
   );
 }

@@ -33,12 +33,6 @@ export function badgesOf(n: GraphNode): string[] {
   return n.components.filter((c) => (c.why === "given" || c.why === "kind") && !ASIDES.includes(c.name)).map((c) => c.name);
 }
 
-/**
- * Says nothing but words: no components of its own, none from its edges, and nothing from a kind. A thing
- * of a kind is that kind of thing, even when all the kind gives it is notes.
- */
-export const isNote = (n: GraphNode) =>
-  !badgesOf(n).length && !n.components.some((c) => c.why === "edge" || c.why === "kind") && !Object.values(n.cells).some((c) => c.source === "kind");
 
 const ORDER = ["goal", "decision", "risk", "question", "unknown", "requires", "evidence", "options", "task", "macro", "value"];
 
