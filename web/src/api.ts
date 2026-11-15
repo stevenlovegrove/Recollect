@@ -4,6 +4,9 @@ import { ApiError, backend } from "./backend";
 
 export type World = Record<string, string>;
 
+/** A true-or-false formula to look through, with what each name in it means, by node id, if it names any. */
+export type Where = string | { formula: string; labels: Record<string, string> };
+
 export interface Reading {
   when: string;
   prob: number;
@@ -391,6 +394,7 @@ export type Op =
   | { op: "set"; id: string; cell: string; value?: unknown; formula?: string; labels?: Labels }
   | { op: "set"; from: string; to: string; cell: string; value?: unknown; formula?: string }
   | { op: "link"; from: string; to: string; component: string; cells?: Record<string, Written> }
+  | { op: "link"; from: string; to: string; kind: string; cells?: Record<string, Written> }
   | { op: "unlink"; from: string; to: string; component: string }
   | { op: "delete_node"; id: string };
 
@@ -401,11 +405,11 @@ const call = async <T>(method: string, args: unknown = {}) => (await backend()).
 export const api = {
   workspaces: async () => (await backend()).workspaces(),
   openSample: async (sample: string, reset = false) => (await backend()).openSample(sample, reset),
-  view: (world: World, where?: string) => call<View>("view", where ? { world, where } : { world }),
+  view: (world: World, where?: Where) => call<View>("view", where ? { world, where } : { world }),
   /** Read what a specification asks for: see `read.rs`. */
   read: (spec: Record<string, unknown>) => call<ReadOut>("read", spec),
   /** The world that comes `at`th among those `world` leaves, counting from 0, with every choice pinned. `at` is text because there can be more worlds than a number holds exactly. */
-  worldAt: (world: World, at: string, where?: string) => call<World | null>("world_at", where ? { world, at, where } : { world, at }),
+  worldAt: (world: World, at: string, where?: Where) => call<World | null>("world_at", where ? { world, at, where } : { world, at }),
   plan: (world: World) => call<PlanData>("plan", { world }),
   apply: (ops: Op[], why = "") => call<{ created: Record<string, string> }>("apply", { ops, why }),
   /** Take back one event, or the newest change if none is given. */

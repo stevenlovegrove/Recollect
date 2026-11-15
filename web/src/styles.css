@@ -491,6 +491,42 @@ pre {
   display: inline-flex;
   align-items: center;
 }
+/* What kind of thing a node is, up through the kinds above it, and what's a kind of it. */
+.kind-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.kind-chain,
+.kind-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.kind-line .grow {
+  flex: 1;
+}
+.kind-of {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.copy-id {
+  color: var(--muted);
+  opacity: 0.7;
+}
+.copy-id:hover {
+  opacity: 1;
+}
+.look-names {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
 /* A node's links: chips that wrap, with what each holds beside it, and its editor on a line of its own. */
 .link-rows {
   display: flex;

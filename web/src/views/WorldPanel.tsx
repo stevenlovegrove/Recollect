@@ -5,6 +5,7 @@ import type { Workspace } from "../workspace";
 import { BELIEF_MEANS, beliefText as percent } from "../bits";
 import { api } from "../api";
 import { DrawingFrame } from "./DrawingFrame";
+import { guessNode, namesIn } from "../formula";
 
 export const DEFAULT = "default";
 
@@ -69,7 +70,7 @@ export function WorldPanel({ ws, onSelect, summary, steps }: { ws: Workspace; on
     const n = stepping?.total ?? total;
     if (!n || n < BigInt(1)) return;
     const at = stepping ? (stepping.at + BigInt(by) + n) % n : by > 0 ? BigInt(0) : n - BigInt(1);
-    const found = await api.worldAt(base, at.toString(), ws.lookThrough || undefined);
+    const found = await api.worldAt(base, at.toString(), ws.where);
     if (!found) return;
     // What's ruled out, and quantities pinned, stay as they were: the worlds stepped through respect them.
     const next = { ...found, ...Object.fromEntries(Object.entries(base).filter(([k]) => k.startsWith("!") || k.startsWith("="))) };
@@ -403,12 +404,32 @@ export const CURRENT_INTENT = "all(d in with.leaning: d.chosen = d.leaning)";
 /**
  * A formula to look through as well as what's pinned: only the worlds where it's true are shown, as a read
  * with `where` does. It's typed, or one click for current intent where something leans. Nothing is saved.
+ * A name in it means a node: the one called that, ignoring case and with _ for a space, where that's
+ * clear, and otherwise it asks which.
  */
 function LookThrough({ ws }: { ws: Workspace }) {
   const [text, setText] = useState(ws.lookThrough);
+  const [labels, setLabels] = useState(ws.lookLabels);
   useEffect(() => setText(ws.lookThrough), [ws.lookThrough]);
+  useEffect(() => setLabels(ws.lookLabels), [ws.lookLabels]);
   const leans = ws.view!.worlds.vars.some((v) => v.leaning);
-  const set = (f: string) => ws.setLookThrough(f.trim());
+  const nodes = ws.view!.nodes;
+  const names = namesIn(text);
+  // What each name means: what was said, or else the node it plainly is.
+  const meant = (given: Record<string, string>) =>
+    Object.fromEntries(names.flatMap((n) => {
+      const id = given[n] ?? guessNode(nodes, n)?.id;
+      return id ? [[n, id]] : [];
+    }));
+  const set = (f: string, given = labels) => {
+    const formula = f.trim();
+    const now = formula === text.trim() ? meant(given) : {};
+    setLabels(now);
+    ws.setLookThrough(formula, now);
+  };
+  const shown = meant(labels);
+  // A name nobody has said the node for is what's wrong, whatever the formula makes of it.
+  const unsaid = names.filter((n) => !shown[n]);
   return (
     <div className="look-through">
       <label className="small muted" htmlFor="look-through">
@@ -438,7 +459,49 @@ function LookThrough({ ws }: { ws: Workspace }) {
           ×
         </button>
       )}
-      {ws.lookError && <div className="error small">{ws.lookError}</div>}
+      {names.length > 0 && (
+        <div className="look-names">
+          {names.map((n) => (
+            <div key={n} className="formula-label small">
+              <code>{n}</code>
+              {shown[n] ? (
+                <span className="edge-chip">
+                  {ws.byId.get(shown[n])?.name ?? shown[n]}
+                  <button
+                    className="icon small"
+                    title={`${n} isn't this: say which node it is`}
+                    aria-label={`${n} isn't this`}
+                    onClick={() => {
+                      const { [n]: _, ...rest } = labels;
+                      // Asked for, so not guessed again until another is picked.
+                      setLabels({ ...rest, [n]: "" });
+                    }}
+                  >
+                    ×
+                  </button>
+                </span>
+              ) : (
+                <input
+                  list="look-nodes"
+                  className="small"
+                  aria-label={`What ${n} refers to`}
+                  placeholder="which node?"
+                  onChange={(e) => {
+                    const found = nodes.find((x) => x.name === e.target.value);
+                    if (found) set(text, { ...labels, [n]: found.id });
+                  }}
+                />
+              )}
+            </div>
+          ))}
+          <datalist id="look-nodes">
+            {nodes.map((x) => (
+              <option key={x.id} value={x.name} />
+            ))}
+          </datalist>
+        </div>
+      )}
+      {ws.lookError && <div className="error small">{unsaid.length ? `Say which node ${unsaid.join(" and ")} ${unsaid.length === 1 ? "means" : "mean"}.` : ws.lookError}</div>}
     </div>
   );
 }

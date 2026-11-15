@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { backend, type Backend, type ServerEvent, type Status } from "./backend";
-import { api, isNothingOpen, type CellInfo, type ComponentInfo, type Edge, type GraphNode, type Op, type PlanData, type View, type Workspaces, type World } from "./api";
+import { api, isNothingOpen, type CellInfo, type ComponentInfo, type Edge, type GraphNode, type Op, type PlanData, type View, type Workspaces, type Where, type World } from "./api";
 
 export interface Workspace {
   view: View | null;
@@ -24,7 +24,11 @@ export interface Workspace {
   setWorld: (w: World) => void;
   /** A true-or-false formula everything on screen is narrowed by too, as `where` narrows a read. Empty for none. */
   lookThrough: string;
-  setLookThrough: (formula: string) => void;
+  /** What each name in it means, by node id. */
+  lookLabels: Record<string, string>;
+  setLookThrough: (formula: string, labels?: Record<string, string>) => void;
+  /** The two together, as a read's `where` takes them, or undefined for none. */
+  where: Where | undefined;
   /** Why the formula looked through couldn't be, if it couldn't. Everything is shown without it then. */
   lookError: string | null;
   /** Take back the newest change. */
@@ -67,10 +71,14 @@ export function useWorkspace(): Workspace {
   const recentTimer = useRef<number | undefined>(undefined);
   const worldRef = useRef(world);
   worldRef.current = world;
-  const [lookThrough, setLookThrough] = useState("");
+  const [look, setLook] = useState<{ formula: string; labels: Record<string, string> }>({ formula: "", labels: {} });
+  const lookThrough = look.formula;
+  const setLookThrough = useCallback((formula: string, labels: Record<string, string> = {}) => setLook({ formula, labels }), []);
+  const whereOf = (l: typeof look): Where | undefined => (!l.formula ? undefined : Object.keys(l.labels).length ? l : l.formula);
+  const where = useMemo(() => whereOf(look), [look]);
   const [lookError, setLookError] = useState<string | null>(null);
-  const lookRef = useRef(lookThrough);
-  lookRef.current = lookThrough;
+  const lookRef = useRef(look);
+  lookRef.current = look;
   // Only the newest answer counts: clicking through worlds can overtake a slower reply.
   const asked = useRef(0);
 
@@ -79,8 +87,8 @@ export function useWorkspace(): Workspace {
     try {
       // A formula that doesn't work says why, and everything is shown as if there were none.
       let looked: string | null = null;
-      const v = await api.view(worldRef.current, lookRef.current || undefined).catch((e) => {
-        if (!lookRef.current || isNothingOpen(e)) throw e;
+      const v = await api.view(worldRef.current, whereOf(lookRef.current)).catch((e) => {
+        if (!lookRef.current.formula || isNothingOpen(e)) throw e;
         looked = e instanceof Error ? e.message : String(e);
         return api.view(worldRef.current);
       });
@@ -130,7 +138,7 @@ export function useWorkspace(): Workspace {
         setWorld({});
         worldRef.current = {};
         setLookThrough("");
-        lookRef.current = "";
+        lookRef.current = { formula: "", labels: {} };
         refresh();
         loadAvailable();
       } else {
@@ -149,7 +157,7 @@ export function useWorkspace(): Workspace {
   useEffect(() => {
     if (first.current) first.current = false;
     else refresh();
-  }, [world, lookThrough, refresh]);
+  }, [world, look, refresh]);
 
   // Rows nobody wrote that something reads can be looked up too, though they're not in `nodes`.
   const byId = useMemo(() => new Map([...(view?.nodes ?? []), ...(view?.unwritten ?? []), ...(view?.constants ?? [])].map((n) => [n.id, n])), [view]);
@@ -212,7 +220,7 @@ export function useWorkspace(): Workspace {
     await api.openSample(name, reset);
   }, []);
 
-  return { view, nothingOpen, byId, edgeById, plan, available, backend: be, status, error, recent, recentCells, world, pin, setWorld, lookThrough, setLookThrough, lookError, undo, redo, arranging, shape, ends, partKind, info, cellInfo, refresh, apply, openSample };
+  return { view, nothingOpen, byId, edgeById, plan, available, backend: be, status, error, recent, recentCells, world, pin, setWorld, lookThrough, lookLabels: look.labels, setLookThrough, where, lookError, undo, redo, arranging, shape, ends, partKind, info, cellInfo, refresh, apply, openSample };
 }
 
 /**

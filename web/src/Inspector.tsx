@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, type Cell, type Edge, type EventView, type GraphNode, type Has, type Labels, type Op, type Written } from "./api";
 import { edgesOf, labelsOf, type Workspace } from "./workspace";
-import { badgesOf, compColor, isDropped, isNote, label, nodeColor } from "./theme";
+import { NOT_NAMES, namesIn } from "./formula";
+import { badgesOf, compColor, isDropped, isNote, label, linkLabel, nodeColor } from "./theme";
 import { DdItemButton, Dropdown } from "./Dropdown";
 import { Brackets, CellValue, CompBadge, NodeChip, RemoveButton, Resolved, RevertButton, TableIcon, TickBox, casesOf, distOf, edgeText, shownText } from "./bits";
 import { entryText, parseEntry } from "./cellEntry";
@@ -250,7 +251,7 @@ export function Inspector({
           <Key k="e" />
           <AutoText inputRef={nameRef} className="insp-title-input" aria-label="Name" placeholder="Name" {...name} onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()} />
         </div>
-        <code className="muted small">{id}</code>
+        <KindLine ws={ws} id={id} run={run} onSelect={onSelect} />
         {table && (
           <button className="link small table-link" onClick={() => onShowTable(table)} title={`Open the Table tab on ${table}: its rows as a grid, and a chart of a column down them`}>
             <TableIcon /> {node.row ? `Row ${String(node.row.key)} of ${table}` : `${table} is a table`}: show it as one →
@@ -334,6 +335,103 @@ export function Inspector({
         </button>
       </section>
     </aside>
+  );
+}
+
+/** Copies a node's id, for referring to it exactly, which is all an id is for. */
+function CopyId({ id }: { id: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      className="icon small copy-id"
+      title={done ? "Copied" : `Copy its id, ${id}`}
+      aria-label="Copy its id"
+      onClick={() =>
+        navigator.clipboard?.writeText(id).then(
+          () => {
+            setDone(true);
+            setTimeout(() => setDone(false), 1200);
+          },
+          () => {},
+        )
+      }
+    >
+      {done ? "✓" : "⧉"}
+    </button>
+  );
+}
+
+/**
+ * What kind of thing a node is, and what's a kind of it: the kinds it's linked to by `is_a`, each followed
+ * up through what it's a kind of in turn, and the things that are a kind of it. Everything a kind says,
+ * the things of that kind take, so this line is where what a node inherits comes from.
+ */
+function KindLine({ ws, id, run, onSelect }: { ws: Workspace; id: string; run: (ops: Op[], why?: string) => Promise<boolean>; onSelect: (id: string) => void }) {
+  const [adding, setAdding] = useState(false);
+  const edges = ws.view!.edges.filter((e) => e.components.includes("is_a"));
+  const kindsOf = (n: string) => edges.filter((e) => e.from === n).map((e) => e.to);
+  // Each direct kind, then what that's a kind of, as far as it goes: the first way up from each.
+  const chains = kindsOf(id).map((k) => {
+    const chain = [k];
+    for (let up = kindsOf(k)[0]; up && !chain.includes(up) && up !== id; up = kindsOf(up)[0]) chain.push(up);
+    return chain;
+  });
+  const instances = edges.filter((e) => e.to === id).map((e) => e.from);
+  const kinds = [...new Set(edges.map((e) => e.to))].filter((k) => k !== id && !kindsOf(id).includes(k));
+  return (
+    <div className="kind-line small">
+      {chains.length > 0 ? (
+        chains.map((chain) => (
+          <span key={chain[0]} className="kind-chain" title={`It takes what ${chain.map((k) => ws.byId.get(k)?.name ?? k).join(", then ")} say${chain.length === 1 ? "s" : ""}, unless it says otherwise`}>
+            <span className="muted">is a</span>
+            {chain.map((k, i) => (
+              <span key={k} className="kind-step">
+                {i > 0 && <span className="muted">›</span>}
+                <NodeChip ws={ws} id={k} onSelect={onSelect} />
+                {i === 0 && <RemoveButton title="It's not this kind" onClick={() => run([{ op: "unlink", from: id, to: k, component: "is_a" }])} />}
+              </span>
+            ))}
+          </span>
+        ))
+      ) : (
+        !instances.length && <span className="muted">no kind</span>
+      )}
+      {adding ? (
+        <input
+          autoFocus
+          list="kind-options"
+          className="small"
+          placeholder="what kind?"
+          aria-label="What kind of thing it is"
+          onBlur={() => setAdding(false)}
+          onKeyDown={(e) => e.key === "Escape" && setAdding(false)}
+          onChange={(e) => {
+            const found = ws.view!.nodes.find((n) => n.name === e.target.value && n.id !== id);
+            if (found) run([{ op: "link", from: id, to: found.id, component: "is_a" }]).then(() => setAdding(false));
+          }}
+        />
+      ) : (
+        <button className="link small" title="Say what kind of thing it is: it takes everything that kind says" onClick={() => setAdding(true)}>
+          ＋ kind
+        </button>
+      )}
+      <datalist id="kind-options">
+        {[...kinds.map((k) => ws.byId.get(k)).filter((n) => !!n), ...ws.view!.nodes.filter((n) => n.id !== id && !kinds.includes(n.id))].map((n) => (
+          <option key={n!.id} value={n!.name} />
+        ))}
+      </datalist>
+      <span className="grow" />
+      <CopyId id={id} />
+      {instances.length > 0 && (
+        <div className="kind-of">
+          <span className="muted">{instances.length === 1 ? "1 thing is" : `${instances.length} things are`} this kind:</span>
+          {instances.slice(0, 8).map((i) => (
+            <NodeChip key={i} ws={ws} id={i} onSelect={onSelect} />
+          ))}
+          {instances.length > 8 && <span className="muted">and {instances.length - 8} more</span>}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -444,7 +542,7 @@ function ComponentCard({ ws, node, has, run, onSelect, onShowDecisions }: { ws: 
           ))}
           {c === "notes" && <NotesBody value={typeof node.cells.body?.value === "string" ? (node.cells.body.value as string) : ""} commit={(v) => run([{ op: "set", id, cell: "body", value: v.trimEnd() }])} />}
           {cells.filter((x) => !(x === "chosen" && settled) && !(c === "notes" && x === "body")).map((x) => (
-            <CellRow key={x} ws={ws} target={{ id }} c={x} cell={node.cells[x]} onSelect={onSelect} />
+            <CellRow key={x} ws={ws} target={{ id }} c={x} cell={node.cells[x]} onSelect={onSelect} said={has.why === "kind" ? has.from : undefined} />
           ))}
         </div>
       )}
@@ -478,7 +576,7 @@ function CellsCard({ ws, id, home, cells, onSelect }: { ws: Workspace; id: strin
       {!collapsed && (
         <div className="comp-body">
           {cells.map(([c, cell]) => (
-            <CellRow key={c} ws={ws} target={{ id }} c={c} cell={cell} onSelect={onSelect} own />
+            <CellRow key={c} ws={ws} target={{ id }} c={c} cell={cell} onSelect={onSelect} own said={home || undefined} />
           ))}
         </div>
       )}
@@ -525,7 +623,7 @@ function PinRow({ ws, id, c }: { ws: Workspace; id: string; c: string }) {
   );
 }
 
-function CellRow({ ws, target, c, cell, onSelect, own }: { ws: Workspace; target: Target; c: string; cell: Cell; onSelect: (id: string) => void; own?: boolean }) {
+function CellRow({ ws, target, c, cell, onSelect, own, said }: { ws: Workspace; target: Target; c: string; cell: Cell; onSelect: (id: string) => void; own?: boolean; /** The kind its card already says it's from, so the row needn't. */ said?: string }) {
   const pinnable = "id" in target && (uncertainIn(cell) || ws.world[`=${(target as { id: string }).id}/${c}`] !== undefined);
   const pinRow = pinnable && <PinRow ws={ws} id={(target as { id: string }).id} c={c} />;
   const [editing, setEditing] = useState(false);
@@ -551,7 +649,7 @@ function CellRow({ ws, target, c, cell, onSelect, own }: { ws: Workspace; target
       )}
     </span>
   );
-  const from = inherited && (
+  const from = inherited && cell.kind !== said && (
     <span className="cell-from" title={`Inherited: ${ws.byId.get(cell.kind!)?.name ?? "its kind"} says this, and nothing's written here`}>
       from <NodeChip ws={ws} id={cell.kind!} onSelect={onSelect} />
     </span>
@@ -650,15 +748,6 @@ export function entryOp(target: Target, cell: string, entry: ReturnType<typeof p
   return (entry.kind === "value" ? { op: "set", ...on, cell, value: entry.value, ...dropped } : { op: "set", ...on, cell, ...dropped }) as Op;
 }
 
-const NOT_NAMES = new Set(["true", "false", "undefined", "self", "from", "to", "via", "in", "out", "with", "if", "defined", "chose", "round", "floor", "ceil", "sum", "product", "all", "any", "count", "pick", "distinct", "row", "rows", "prev", "next", "abs", "min", "max", "or", "has", "whole", "is_leaf", "done_beneath", "days", "exp", "ln", "sqrt", "normal", "lognormal", "uniform", "triangular", "exponential", "between", "integers", "bernoulli"]);
-
-/** The names a formula uses that have to come from somewhere: its labels. */
-function namesIn(formula: string): string[] {
-  const text = formula.replace(/"(\\.|[^"\\])*"/g, '""');
-  const bound = new Set([...text.matchAll(/([\p{L}_][\p{L}\p{N}_]*)\s+in\b/gu)].map((m) => m[1]));
-  const names = [...text.matchAll(/(?<![\p{L}\p{N}_.])([\p{L}_][\p{L}\p{N}_]*)/gu)].map((m) => m[1]);
-  return [...new Set(names)].filter((n) => !NOT_NAMES.has(n) && !bound.has(n));
-}
 
 /**
  * A cell as in a spreadsheet: one field, where `=` starts a formula and anything else is a value. A
@@ -874,20 +963,28 @@ function FormulaRefs({ text, labels, ws, onSelect }: { text: string; labels: Lab
  */
 function EdgeList({ title, id, edges, ws, onSelect, run }: { title: string; id: string; edges: Edge[]; ws: Workspace; onSelect: (id: string) => void; run: (ops: Op[], why?: string) => Promise<boolean> }) {
   const [open, setOpen] = useState<string | null>(null);
-  if (!edges.length) return null;
+  // What kind of thing it is, and what's a kind of it, the line at the top says.
+  const shown = edges.filter((e) => e.components.some((c) => c !== "is_a"));
+  if (!shown.length) return null;
   const other = (e: Edge) => (e.from === id ? e.to : e.from);
+  const relationOf = (e: Edge) => (e.kind ? ws.view!.relations.find((r) => r.id === e.kind) : undefined);
+  // An edge is called by its relation, if the workspace defines it, and otherwise by its components.
+  const words = (e: Edge) => relationOf(e)?.name ?? e.components.filter((c) => c !== "is_a" && !(e.kind && c === "relates")).map(linkLabel).join(", ");
   const groups = new Map<string, Edge[]>();
-  for (const e of edges) {
-    const key = e.components.join(", ");
-    groups.set(key, [...(groups.get(key) ?? []), e]);
-  }
+  for (const e of shown) groups.set(words(e), [...(groups.get(words(e)) ?? []), e]);
   return (
     <section>
       <h4>{title}</h4>
       {[...groups].map(([key, es]) => (
         <div key={key} className="edge-group">
-          <div className="rel" title={es[0].components.map((c) => ws.info(c)?.about ?? c).join(" ")}>
-            {es[0].components.map(label).join(", ")}
+          <div className="rel" title={relationOf(es[0]) ? "A relation of the workspace's own" : es[0].components.map((c) => ws.info(c)?.about ?? c).join(" ")}>
+            {relationOf(es[0]) ? (
+              <button className="link" onClick={() => onSelect(relationOf(es[0])!.id)}>
+                {key}
+              </button>
+            ) : (
+              key
+            )}
           </div>
           <div className="link-rows">
             {es.map((e) => {
@@ -924,8 +1021,12 @@ function EdgeList({ title, id, edges, ws, onSelect, run }: { title: string; id: 
 }
 
 function LinkForm({ ws, id, onDone, run }: { ws: Workspace; id: string; onDone: () => void; run: (ops: Op[]) => Promise<boolean> }) {
-  const kinds = ws.view!.components.filter((c) => c.place === "edge");
-  const [kind, setKind] = useState(kinds[0]?.name ?? "");
+  // The workspace's own relations first, then what's built in. A bare `relates` says nothing a relation
+  // wouldn't say better, and what kind a node is goes on the line at the top.
+  const relations = ws.view!.relations;
+  const builtIn = ws.view!.components.filter((c) => c.place === "edge" && c.name !== "is_a" && !(c.name === "relates" && relations.length));
+  const kinds = [...relations.map((r) => ({ value: `r:${r.id}`, name: r.name, about: ws.byId.get(r.id)?.cells.body?.value as string | undefined })), ...builtIn.map((c) => ({ value: c.name, name: linkLabel(c.name), about: c.about }))];
+  const [kind, setKind] = useState(kinds[0]?.value ?? "");
   const [called, setCalled] = useState("");
   const [target, setTarget] = useState("");
   const [outgoing, setOutgoing] = useState(true);
@@ -938,7 +1039,9 @@ function LinkForm({ ws, id, onDone, run }: { ws: Workspace; id: string; onDone: 
         e.preventDefault();
         if (!other) return;
         const cells: Record<string, Written> = kind === "label" ? { called: called.trim() } : {};
-        if (await run([{ op: "link", from: outgoing ? id : other, to: outgoing ? other : id, component: kind, cells }])) onDone();
+        const [from, to] = outgoing ? [id, other] : [other, id];
+        const op: Op = kind.startsWith("r:") ? { op: "link", from, to, kind: kind.slice(2), cells } : { op: "link", from, to, component: kind, cells };
+        if (await run([op])) onDone();
       }}
     >
       <div className="row small">
@@ -948,8 +1051,8 @@ function LinkForm({ ws, id, onDone, run }: { ws: Workspace; id: string; onDone: 
         </select>
         <select value={kind} onChange={(e) => setKind(e.target.value)}>
           {kinds.map((r) => (
-            <option key={r.name} value={r.name} title={r.about}>
-              {label(r.name)}
+            <option key={r.value} value={r.value} title={r.about}>
+              {r.name}
             </option>
           ))}
         </select>
@@ -1031,9 +1134,10 @@ export function EdgeInspector({ ws, edge: id, onSelect, onClose }: { ws: Workspa
     <aside className="inspector">
       <div className="insp-head" style={{ borderColor: "var(--muted)" }}>
         <div className="insp-kind">
-          {edge?.components.map((c) => (
+          {edge?.components.filter((c) => !(c === "relates" && edge.kind)).map((c) => (
             <CompBadge key={c} ws={ws} c={c} />
           ))}
+          {edge?.kind && <span className="cbadge">{ws.view!.relations.find((r) => r.id === edge.kind)?.name ?? "relation"}</span>}
           <span className="muted">edge</span>
         </div>
         <button className="icon" onClick={onClose} title="Close">
@@ -1049,11 +1153,25 @@ export function EdgeInspector({ ws, edge: id, onSelect, onClose }: { ws: Workspa
             <span className="edge-arrow">→</span>
             <NodeChip ws={ws} id={edge.to} onSelect={onSelect} />
           </div>
-          {edge.components.map((c) => (
-            <EdgeCard key={c} ws={ws} edge={edge} c={c} run={run} onSelect={onSelect} />
-          ))}
+          {edge.components.map((c) =>
+            c === "relates" ? (
+              <RelationCard key={c} ws={ws} edge={edge} run={run} onSelect={onSelect} />
+            ) : (
+              <EdgeCard key={c} ws={ws} edge={edge} c={c} run={run} onSelect={onSelect} />
+            ),
+          )}
           <Dropdown label={<>＋ Add</>}>
-            {addable(ws, "edge", edge.components).map((c) => (
+            {!edge.components.includes("relates") &&
+              ws.view!.relations.map((r) => (
+                <DdItemButton key={r.id} color="var(--c-none)" onClick={() => run([{ op: "link", from: edge.from, to: edge.to, kind: r.id }])}>
+                  <span className="dd-glyph">↔</span>
+                  <span>
+                    <b>{r.name}</b>
+                    <span className="dd-desc">A relation of the workspace's own</span>
+                  </span>
+                </DdItemButton>
+              ))}
+            {addable(ws, "edge", edge.components).filter((c) => !(c.name === "relates" && ws.view!.relations.length)).map((c) => (
               <DdItemButton key={c.name} color={compColor(c.name)} onClick={() => run([{ op: "link", from: edge.from, to: edge.to, component: c.name }])}>
                 <span className="dd-glyph">{c.icon ?? "·"}</span>
                 <span>
@@ -1072,6 +1190,49 @@ export function EdgeInspector({ ws, edge: id, onSelect, onClose }: { ws: Workspa
         </>
       )}
     </aside>
+  );
+}
+
+/**
+ * A link of one of the workspace's own relations: which relation, which can be changed to another, and
+ * the cells it holds, which it takes from the relation unless it says them itself.
+ */
+function RelationCard({ ws, edge, run, onSelect }: { ws: Workspace; edge: Edge; run: (ops: Op[]) => Promise<boolean>; onSelect: (id: string) => void }) {
+  const relations = ws.view!.relations;
+  const relation = relations.find((r) => r.id === edge.kind);
+  const cells = Object.keys(edge.cells).filter((x) => x !== "kind" && !ws.cellInfo(x)?.internal && (edge.cells[x].source === "own" || !ws.cellInfo(x)));
+  return (
+    <div className="comp" style={{ ["--c" as string]: "var(--c-none)" }}>
+      <div className="comp-head">
+        <span className="comp-name">↔ Relation</span>
+        <select
+          className="small"
+          value={edge.kind ?? ""}
+          aria-label="Which relation it is"
+          onChange={(e) => run([{ op: "set", from: edge.from, to: edge.to, cell: "kind", value: e.target.value ? { ref: e.target.value } : undefined } as Op])}
+        >
+          {!relation && <option value="">none yet</option>}
+          {relations.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.name}
+            </option>
+          ))}
+        </select>
+        {relation && (
+          <button className="link small" title="See the relation: what it means, and what its links take from it" onClick={() => onSelect(relation.id)}>
+            see it
+          </button>
+        )}
+        <span className="grow" />
+        <RemoveButton title="Take this relation away" onClick={() => run([{ op: "unlink", from: edge.from, to: edge.to, component: "relates" }])} />
+      </div>
+      <div className="comp-body">
+        {!relation && <span className="muted small">Say which relation this is, so it means something and the map can call it by name.</span>}
+        {cells.map((x) => (
+          <CellRow key={x} ws={ws} target={{ from: edge.from, to: edge.to }} c={x} cell={edge.cells[x]} onSelect={onSelect} said={relation?.id} />
+        ))}
+      </div>
+    </div>
   );
 }
 
