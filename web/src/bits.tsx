@@ -15,10 +15,16 @@ export function NodeChip({ ws, id, onSelect, fallback }: { ws: Workspace; id: st
   );
 }
 
-export function CompBadges({ ws, n }: { ws: Workspace; n: GraphNode }) {
+/**
+ * A node's badges. With `quiet`, what it takes from its kind is left out unless a check has something to
+ * say about it: every thing of that kind has it, and the kind's chip already says what kind it is.
+ */
+export function CompBadges({ ws, n, quiet }: { ws: Workspace; n: GraphNode; quiet?: boolean }) {
+  const flagged = quiet && ws.view!.checks.some((c) => c.severity !== "unresolved" && c.on.includes(n.id));
+  const shown = quiet && !flagged ? badgesOf(n).filter((c) => n.components.find((k) => k.name === c)?.why !== "kind") : badgesOf(n);
   return (
     <span className="badges">
-      {badgesOf(n).map((c) => (
+      {shown.map((c) => (
         <CompBadge key={c} ws={ws} c={c} />
       ))}
     </span>

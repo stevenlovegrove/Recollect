@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   ControlButton,
@@ -81,8 +81,10 @@ type CardData = {
   /** Not needed in any world still in play. */
   out: boolean;
   lines: SummaryLine[];
-  /** The names of what it's a kind of. */
-  kinds: string[];
+  /** What it's a kind of, by name, and by id where that's a node to look at. */
+  kinds: { name: string; id?: string }[];
+  /** Selects a node, as a kind's chip does. */
+  onPick: (id: string) => void;
   title: string;
   /** For a question whose options are drawn on it rather than as cards: each, to pin. */
   options: { choice: string; id: string; name: string; chance: number | null; picked: boolean; possible: boolean; leaning: boolean }[];
@@ -141,12 +143,26 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
       {/* Links point child → parent, and parents come first: leave from that side. */}
       <Handle type="source" position={direction === "down" ? Position.Top : Position.Left} />
       <div className="card-top">
-        <CompBadges ws={data.ws} n={node} />
-        {kinds.map((k) => (
-          <span key={k} className="cbadge" title="What kind of thing it is">
-            {k}
-          </span>
-        ))}
+        <CompBadges ws={data.ws} n={node} quiet />
+        {kinds.map((k) =>
+          k.id ? (
+            <button
+              key={k.name}
+              className="cbadge clickable nodrag nopan"
+              title={`A kind of ${k.name}. Click to see the kind`}
+              onClick={(e) => {
+                e.stopPropagation();
+                data.onPick(k.id!);
+              }}
+            >
+              {k.name}
+            </button>
+          ) : (
+            <span key={k.name} className="cbadge" title="What kind of thing it is">
+              {k.name}
+            </span>
+          ),
+        )}
         {isNote(node) && !kinds.length && <span className="muted small">note</span>}
         {data.table && data.onShowTable && <TableButton table={data.table} onShow={data.onShowTable} />}
         {/* Something true or false is only a value until it's required: then it's a principle, and only the worlds where it holds count. */}
@@ -437,6 +453,38 @@ function saveLayoutPref(dir: string, pref: LayoutPref) {
   }
 }
 
+/** What the map leaves out, per workspace and per browser. None of it moves a card that's still shown. */
+type FilterPref = {
+  /** Components whose nodes are hidden, and "plain" for those with none. */
+  facts: string[];
+  /** Kinds whose things are hidden, by the kind's id. */
+  kinds: string[];
+  /** Links hidden, by what the Links menu calls them. */
+  rels: string[];
+  /** Show the kinds and relations the workspace is set up with, as cards of their own. */
+  setup?: boolean;
+  dead?: boolean;
+  /** Bands left out, by the cell that makes them and then its value. */
+  lanes?: Record<string, string[]>;
+};
+
+function loadFilterPref(dir: string): FilterPref {
+  const none: FilterPref = { facts: [], kinds: [], rels: [] };
+  try {
+    return { ...none, ...JSON.parse(localStorage.getItem(`recollect.filters:${dir}`) ?? "{}") };
+  } catch {
+    return none;
+  }
+}
+
+function saveFilterPref(dir: string, pref: FilterPref) {
+  try {
+    localStorage.setItem(`recollect.filters:${dir}`, JSON.stringify(pref));
+  } catch {
+    /* it just won't be remembered */
+  }
+}
+
 const LABEL_REL = "label:";
 
 /**
@@ -586,8 +634,32 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
       }
     return out;
   }, [g.nodes, g.edges, standsFor, ws.arranging]);
-  const [hiddenFacts, setHiddenFacts] = useState<Set<Filter>>(new Set());
-  const [hiddenRels, setHiddenRels] = useState<Set<string>>(new Set());
+  const [filters, setFiltersState] = useState<FilterPref>(() => loadFilterPref(g.workspace.id));
+  const setFilters = (next: FilterPref) => {
+    setFiltersState(next);
+    saveFilterPref(g.workspace.id, next);
+  };
+  const hiddenFacts = useMemo(() => new Set<Filter>(filters.facts), [filters.facts]);
+  const hiddenRels = useMemo(() => new Set(filters.rels), [filters.rels]);
+  const hiddenKinds = useMemo(() => new Set(filters.kinds), [filters.kinds]);
+  const setHiddenFacts = (s: Set<Filter>) => setFilters({ ...filters, facts: [...s] });
+  const setHiddenRels = (s: Set<string>) => setFilters({ ...filters, rels: [...s] });
+  const setHiddenKinds = (s: Set<string>) => setFilters({ ...filters, kinds: [...s] });
+  const showDead = !!filters.dead;
+  const setShowDead = (on: boolean) => setFilters({ ...filters, dead: on });
+  const showSetup = !!filters.setup;
+  // What the workspace is set up with rather than about: what other things are a kind of, and the
+  // relations its links are of. Each thing's chip says its kind, so these are cards only when asked for.
+  const setup = useMemo(
+    () => new Set([...g.edges.filter((e) => e.components.includes("is_a")).map((e) => e.to), ...view.relations.map((r) => r.id)]),
+    [g.edges, view.relations],
+  );
+  // The kinds things are of, with how many of each, to show or hide them by.
+  const kindsOf = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const e of g.edges) if (e.components.includes("is_a")) m.set(e.from, [...(m.get(e.from) ?? []), e.to]);
+    return m;
+  }, [g.edges]);
   const [layoutPref, setLayoutPrefState] = useState<LayoutPref>(() => loadLayoutPref(g.workspace.id));
   const setLayoutPref = (next: LayoutPref) => {
     setLayoutPrefState(next);
@@ -661,7 +733,6 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
     return out;
   }, [baseLinks, tables, g.worlds.vars]);
   const updateNodeInternals = useUpdateNodeInternals();
-  const [showDead, setShowDead] = useState(false);
   const [focus, setFocus] = useState(0);
   const [query, setQuery] = useState("");
   // The view options are a round button over the map, opened when wanted and put away on a click
@@ -928,20 +999,28 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
 
   const factsFor = (n: GraphNode): Filter[] => {
     const f = badgesOf(n);
-    return f.length ? f : isNote(n) ? ["none"] : ["own"];
+    return f.length ? f : ["plain"];
   };
+  // The components the things on the map have, setup left out unless it's shown.
   const present = useMemo(() => {
     const p = new Map<Filter, number>();
-    for (const n of g.nodes) for (const c of factsFor(n)) p.set(c, (p.get(c) ?? 0) + 1);
-    return [...p].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [g.nodes]);
-  // What the Links menu offers. A label's name says more than its kind does, since in a sheet or a
-  // puzzle every link is a label, so each name can be shown or hidden.
+    for (const n of g.nodes) if (showSetup || !setup.has(n.id)) for (const c of factsFor(n)) p.set(c, (p.get(c) ?? 0) + 1);
+    return [...p].sort((a, b) => (a[0] === "plain" ? 1 : b[0] === "plain" ? -1 : a[0].localeCompare(b[0])));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [g.nodes, setup, showSetup]);
+  // The kinds things are of, by how many things are of each.
+  const kindCounts = useMemo(() => {
+    const p = new Map<string, number>();
+    for (const ks of kindsOf.values()) for (const k of ks) p.set(k, (p.get(k) ?? 0) + 1);
+    return [...p].map(([id, n]) => ({ id, n, name: ws.byId.get(id)?.name ?? id })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [kindsOf, ws.byId]);
+  // What the Links menu offers: the links whose ends could both be shown. A label's name says more than
+  // its kind does, since in a sheet or a puzzle every link is a label, so each name can be shown or hidden.
   const rels = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const e of links) counts.set(relOf(e), (counts.get(relOf(e)) ?? 0) + 1);
+    for (const e of links) if (showSetup || (!setup.has(e.from) && !setup.has(e.to))) counts.set(relOf(e), (counts.get(relOf(e)) ?? 0) + 1);
     return [...counts].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [links]);
+  }, [links, setup, showSetup]);
   // A system says which links shape a map, and you can say otherwise.
   const shapes = useCallback(
     (rel: string) => layoutPref.layoutBy[rel] ?? (rel.startsWith(LABEL_REL) ? ws.arranging.includes("label") : !!(ws.arranging.includes(rel) || ws.info(rel)?.orders)),
@@ -950,10 +1029,41 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
   const setShapes = (rels: string[], on: boolean) => setLayoutPref({ ...layoutPref, layoutBy: { ...layoutPref.layoutBy, ...Object.fromEntries(rels.map((r) => [r, on])) } });
   const labelRels = rels.filter(([r]) => r.startsWith(LABEL_REL));
   const kindRels = rels.filter(([r]) => !r.startsWith(LABEL_REL));
+  // The Links menu by what each is for: the ones that shape the map, the relations the workspace defines,
+  // the rest, and what says what kind each thing is, which is there only while setup is shown.
+  const ownRels = new Set(view.relations.map((r) => r.name));
+  const relAbout = (name: string) => {
+    const body = ws.byId.get(view.relations.find((x) => x.name === name)?.id ?? "")?.cells.body?.value;
+    return typeof body === "string" ? body : undefined;
+  };
+  const relGroups = [
+    { title: "Shape the map", rels: kindRels.filter(([r]) => shapes(r) && r !== "is_a") },
+    { title: "Relations of your own", rels: kindRels.filter(([r]) => !shapes(r) && ownRels.has(r)) },
+    { title: "Other links", rels: kindRels.filter(([r]) => !shapes(r) && !ownRels.has(r) && r !== "is_a") },
+    { title: "Setup", rels: kindRels.filter(([r]) => r === "is_a") },
+  ].filter((group) => group.rels.length > 0);
 
-  // A node is shown if any of its facts (or "none") is enabled.
+  // A node is shown if any of its facts (or "plain") is, any kind it's of is, and its band is. Setup is
+  // shown only when asked for.
+  const hiddenLanes = useMemo(() => new Set(layoutPref.lanes ? (filters.lanes?.[layoutPref.lanes] ?? []) : []), [filters.lanes, layoutPref.lanes]);
+  const laneOf = useCallback(
+    (n: GraphNode) => {
+      const v = layoutPref.lanes ? n.cells[layoutPref.lanes]?.value : undefined;
+      return typeof v === "string" ? v : v === undefined || v === null ? null : JSON.stringify(v);
+    },
+    [layoutPref.lanes],
+  );
   const visible = useMemo(() => {
-    let ids = new Set(g.nodes.filter((n) => !folded.has(n.id) && (!standsFor.has(n.id) || standsFor.get(n.id) === n.id)).filter((n) => (showDead || !isDropped(n)) && factsFor(n).some((c) => !hiddenFacts.has(c))).map((n) => n.id));
+    const shown = (n: GraphNode) => {
+      if (setup.has(n.id) && !showSetup) return false;
+      if (!showDead && isDropped(n)) return false;
+      if (!factsFor(n).some((c) => !hiddenFacts.has(c))) return false;
+      const ks = kindsOf.get(n.id);
+      if (ks && ks.every((k) => hiddenKinds.has(k))) return false;
+      const lane = laneOf(n);
+      return lane === null || !hiddenLanes.has(lane);
+    };
+    let ids = new Set(g.nodes.filter((n) => !folded.has(n.id) && (!standsFor.has(n.id) || standsFor.get(n.id) === n.id)).filter(shown).map((n) => n.id));
     if (focus > 0 && selectedNode && ids.has(selectedNode)) {
       const near = new Set([selectedNode]);
       let frontier = [selectedNode];
@@ -995,7 +1105,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
     // A table's card is there when any question that lands on its rows is.
     for (const t of tables) if (links.some((e) => e.from === t.id && ids.has(e.to))) ids.add(t.id);
     return ids;
-  }, [g.nodes, links, tables, standsFor, folded, hiddenFacts, showDead, focus, selectedNode, layoutPref.depth, shapes, ws]);
+  }, [g.nodes, links, tables, standsFor, folded, hiddenFacts, hiddenKinds, hiddenLanes, laneOf, setup, showSetup, kindsOf, showDead, focus, selectedNode, layoutPref.depth, shapes, ws]);
 
   const q = query.trim().toLowerCase();
   const matches = (n: GraphNode) => !q || `${n.id} ${n.name}`.toLowerCase().includes(q);
@@ -1288,11 +1398,12 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
               // What a table's card says its rows are part of doesn't need saying again here.
               holds: ws.view!.edges.filter((l) => l.to === id && l.components.includes("part_of") && folded.has(l.from) && !tables.some((t) => t.rows.has(l.from))).map((l) => ws.byId.get(l.from)?.name ?? ""),
               kinds: [
-                ...[node, ...(node.parts ?? []).flatMap((p) => ws.byId.get(p) ?? [])].flatMap((n) => (n.row ? [n.row.table] : [])),
-                ...ws.view!.edges.filter((l) => l.from === id && l.components.includes("is_a")).map((l) => ws.byId.get(l.to)?.name ?? ""),
+                ...[node, ...(node.parts ?? []).flatMap((p) => ws.byId.get(p) ?? [])].flatMap((n) => (n.row ? [{ name: n.row.table }] : [])),
+                ...ws.view!.edges.filter((l) => l.from === id && l.components.includes("is_a")).map((l) => ({ name: ws.byId.get(l.to)?.name ?? "", id: l.to })),
                 // Something other things are a kind of, or a table something's a row of, says so.
-                ...(ws.view!.edges.some((l) => l.to === id && l.components.includes("is_a")) || (!node.row && ws.view!.nodes.some((n) => n.row?.table === node.name)) ? ["kind"] : []),
+                ...(ws.view!.edges.some((l) => l.to === id && l.components.includes("is_a")) || (!node.row && ws.view!.nodes.some((n) => n.row?.table === node.name)) ? [{ name: "kind" }] : []),
               ],
+              onPick: onSelect,
             },
           };
         }),
@@ -1328,7 +1439,8 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
     [links, ws.arranging, ws.info, visible, hiddenRels, selected],
   );
 
-  const shownCount = present.filter(([f]) => !hiddenFacts.has(f)).length;
+  // Hidden setup isn't narrowing: it's how a map starts.
+  const narrowedNodes = present.some(([f]) => hiddenFacts.has(f)) || kindCounts.some((k) => hiddenKinds.has(k.id)) || hiddenLanes.size > 0 || showDead;
   const relCount = rels.filter(([r]) => !hiddenRels.has(r)).length;
   const toggle = <T,>(set: Set<T>, v: T) => {
     const next = new Set(set);
@@ -1342,7 +1454,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
       {/* The button and what it opens are one place, so a click in either keeps it open. */}
       <div className="map-opts" ref={optsHere}>
         <button
-          className={`opts-toggle ${opts ? "open" : ""} ${query || hiddenFacts.size || hiddenRels.size || focus ? "narrowed" : ""}`}
+          className={`opts-toggle ${opts ? "open" : ""} ${query || narrowedNodes || relCount < rels.length || focus ? "narrowed" : ""}`}
           onClick={() => openOpts(!opts)}
           aria-expanded={opts}
           aria-label={opts ? "Hide view options" : "View options"}
@@ -1395,9 +1507,31 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
               </span>
             )}
           </span>
-          <Dropdown label={<>Nodes {shownCount < present.length || showDead ? `${shownCount}/${present.length}` : ""}</>} active={shownCount < present.length}>
+          <Dropdown label={<>Nodes {narrowedNodes ? "·" : ""}</>} active={narrowedNodes}>
+            {kindCounts.length > 0 && (
+              <>
+                <div className="dd-head">
+                  Things of each kind
+                  <span>
+                    <button className="link" onClick={() => setHiddenKinds(new Set())}>
+                      all
+                    </button>
+                    <button className="link" onClick={() => setHiddenKinds(new Set(kindCounts.map((k) => k.id)))}>
+                      none
+                    </button>
+                  </span>
+                </div>
+                {kindCounts.map((k) => (
+                  <DdItem key={k.id} checked={!hiddenKinds.has(k.id)} onChange={() => setHiddenKinds(toggle(hiddenKinds, k.id))}>
+                    <span className="dd-label">{k.name}</span>
+                    <span className="muted">{k.n}</span>
+                  </DdItem>
+                ))}
+                <div className="dd-sep" />
+              </>
+            )}
             <div className="dd-head">
-              Show nodes with
+              {kindCounts.length > 0 ? "And with" : "Nodes with"}
               <span>
                 <button className="link" onClick={() => setHiddenFacts(new Set())}>
                   all
@@ -1409,11 +1543,17 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
             </div>
             {present.map(([f, n]) => (
               <DdItem key={f} checked={!hiddenFacts.has(f)} onChange={() => setHiddenFacts(toggle(hiddenFacts, f))} color={compColor(f)}>
-                <span className="dd-label">{f === "none" ? "· notes" : f === "own" ? "· only their own cells" : `${ws.info(f)?.icon ?? ""} ${labelOf(f)}`}</span>
+                <span className="dd-label">{f === "plain" ? "· no component" : `${ws.info(f)?.icon ?? ""} ${labelOf(f)}`}</span>
                 <span className="muted">{n}</span>
               </DdItem>
             ))}
             <div className="dd-sep" />
+            {setup.size > 0 && (
+              <DdItem checked={showSetup} onChange={() => setFilters({ ...filters, setup: !showSetup })} title="The kinds things are of, and the relations links are of. Each thing's chip already says its kind">
+                <span className="dd-label">setup: kinds and relations</span>
+                <span className="muted">{setup.size}</span>
+              </DdItem>
+            )}
             <DdItem checked={showDead} onChange={() => setShowDead(!showDead)}>
               <span className="dd-label">dropped</span>
             </DdItem>
@@ -1434,14 +1574,20 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
               <span>show</span>
               <span>layout</span>
             </div>
-            {kindRels.map(([r, n]) => (
-              <DdItem key={r} checked={!hiddenRels.has(r)} onChange={() => setHiddenRels(toggle(hiddenRels, r))} title={ws.info(r)?.about}>
-                <span className={`dd-swatch rel-${r}`} />
-                <span className="dd-label">{labelOf(r)}</span>
-                <span className="muted">{n}</span>
-                <LayoutTick on={shapes(r)} name={labelOf(r)} onChange={(on) => setShapes([r], on)} />
-              </DdItem>
+            {relGroups.map(({ title, rels: group }) => (
+              <Fragment key={title}>
+                <div className="dd-group muted">{title}</div>
+                {group.map(([r, n]) => (
+                  <DdItem key={r} checked={!hiddenRels.has(r)} onChange={() => setHiddenRels(toggle(hiddenRels, r))} title={ws.info(r)?.about ?? relAbout(r)}>
+                    <span className={`dd-swatch rel-${r}`} />
+                    <span className="dd-label">{labelOf(r)}</span>
+                    <span className="muted">{n}</span>
+                    <LayoutTick on={shapes(r)} name={labelOf(r)} onChange={(on) => setShapes([r], on)} />
+                  </DdItem>
+                ))}
+              </Fragment>
             ))}
+            {labelRels.length > 0 && <div className="dd-group muted">What formulas read</div>}
             {labelRels.length > 0 && (
               <DdItem
                 checked={labelRels.every(([r]) => !hiddenRels.has(r))}
@@ -1485,6 +1631,21 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
                 ))}
               </select>
             </label>
+          )}
+          {lanes && lanes.order.length > 1 && (
+            <span className="lane-chips" role="group" aria-label={`Bands of ${layoutPref.lanes}`}>
+              {lanes.order.map((v) => (
+                <button
+                  key={v}
+                  className={`lane-chip ${hiddenLanes.has(v) ? "off" : ""}`}
+                  aria-pressed={!hiddenLanes.has(v)}
+                  title={hiddenLanes.has(v) ? `Show the ${v} band` : `Hide the ${v} band`}
+                  onClick={() => setFilters({ ...filters, lanes: { ...filters.lanes, [layoutPref.lanes!]: [...toggle(hiddenLanes, v)] } })}
+                >
+                  {v}
+                </button>
+              ))}
+            </span>
           )}
           <label className="toggle" title="Show only so many levels beneath the top">
             depth
@@ -1608,13 +1769,8 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
               onSwap={() => setLinkDrop({ ...linkDrop, from: linkDrop.to, to: linkDrop.from })}
               onDone={(kind) => {
                 setLinkDrop(null);
-                if (kind) {
-                  setHiddenRels((h) => {
-                    const next = new Set(h);
-                    next.delete(kind);
-                    return next;
-                  });
-                }
+                // A link just made is shown, whatever its kind.
+                if (kind && hiddenRels.has(kind)) setHiddenRels(new Set([...hiddenRels].filter((r) => r !== kind)));
               }}
             />
           )}

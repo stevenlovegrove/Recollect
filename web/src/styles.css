@@ -1276,6 +1276,28 @@ table.matrix.compare .no {
 .dd-sub {
   padding-left: 22px;
 }
+.dd-group {
+  font-size: 11px;
+  padding: 6px 6px 2px;
+}
+.lane-chips {
+  display: inline-flex;
+  gap: 4px;
+}
+.lane-chip {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+.lane-chip.off {
+  color: var(--muted);
+  text-decoration: line-through;
+  opacity: 0.7;
+}
 .dd-columns {
   display: flex;
   justify-content: space-between;
