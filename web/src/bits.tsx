@@ -559,8 +559,9 @@ export function RevertButton({ title, onClick }: { title: string; onClick: () =>
 /** What an edge holds, in a few words: each cell that has something in it. A label says its name. */
 export function edgeText(e: Edge): string {
   return Object.entries(e.cells)
-    // What it's called, and its relation, are said by its label already.
-    .filter(([c, cell]) => c !== "called" && c !== "kind" && cell.source !== "default" && cell.value !== undefined)
+    // What it's called, and its relation, are said by its label already, and what it takes from its
+    // relation (many, arranges) is true of every edge of that relation, so isn't news on this one.
+    .filter(([c, cell]) => c !== "called" && c !== "kind" && cell.source === "own" && cell.value !== undefined)
     .map(([c, cell]) => `${label(c).toLowerCase()} ${typeof cell.value === "string" ? cell.value : JSON.stringify(cell.value)}`)
     .join(" · ");
 }
