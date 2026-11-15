@@ -1,6 +1,6 @@
 # Data
 
-**Status:** reading a CSV and `any_row` are built. Fitting a model to data is written as ordinary cells, and [Fitting](#fitting) says what the engine makes of that today, and what it would take to fit the way that's meant. The views aren't built. `any_row` is in `crates/recollect-systems/src/formulas.rs`, and reading a CSV in `crates/recollect-core/src/ops.rs`.
+**Status:** reading a CSV and `one_of` are built. Fitting a model to data is written as ordinary cells, and [Fitting](#fitting) says what the engine makes of that today, and what it would take to fit the way that's meant. The views aren't built. `one_of` is in `crates/recollect-systems/src/formulas.rs`, and reading a CSV in `crates/recollect-core/src/ops.rs`.
 
 ## Why
 
@@ -30,16 +30,16 @@ In the app, a CSV file is read the same way, from **Import a CSV as a table…**
 ## A row as one draw
 
 ```
-Pick: any_row(Runners.rows)
+Pick: one_of(Runners.rows)
 ```
 
-`any_row` is one row of a table, each as likely. It's a short list, as `integers(1, 6)` is, so it's a variable in the diagram, and everything worked out from it is counted, exactly. What it lands on is a row, as a choice lands on an option, so its cells are read through it: `pick.value.t5k`.
+`one_of` is one of a group of nodes, each as likely: here, one row of a table. It's a short list, as `integers(1, 6)` is, so it's a variable in the diagram, and everything worked out from it is counted, exactly. What it lands on is a row, as a choice lands on an option, so its cells are read through it: `pick.value.t5k`.
 
 - **Every column read through one pick moves together.** `pick.value.t5k` and `pick.value.t10k` are the same runner's, so their joint distribution is the data's own, with nothing fitted and nothing lost.
 - **Conditioning is evidence, as it already is.** `evidence: pick.value.t5k < 22` leaves the runners quicker than 22 minutes, and `pick.value.t10k` is then what they ran over 10k.
 - **Each place it's written is its own pick,** as for any draw. Two picks are two runners, drawn separately.
-- **It needs the rows of a table,** as `any_row(Runners.rows)`. Anything else is an error, and so is a table with no rows.
-- **A table of more than 1,000 rows** is refused, as `integers` is past 1,000 numbers, with the reason.
+- **It takes any group of nodes,** as a fold does: `Runners.rows`, or a name several nodes are labelled. Anything else is an error, and so is a group with nothing in it.
+- **A group of more than 1,000** is refused, as `integers` is past 1,000 numbers, with the reason.
 
 This answers "what's in the data". It doesn't answer "what would the next runner do", which is a question about runners in general: the forty seen are a sample, and how much they say depends on how many there are. That's fitting.
 

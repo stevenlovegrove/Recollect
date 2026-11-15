@@ -42,7 +42,7 @@ fn table(g: &mut N, name: &str, columns: &[&str], rows: &[&[f64]]) {
 
 fn runners(g: &mut N) {
     table(g, "T", &["x", "y"], &[&[1.0, 2.0], &[2.0, 4.0], &[3.0, 6.0], &[4.0, 9.0]]);
-    g.formula("pick", "any_row(T.rows)");
+    g.formula("pick", "one_of(T.rows)");
     g.formula("px", "pick.value.x").input("px", "pick", "pick");
     g.formula("py", "pick.value.y").input("py", "pick", "pick");
 }
@@ -68,7 +68,7 @@ fn columns_read_through_one_pick_move_together() {
     gaps.sort_by(f64::total_cmp);
     assert_eq!(gaps, vec![0.0, 1.0]);
     // Two picks are two rows, drawn apart.
-    g.formula("pick2", "any_row(T.rows)");
+    g.formula("pick2", "one_of(T.rows)");
     g.formula("two", "a.value.x - b.value.x").input("two", "pick", "a").input("two", "pick2", "b");
     assert_eq!(value(&g, "two").len(), 7, "differences from -3 to 3");
 }
@@ -87,8 +87,8 @@ fn evidence_about_one_column_leaves_the_rows_it_holds_for() {
 fn a_pick_needs_rows() {
     let mut g = N::with(install);
     g.e("Empty");
-    g.formula("pick", "any_row(Empty.rows)");
-    assert!(error(&g, "pick").contains("has none"), "{}", error(&g, "pick"));
+    g.formula("pick", "one_of(Empty.rows)");
+    assert!(error(&g, "pick").contains("has nothing"), "{}", error(&g, "pick"));
 }
 
 // ---------- a line fitted as it's written ----------

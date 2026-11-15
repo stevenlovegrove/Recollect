@@ -531,7 +531,7 @@ const RUNNERS: [(f64, f64, f64); 40] = [
 fn runners(b: &mut Build) {
     about(b, r#"Forty runners' 5k and 10k times are in the table **Runners**, in minutes.
 
-**A runner seen** is `any_row(Runners.rows)`: one of the forty, each as likely. It's a short list, as a die is, so everything worked out from it is counted exactly, and nothing is fitted. **Their 5k** and **Their 10k** are read through it, so they're always the same runner's: the two columns move together, as they do in the data.
+**A runner seen** is `one_of(Runners.rows)`: one of the forty, each as likely. It's a short list, as a die is, so everything worked out from it is counted exactly, and nothing is fitted. **Their 5k** and **Their 10k** are read through it, so they're always the same runner's: the two columns move together, as they do in the data.
 
 **Things to try**
 
@@ -544,7 +544,7 @@ fn runners(b: &mut Build) {
     }
     b.note("Runners", "Forty runners' times over 5k and 10k, in minutes, and their ages.");
     let pick = "A runner seen";
-    b.formula(pick, "any_row(Runners.rows)").note(pick, "One of the forty, each as likely. Everything read through it is the same runner's, so the columns move together as they do in the data.");
+    b.formula(pick, "one_of(Runners.rows)").note(pick, "One of the forty, each as likely. Everything read through it is the same runner's, so the columns move together as they do in the data.");
     let (five, ten) = ("Their 5k", "Their 10k");
     b.formula(five, "runner.value.t5k").label(five, pick, "runner");
     b.formula(ten, "runner.value.t10k").label(ten, pick, "runner");

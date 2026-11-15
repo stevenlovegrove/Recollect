@@ -562,8 +562,8 @@ enum Part {
     Bernoulli(Id, u32),
     /// `chance(x)`, or `mean(x)`: over what's a matter of chance, given what's known.
     Expect { mean: bool, of: Id },
-    /// One of these rows, each as likely.
-    AnyRow(Vec<Entity>, u32),
+    /// One of these nodes, each as likely.
+    OneOf(Vec<Entity>, u32),
 }
 
 impl Part {
@@ -589,7 +589,7 @@ impl Part {
 
     fn parts(&self) -> Vec<Id> {
         match self {
-            Part::Lit(_) | Part::Read { .. } | Part::Has(..) | Part::Chose(..) | Part::Draw(..) | Part::AnyRow(..) => vec![],
+            Part::Lit(_) | Part::Read { .. } | Part::Has(..) | Part::Chose(..) | Part::Draw(..) | Part::OneOf(..) => vec![],
             Part::Field(a, _) | Part::Not(a) | Part::Neg(a) | Part::Defined(a) | Part::Floor(a) | Part::Ceil(a) | Part::Math(_, a) | Part::Bernoulli(a, _) | Part::Expect { of: a, .. } => vec![*a],
             Part::Bin(_, a, b) | Part::Round(a, b) | Part::Integers(a, b, _) => vec![*a, *b],
             Part::If(a, b, c) => vec![*a, *b, *c],
@@ -1205,11 +1205,11 @@ impl<'c, 'a> Expander<'c, 'a> {
                 let p = self.expand(&args[0], scope)?;
                 Ok(self.add(Part::Bernoulli(p, self.site())))
             }
-            "any_row" => {
+            "one_of" => {
                 wants(1)?;
                 match self.binding(&args[0], scope)? {
-                    Binding::Group(rows) => Ok(self.add(Part::AnyRow(rows, self.site()))),
-                    Binding::Node(_) | Binding::Value(_) => failed("any_row needs the rows of a table, such as any_row(Runners.rows)"),
+                    Binding::Group(rows) => Ok(self.add(Part::OneOf(rows, self.site()))),
+                    Binding::Node(_) | Binding::Value(_) => failed("one_of needs a group of nodes, such as the rows of a table: one_of(Runners.rows)"),
                 }
             }
             _ => unreachable!("every name in CORE is here"),
@@ -1292,7 +1292,7 @@ fn type_of(cx: &Cx, part: &Part, types: &[Type]) -> Result<Type, Error> {
             if numberish(x) { Ok(Type::Number) } else { failed(format!("{} needs a number, not {}", math_name(*op), x.word())) }
         }
         Part::Draw(..) => Ok(Type::Number),
-        Part::AnyRow(..) => Ok(Type::Ref),
+        Part::OneOf(..) => Ok(Type::Ref),
         Part::Tri(_, a, b, c) => match [a, b, c].into_iter().find(|x| !numberish(&types[**x])) {
             None => Ok(Type::Number),
             Some(x) => failed(format!("triangular needs numbers, not {}", types[*x].word())),
@@ -1820,17 +1820,18 @@ fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
         Part::Bernoulli(p, site) => Ev::Data(bernoulli(cx, &values[*p].data(), *site)?),
         Part::Expect { mean, of } => Ev::Data(expect(cx, *mean, &values[*of])?),
         Part::Bin(op, a, b) => binary(*op, &values[*a], &values[*b])?,
-        Part::AnyRow(rows, site) => Ev::Data(any_row(cx, rows, *site)?),
+        Part::OneOf(rows, site) => Ev::Data(one_of(cx, rows, *site)?),
     })
 }
 
-/// One row of a table, each as likely: a variable with a row for each outcome, as a short list is.
-fn any_row(cx: &Cx, rows: &[Entity], site: u32) -> Result<Cond<Val>, Error> {
+/// One of a group of nodes, each as likely, such as a row of a table: a variable with a node for each
+/// outcome, as a short list is.
+fn one_of(cx: &Cx, rows: &[Entity], site: u32) -> Result<Cond<Val>, Error> {
     if rows.is_empty() {
-        return failed("any_row needs a table with rows, and this has none");
+        return failed("one_of needs a group with something in it, and this has nothing");
     }
     if rows.len() as f64 > MOST_LISTED {
-        return failed(format!("any_row lists each row as an outcome, and {} rows is more than the {MOST_LISTED} it can", rows.len()));
+        return failed(format!("one_of lists each node as an outcome, and {} is more than the {MOST_LISTED} it can", rows.len()));
     }
     let options: Vec<(String, f64, bool)> = rows.iter().map(|r| (r.to_string(), 1.0, false)).collect();
     let var = Space::global().var(&draw_name(cx, site), &options);
@@ -2109,7 +2110,7 @@ fn render(closed: &Closed) -> String {
             Part::Draw(Std::Normal, site) => format!("normal#{site}"),
             Part::Draw(Std::Uniform, site) => format!("uniform#{site}"),
             Part::Draw(Std::Exponential, site) => format!("exponential#{site}"),
-            Part::AnyRow(rows, _) => format!("any_row({} rows)", rows.len()),
+            Part::OneOf(rows, _) => format!("one_of({} nodes)", rows.len()),
             Part::Tri(_, a, b, c) => format!("triangular({}, {}, {})", out[*a], out[*b], out[*c]),
             Part::Integers(a, b, _) => format!("integers({}, {})", out[*a], out[*b]),
             Part::Bernoulli(p, _) => format!("bernoulli({})", out[*p]),

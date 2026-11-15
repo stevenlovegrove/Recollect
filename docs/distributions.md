@@ -35,7 +35,7 @@ Late:      bernoulli(0.2)
 | `between(low, high)` | A normal with 90% of its weight between the two: "about 2 to 4" |
 | `integers(low, high)` | Each whole number from one to the other, equally |
 | `bernoulli(p)` | True with chance `p` |
-| `any_row(T.rows)` | One row of a table of data, each as likely: see [data.md](data.md) |
+| `one_of(group)` | One of a group of nodes, each as likely, such as a row of a table of data: see [data.md](data.md) |
 
 The arguments are ordinary formulas, so they can read other cells, differ between worlds, and be uncertain themselves: `normal(base.value, 0.1 * base.value)`.
 

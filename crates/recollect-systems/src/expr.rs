@@ -204,11 +204,11 @@ pub enum Expr {
 }
 
 /// What's evaluated as itself, rather than being expanded into something else.
-pub const CORE: &[&str] = &["if", "defined", "has", "chose", "round", "floor", "ceil", "max", "min", "distinct", "exp", "ln", "sqrt", "chance", "mean", "normal", "lognormal", "uniform", "triangular", "exponential", "between", "integers", "bernoulli", "any_row"];
+pub const CORE: &[&str] = &["if", "defined", "has", "chose", "round", "floor", "ceil", "max", "min", "distinct", "exp", "ln", "sqrt", "chance", "mean", "normal", "lognormal", "uniform", "triangular", "exponential", "between", "integers", "bernoulli", "one_of"];
 
 /// The functions that are something uncertain: each place one is written is a draw of its own. See
 /// `docs/distributions.md`.
-pub const DISTRIBUTIONS: &[&str] = &["normal", "lognormal", "uniform", "triangular", "exponential", "between", "integers", "bernoulli", "any_row"];
+pub const DISTRIBUTIONS: &[&str] = &["normal", "lognormal", "uniform", "triangular", "exponential", "between", "integers", "bernoulli", "one_of"];
 
 /// Functions that expand into one copy of their body for each node in a group.
 pub const FOLDS: &[&str] = &["sum", "product", "all", "any", "count", "max", "min", "distinct"];
