@@ -54,25 +54,33 @@ export function estimateText(e: Estimate): string {
   return e.error ? `≈ ${toWithin(e.value, e.error)} ± ${smallFigures(e.error)}` : `≈ ${figures(e.value)}`;
 }
 
-/** Where something was read from: so many draws, weighted by what's been seen, or moved to fit it. */
-function fromDraws(draws: number, given?: Given): string {
-  const worth = Math.floor(draws).toLocaleString();
-  if (given === "weighted") return `Read from draws weighted by how likely each makes what's been seen, worth ${worth} of them`;
-  if (given === "moved") return `Read from draws moved to fit what's been seen, taken to be worth ${worth}, since moved draws are related to where they came from`;
-  return `Read from ${draws.toLocaleString()} draws`;
+/**
+ * Where something was read from: draws, weighted by what's been seen, or moved to fit it. How many there
+ * are is a budget, not something about what's read, so it isn't said: how far out drawing could put it is.
+ */
+function fromDraws(given?: Given): string {
+  if (given === "weighted") return "Read from draws weighted by how likely each makes what's been seen";
+  if (given === "moved") return "Read from draws moved to fit what's been seen";
+  return "Read from draws";
 }
 
 export function estimateHow(e: Estimate): string {
-  return `${fromDraws(e.draws, e.given)}, not worked out exactly. ${e.error ? `It could be out by about ${smallFigures(e.error)}.` : "It's come through something that doesn't say how far out it could be."}`;
+  return `${fromDraws(e.given)}, not worked out exactly. ${e.error ? `Drawing could put it out by about ${smallFigures(e.error)}.` : "It's come through something that doesn't say how far out drawing could put it."}`;
 }
 
 /** Something seen whose likelihood depends on draws, if that's what this is: `{"seen": …}`. */
 export const seenOf = (v: unknown): Seen | undefined => only(v, "seen") as Seen | undefined;
 
-/** Something seen, in a few words: how much of the draws it would leave, known. */
+/** Something seen, in a few words: how much it says, known on its own, as how many-fold it narrows the worlds. */
 export function seenText(s: Seen): string {
-  return `seen: weighed alone, leaves ${Math.floor(s.draws).toLocaleString()} of ${s.of.toLocaleString()} draws' worth`;
+  if (s.narrows === null) return "seen: nothing drawn fits it";
+  return `seen: narrows the worlds ${s.at_least ? "at least " : ""}about ${s.narrows < 10 ? s.narrows.toFixed(1) : (+s.narrows.toPrecision(2)).toLocaleString()}-fold`;
 }
+
+/** What `seenText` means, for a tooltip. */
+const SEEN_MEANS =
+  "Something seen, with how likely it was: as evidence, each world counts as much as it makes this likely. Known on its own, it narrows what's believed this many-fold: as much as if all but one in this many of the worlds once thought possible were ruled out. Where it narrows them a lot, the draws are moved to fit it, rather than weighed.";
+const SEEN_AT_LEAST = " Few draws fit it well, and what's rare enough for them to miss is what it would count most, so it likely narrows them more than this.";
 
 /** How likely an uncertain truth is, if that's what this is: `{"chance": …}`. */
 export const chanceOf = (v: unknown): Chance | undefined => only(v, "chance") as Chance | undefined;
@@ -105,21 +113,36 @@ export function distHow(d: Dist): string {
   const range = `Nine times in ten it's between ${figures(d.low)} and ${figures(d.high)}`;
   const gaps = d.undefined > 0 && d.undefined < 1 ? `. Undefined ${beliefText(d.undefined)} of the time` : "";
   if (d.exact) return `${d.law ? `Exactly ${d.law}` : "Exact"}. ${range}${gaps}`;
-  return `${fromDraws(d.draws, d.given)}, so the mean could be out by about ${smallFigures(d.error)}. ${range}${gaps}`;
+  return `${fromDraws(d.given)}, so drawing could put the mean out by about ${smallFigures(d.error)}. ${range}${gaps}`;
 }
 
-/** A chance in a few words. One nothing settled says how many draws it held in, and never says never. */
+/**
+ * How likely, at most, something never seen in the draws is: three in as many as there are (or count), which
+ * is what it'd be held in with 95% confidence, as a percentage, to as many places as it needs.
+ */
+function neverAbove(c: Chance): { bound: number; places: number } {
+  const bound = 300 / Math.max(c.draws, 1);
+  return { bound, places: Math.max(0, -Math.floor(Math.log10(bound))) };
+}
+
+/**
+ * A chance in a few words. One that drawing never settled, true in none of the draws or all of them, never
+ * says never or always: it says how unlikely, at most, that leaves the other way, which drawing more narrows.
+ */
 export function chanceText(c: Chance): string {
   if (c.undefined >= 1) return "undefined";
   if (c.exact) return beliefText(c.chance);
-  if (c.hits === 0) return `0 in ${c.draws.toLocaleString()} draws`;
-  if (c.hits === c.draws) return `all ${c.draws.toLocaleString()} draws`;
+  const { bound, places } = neverAbove(c);
+  if (c.hits === 0) return `under ${bound.toFixed(places)}%`;
+  if (c.hits === c.draws) return `over ${(100 - bound).toFixed(places)}%`;
   return `≈ ${beliefText(c.chance)}`;
 }
 
 export function chanceHow(c: Chance): string {
   const gaps = c.undefined > 0 ? ` Undefined ${beliefText(c.undefined)} of the time.` : "";
-  return c.exact ? `Exactly this likely.${gaps}` : c.given ? `${fromDraws(c.draws, c.given)}, so it could be out by about ${(c.error * 100).toFixed(1)} points.${gaps}` : `True in ${c.hits.toLocaleString()} of ${c.draws.toLocaleString()} draws, so it could be out by about ${(c.error * 100).toFixed(1)} points.${gaps}`;
+  if (c.exact) return `Exactly this likely.${gaps}`;
+  if (c.hits === 0 || c.hits === c.draws) return `${fromDraws(c.given)}, and ${c.hits === 0 ? "it was true in none of them" : "it was true in all of them"}, so all that can be said is that ${c.hits === 0 ? "it's at most this likely" : "it's at least this likely"}: drawing more would narrow it.${gaps}`;
+  return `${fromDraws(c.given)}, so drawing could put it out by about ${(c.error * 100).toFixed(1)} points.${gaps}`;
 }
 
 /** A histogram, small enough to sit beside a number. */
@@ -176,7 +199,7 @@ export function DistValue({ d, wide }: { d: Dist; wide?: boolean }) {
       </span>
       {wide && (
         <span className="dist-how muted">
-          {figures(d.hist.from)} to {figures(d.hist.to)} · {d.exact ? (d.law ?? "exact") : `from ${d.draws.toLocaleString()} draws`}
+          {figures(d.hist.from)} to {figures(d.hist.to)} · {d.exact ? (d.law ?? "exact") : `drawn: the mean to about ±${smallFigures(d.error)}`}
           {d.hist.from < 0 && d.hist.to > 0 && d.below0 !== undefined && ` · ${beliefText(d.below0)} of the time under 0`}
         </span>
       )}
@@ -189,7 +212,7 @@ export function ChanceValue({ c }: { c: Chance }) {
   return (
     <span className="dist" title={chanceHow(c)}>
       <span className="mono-value">true {chanceText(c)}</span>
-      {!c.exact && c.hits > 0 && c.hits < c.draws && <span className="dist-how muted">from {c.draws.toLocaleString()} draws</span>}
+      {!c.exact && c.hits > 0 && c.hits < c.draws && <span className="dist-how muted">drawn: to about ±{(c.error * 100).toFixed(1)} points</span>}
     </span>
   );
 }
@@ -203,7 +226,7 @@ export function AnyValue({ v, text, wide }: { v: unknown; text: (v: unknown) => 
   const s = seenOf(v);
   if (s)
     return (
-      <span className="mono-value estimate" title="Something seen, with how likely it was: as evidence, each draw counts as much as it makes this likely. This is how many of the draws weighing them by it alone would leave worth reading: the fewer, the more it says. Where that's too few, the draws are moved to fit it instead.">
+      <span className="mono-value estimate" title={SEEN_MEANS + (s.at_least ? SEEN_AT_LEAST : "")}>
         {seenText(s)}
       </span>
     );

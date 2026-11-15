@@ -45,13 +45,13 @@ export interface Dist {
   points?: [number, number][];
   /** The distribution it is, if it has a name, as it would be written. */
   law?: string;
-  /** These are exactly right. Otherwise they were read from `draws` draws, and `error` is how far out the mean could be. */
+  /**
+   * These are exactly right. Otherwise they were read from draws, and `error` is how far out drawing could
+   * put the mean. `draws` is how many count, which depends on the budget and is for diagnosis, not showing.
+   */
   exact: boolean;
   draws: number;
-  /**
-   * How what's been seen was taken into account: the draws weighted by how likely each makes it, so `draws`
-   * is how many they're worth, or moved to fit it, so `draws` is how many they're taken to be worth.
-   */
+  /** How what's been seen was taken into account: the draws weighted by how likely each makes it, or moved to fit it. */
   given?: Given;
   error: number;
 }
@@ -60,12 +60,13 @@ export interface Dist {
 export type Given = "weighted" | "moved";
 
 /**
- * Something seen whose likelihood depends on draws, `y ~ normal(…)`, sent as `{"seen": …}`: how many of the
- * draws it would leave worth reading if it were known. See docs/inference.md.
+ * Something seen whose likelihood depends on draws, `y ~ normal(…)`, sent as `{"seen": …}`: how many-fold it
+ * would narrow the worlds, known on its own, or null where nothing drawn fits it. `at_least` where few draws
+ * fit it, so it likely narrows them more. See docs/inference.md.
  */
 export interface Seen {
-  draws: number;
-  of: number;
+  narrows: number | null;
+  at_least: boolean;
 }
 
 /** A number read from draws, such as a mean with no law, sent as `{"estimate": …}` wherever the number would be. */

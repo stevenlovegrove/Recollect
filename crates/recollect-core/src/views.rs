@@ -533,17 +533,25 @@ fn rand_of(v: &Value) -> Option<Rand> {
     (o.len() == 1 && o.contains_key("rand")).then(|| serde_json::from_value(v.clone()).ok()).flatten()
 }
 
+/// Fewer draws than this left counting, and how many-fold something seen narrows the worlds is likely more
+/// than they say: what's rare enough to be missed by them is what it'd count most.
+const SEEN_FEW: f64 = 100.0;
+
 /// A value for reading. An uncertain number is what it comes to, `{"dist": …}`: its middle, its spread,
 /// a histogram, and whether those are exact or were read from draws. An uncertain truth is how likely it
 /// is, `{"chance": …}`, with the same. Wherever one is, in a list or a record too.
 fn present(v: &Value, reader: &RefCell<Reader>) -> Value {
-    // Something seen, whose likelihood depends on draws: how many of them it'd leave worth reading,
-    // known on its own, which is how much it would say.
+    // Something seen, whose likelihood depends on draws: how much it would say, known on its own, as how
+    // many-fold it narrows the worlds. That's how many draws there are for each one weighing by it alone
+    // leaves counting, which is 1 plus how far it moves what's believed (its χ² divergence), whatever the
+    // number of draws. Read from few that count, it's likely more than that; from none, it isn't read.
     if let Some(o) = v.as_object()
         && o.len() == 1
         && let Some(r) = o.get("likely").and_then(|l| serde_json::from_value::<Rand>(l.clone()).ok())
     {
-        return json!({ "seen": { "draws": Reader::new().worth_weighed(r), "of": recollect_graph::chance::DRAWS } });
+        let counting = Reader::new().worth_weighed(r);
+        let narrows = (counting > 0.0).then(|| recollect_graph::chance::DRAWS as f64 / counting);
+        return json!({ "seen": { "narrows": narrows, "at_least": counting < SEEN_FEW } });
     }
     if let Some(r) = rand_of(v) {
         let one = [Share { weight: 1.0, value: Term::Rand(r) }];

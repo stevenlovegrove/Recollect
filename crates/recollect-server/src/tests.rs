@@ -1449,3 +1449,25 @@ async fn a_roll_seen_weighs_which_die_and_isnt_asked_about() {
     assert_eq!(asked.len(), before["worlds"]["vars"].as_array().unwrap().len(), "nothing new is asked: {asked:?}");
     assert_eq!(after["worlds"]["count"], before["worlds"]["count"]);
 }
+
+/// Something seen, not yet known, says how much it would: how many-fold it narrows the worlds, which is
+/// the model's and not the number of draws'. Here m ~ normal(0, 1) and 1 ~ normal(m, 0.1): weighing by
+/// that, 1 + its χ² divergence is 11.66, by quadrature.
+#[tokio::test]
+async fn something_seen_says_how_many_fold_it_narrows_the_worlds() {
+    let c = Client::new();
+    c.open("which-die").await;
+    c.claude_applies(
+        "a line",
+        vec![
+            json!({"op": "add_node", "id": "new:m", "name": "M", "cells": {"value": {"formula": "normal(0, 1)"}}}),
+            json!({"op": "add_node", "id": "new:s", "name": "Seen near one", "cells": {"value": {"formula": "1 ~ normal(m, 0.1)", "labels": {"m": "new:m"}}}}),
+        ],
+    )
+    .unwrap();
+    let v = c.view(json!({})).await;
+    let seen = &cell(&v, "Seen near one", "value")["shown"]["cases"][0]["value"]["seen"];
+    let narrows = seen["narrows"].as_f64().unwrap_or_else(|| panic!("{seen}"));
+    assert!((narrows / 11.66 - 1.0).abs() < 0.1, "{seen}");
+    assert_eq!(seen["at_least"], false, "{seen}");
+}

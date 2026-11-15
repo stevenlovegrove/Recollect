@@ -1,0 +1,13 @@
+id: 01a1e113-7518-779d-b695-ca60fcf4e31a
+components:
+- value
+cells:
+  name: Their 5k
+formulas:
+  value: runner.value.t5k
+links:
+- to: 01a1e113-7518-779d-b695-ca5f6b55ff08
+  components:
+  - label
+  cells:
+    called: runner

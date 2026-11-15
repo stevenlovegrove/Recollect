@@ -431,11 +431,11 @@ fn judging(g: &Graph) -> Vec<Advice> {
             rule: if rarely { "evidence_moves_rarely_taken" } else { "evidence_moved_draws" }.to_string(),
             on: e,
             detail: format!(
-                "weighing the draws by what's been seen left too few worth anything, so the draws it depends on were moved to fit it, in {} steps: {} of {} are distinct, taken to be worth {} since moved draws are related, and the last moves were taken {:.0}% of the time{}",
+                "weighing the draws by what's been seen would have left too few of them counting, so the draws it depends on were moved to fit it instead, in {} steps. Of the {} draws, {} are distinct, and they're taken to count as {:.0}% of them, since moved draws are related to where they came from. The last moves were taken {:.0}% of the time{}",
                 moved.steps,
-                moved.distinct,
                 chance::DRAWS,
-                moved.worth,
+                moved.distinct,
+                100.0 * moved.worth as f64 / chance::DRAWS as f64,
                 moved.accepted * 100.0,
                 if rarely { ". That's rarely, which is when what's read can be wrong without the numbers showing it" } else { "" }
             ),
