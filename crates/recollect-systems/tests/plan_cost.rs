@@ -7,6 +7,7 @@ use std::time::Instant;
 use recollect_graph::{Entity, Graph, Log, Name, Op, Registry};
 use recollect_systems::formulas::Chosen;
 use recollect_systems::plan::{self, *};
+use recollect_systems::structure::*;
 
 fn registry() -> Arc<Registry> {
     let mut reg = Registry::new();

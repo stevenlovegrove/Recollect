@@ -6,7 +6,8 @@ mod support;
 use recollect_graph::{Backed, Error, Registry};
 use recollect_systems::expr::Val;
 use recollect_systems::formulas::{LABEL, ValueCell, install};
-use recollect_systems::plan::{self, ALTERNATIVE, DECISION, PART_OF, TASK};
+use recollect_systems::plan::{self, TASK};
+use recollect_systems::structure::{ALTERNATIVE, DECISION, PART_OF};
 use serde_json::{Value, json};
 use support::N;
 
@@ -242,7 +243,7 @@ fn a_budget_with_open_decisions_is_the_same_sheet() {
 
 #[test]
 fn an_option_in_a_budget_can_carry_what_any_option_can() {
-    use plan::Need;
+    use recollect_systems::structure::Need;
     let mut g = trip();
     g.add("book the train", TASK).link("book the train", "train", PART_OF);
     assert_eq!(g.show(&g.get::<Need>("book the train").unwrap().unwrap().0), "travel=train", "it's the same kind of option as in a plan");

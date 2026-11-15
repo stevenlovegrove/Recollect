@@ -8,9 +8,11 @@ use std::collections::BTreeMap;
 
 use recollect_graph::worlds::Space;
 use recollect_graph::{CellType, Error, Registry};
+use recollect_systems::structure;
 use recollect_systems::expr::{BinOp, Expr, Val, parse};
 use recollect_systems::formulas::{Called, Chosen, LABEL, MACRO, Macro, OPTIONS, Options, REQUIRES, VALUE, ValueCell, install, option_node, truth, try_formula};
-use recollect_systems::plan::{self, ALTERNATIVE, DECISION, Estimate, PART_OF, TASK, UNKNOWN};
+use recollect_systems::plan::{self, Estimate, TASK, UNKNOWN};
+use recollect_systems::structure::{ALTERNATIVE, DECISION, PART_OF};
 use recollect_systems::schedule::{self, Finish};
 use serde_json::json;
 use support::N;
@@ -321,7 +323,7 @@ fn narrowing_a_formula_agrees_with_really_deciding() {
             let picks = Space::global().picks(&BTreeMap::from([(d.to_string(), o.to_string())]));
             let narrowed = open.given(&picks);
 
-            let seq = log.commit("t", "decided", vec![plan::choose(d, o)]).unwrap();
+            let seq = log.commit("t", "decided", vec![structure::choose(d, o)]).unwrap();
             let decided = log.graph().get::<ValueCell>(ids["f"]).unwrap().unwrap().0.0;
             assert_eq!(narrowed, decided, "{text}");
             compared += 1;

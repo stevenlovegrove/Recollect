@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use recollect_graph::{Entity, Graph, Log, Name, Op, Registry};
 use recollect_systems::plan::{self, *};
+use recollect_systems::structure::*;
 use recollect_systems::schedule;
 
 fn registry() -> Arc<Registry> {

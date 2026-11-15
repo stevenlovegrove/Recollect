@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::expr::Type;
 use crate::formulas::{compiler, number_cases};
-use crate::plan::{Need, PART};
+use crate::structure::{Need, PART};
 
 /// The graph as a whole, as a plan: when it ends.
 pub const SCHEDULE: &str = "schedule";

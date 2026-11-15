@@ -22,7 +22,8 @@ use recollect_graph::{Advice, Backed, Cell, CellType, Compile, Computed, Cx, Ent
 use serde_json::{Value, json};
 
 use crate::expr::{self, BinOp, CORE, Estimate, Expr, Type, Val};
-use crate::plan::{Done, Dropped, Need};
+use crate::plan::Done;
+use crate::structure::{Dropped, Need};
 use crate::schedule::{Finish, LatestFinish, LatestStart, PlanEnd, Start};
 
 /// The most distinct values a formula can have across worlds. Beyond this, it says so.
@@ -84,7 +85,7 @@ pub struct AtLeast(pub f64);
 /// Whether an open choice is a matter of chance rather than someone's to make: a draw from a short list,
 /// or a decision that says it's uncertain.
 pub fn is_chance(g: &Graph, var: &str) -> bool {
-    crate::is_draw(var) || var.parse::<Entity>().is_ok_and(|e| g.has(e, crate::plan::UNCERTAIN))
+    crate::is_draw(var) || var.parse::<Entity>().is_ok_and(|e| g.has(e, crate::structure::UNCERTAIN))
 }
 
 /// The worlds a piece of evidence leaves: those where it's true. Where it's a matter of draws it says
@@ -247,7 +248,7 @@ fn expect(cx: &Cx, mean: bool, of: &Ev) -> Result<Cond<Val>, Error> {
     let known = &known & &draws_found(&found);
     let what = whole.given(&picks);
     let known = known.given(&picks);
-    let chancy = |name: &str| crate::is_draw(name) || name.parse::<Entity>().is_ok_and(|e| cx.has(e, crate::plan::UNCERTAIN));
+    let chancy = |name: &str| crate::is_draw(name) || name.parse::<Entity>().is_ok_and(|e| cx.has(e, crate::structure::UNCERTAIN));
     let mut reader = Reader::given(reader_known);
     if reader_known.is_some() && reader.draws_kept() == 0 {
         return Ok(pure(Val::Undefined));
@@ -318,7 +319,7 @@ pub fn judge(g: &Graph, e: Entity, picks: &Picks, known: &Bool, reader: &mut Rea
     let mut knowing: BTreeMap<String, BTreeSet<Entity>> = BTreeMap::new();
     for v in &own {
         if let Ok(d) = v.name().parse::<Entity>() {
-            let knows: BTreeSet<Entity> = g.targets_of(d, crate::plan::KNOWING).into_iter().collect();
+            let knows: BTreeSet<Entity> = g.targets_of(d, crate::structure::KNOWING).into_iter().collect();
             if !knows.is_empty() {
                 knowing.insert(v.name(), knows);
             }
@@ -2133,8 +2134,8 @@ pub(crate) fn option_cells(option: &str, numeric: bool) -> BTreeMap<String, Valu
 /// rows choose from: it isn't a choice itself.
 fn options_chosen(cx: &Cx) -> Cell<Chosen> {
     // A decision that lists some of its options this way lands as a decision does.
-    if cx.own_has(crate::plan::DECISION) {
-        return Ok(cx.own::<crate::plan::Falls>()?.map(|f| Chosen(f.on)));
+    if cx.own_has(crate::structure::DECISION) {
+        return Ok(cx.own::<crate::structure::Falls>()?.map(|f| Chosen(f.on)));
     }
     let Some(Options(options)) = cx.own::<Options>()? else { return Ok(None) };
     if cx.row_key().is_none() && !cx.rows().is_empty() {

@@ -305,10 +305,9 @@ edges; collapse below a depth.
 
 **Built**
 
-- **Structure** is a system of its own. Its registration and checks are in `structure.rs`, and the code
-  that works out `need`, decisions and options is still in `plan.rs`, which `structure.rs` calls. Moving
-  that code is only a move, left for later. A cell now records the system that gives it, so writing
-  `done` still takes on `plan`. Samples say the systems they use, which a test checks, and the examples
+- **Structure** is a system of its own. Its registration, its checks, and the code that works out
+  `need`, decisions and options are in `structure.rs`, and `plan.rs` calls into it for them. A cell now
+  records the system that gives it, so writing `done` still takes on `plan`. Samples say the systems they use, which a test checks, and the examples
   were written again. Most samples that said `plan` only had decisions, and now say `structure`.
 - **Decisions** come back for a design that isn't a plan, so the Decisions tab works there too.
 - **A kind's notes** are its own.
@@ -325,19 +324,47 @@ edges; collapse below a depth.
 
 - **`instances(Kind)` isn't a function.** `k.in.is_a` does it with one label for the kind, now that a
   path can go along edges anywhere, and `count(self.in.realises)` works on a kind for each instance.
-  Instances of instances aren't followed by a formula yet, though a read by kind follows them.
-- **A formula typed in the app can't name nodes yet,** since naming them needs labels, so the worlds panel
-  keeps pins as pins rather than showing them as a formula.
+  `k.in*.is_a` follows instances of instances too: `in*` and `out*` go along a component as far as it
+  goes, each node once, which also gives every part beneath a whole, or everything that realises a
+  concept through a format.
 - **The unresolved list** has the checks that turned out cheap and useful: a cell written once, a letter
   or two from another; nodes sharing a name; `relates` without a kind; a relation used once. It leaves
   out labels with no target and dangling edges, which formulas and loading already report.
 
+**After trying it on an example**
+
+The first example was a slice of kept's own data model, and its names were too close to Recollect's own
+words to tell what was example and what was the tool, so it became a house extension: spaces in the
+brief, drawings, and building jobs, with "opens onto" as a relation and an open question about the roof.
+Using it changed these:
+
+- **The Map hides setup.** Kinds and relations are what a workspace is set up with rather than about, so
+  their cards, and the `is_a` links into them, are hidden until "setup" is ticked. Each thing's kind chip
+  opens its kind. The Nodes menu filters by kind first and by component after. The Links menu groups
+  links by what they are: built in, relations of your own, setup, and what formulas read, so ticking
+  "layout" never moves a row. A badge a node takes from its kind shows only where a check flags it.
+  Bands can be hidden one at a time, and the filters are remembered for each workspace.
+- **Links read in lower case**, as the words between two names: "part of", "realises", "opens onto". An
+  edge's label leaves out what its relation says of every edge.
+- **A formula typed in the app can name nodes.** "Look only where" takes each name as the node it plainly
+  is, as `roof_cost` for "Roof cost (£)", and asks which where that isn't clear. It's sent as `where`
+  with its labels, so nothing is saved.
+- **The Inspector shows kinds.** Under the name is what kind of thing a node is, up through the kinds
+  above it, with a way to add or take away a kind; on a kind, the things of it. A component or cells a
+  card already says come from a kind don't say so again on each row. The id is a button that copies it.
+- **The Inspector shows relations.** Links are called by their relation, as "opens onto", which goes to
+  the relation. A link can be made of a relation, and a selected edge says which relation it is, which
+  can be changed.
+
 **Not done**
 
-- The Inspector doesn't show or set an edge's relation yet; `apply` and the agent do.
 - R15 (markdown export), R16 (decision records) and R17 (restructuring ops) are left for when modelling
   shows they're needed, as the plan said.
-- The app labels `need` as "Needed", which reads oddly in a design.
+- `need` reads as "Needed when …" on an option. It reads well enough in a design, and it names the cell,
+  so it stays; if the words change, the cell's name should change with them.
+- Edges are still made of components with a relation as one of them, rather than one kind of link
+  chosen from a single list. The Inspector's link form and Add menu list the workspace's relations first,
+  which covers it for now.
 
 ## Risks and what to check early
 

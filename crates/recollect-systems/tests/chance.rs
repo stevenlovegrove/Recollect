@@ -10,9 +10,11 @@ use std::sync::Arc;
 use recollect_graph::chance::{self, Law, Num, Rand, Reader, Share, Term};
 use recollect_graph::worlds::{Cond, Space};
 use recollect_graph::{CellType, Entity, Error, Log, Op, Registry};
+use recollect_systems::structure;
 use recollect_systems::expr::{BinOp, Expr, Val, parse};
 use recollect_systems::formulas::{OPTIONS, Options, REQUIRES, VALUE, ValueCell, install};
-use recollect_systems::plan::{self, ALTERNATIVE, DECISION, Estimate, PART_OF, TASK, Weight};
+use recollect_systems::plan::{self, Estimate, TASK};
+use recollect_systems::structure::{ALTERNATIVE, DECISION, PART_OF, Weight};
 use recollect_systems::schedule::{Finish, PlanEnd};
 use support::N;
 
@@ -537,7 +539,7 @@ fn narrowing_agrees_with_really_deciding() {
     for option in ["fast", "slow"] {
         let picks = Space::global().picks(&BTreeMap::from([(ids["how"].to_string(), ids[option].to_string())]));
         let narrowed = open.given(&picks);
-        let seq = log.commit("t", "decided", vec![plan::choose(ids["how"], ids[option])]).unwrap();
+        let seq = log.commit("t", "decided", vec![structure::choose(ids["how"], ids[option])]).unwrap();
         let decided = log.graph().get::<ValueCell>(ids["days"]).unwrap().unwrap().0.0;
         assert_eq!(narrowed, decided, "{option}");
         log.undo(seq, "t", "and back").unwrap();

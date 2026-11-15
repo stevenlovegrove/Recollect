@@ -8,7 +8,8 @@ use recollect_graph::worlds::{Bool, Cond, Space, Var};
 use recollect_graph::{CellType, Entity, Graph, Log, Name};
 use recollect_systems::expr::Val;
 use recollect_systems::formulas::{REQUIRES, ValueCell, options_of, truth};
-use recollect_systems::plan::{self, Need, Pressure};
+use recollect_systems::plan::{self, Pressure};
+use recollect_systems::structure::Need;
 use recollect_systems::samples::{SAMPLES, ops_of};
 use recollect_systems::schedule::{Finish, Slack};
 use serde_json::Value;
@@ -447,7 +448,7 @@ fn the_drawbridge_is_quicker_on_average_and_worse_when_you_need_to_be_sure() {
     use recollect_graph::Op;
     use recollect_graph::chance::{Reader, Share, Term};
     use recollect_systems::formulas::{Chosen, known_draws, worlds_left};
-    use recollect_systems::plan::KNOWING;
+    use recollect_systems::structure::KNOWING;
     let mut o = open("drawbridge");
 
     // Over the bridge, taken together, has two humps, and its average is between them.

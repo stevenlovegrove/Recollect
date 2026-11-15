@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use recollect_graph::{Backed, CellType, Entity, Graph, Name, Op};
 use recollect_systems::formulas::{Called, IS_A, LABEL};
 use recollect_systems::notes::{Body, EdgeKind, NOTES, RELATES};
-use recollect_systems::plan::ALTERNATIVE;
+use recollect_systems::structure::ALTERNATIVE;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 

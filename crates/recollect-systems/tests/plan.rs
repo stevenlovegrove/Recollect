@@ -10,6 +10,7 @@ use recollect_systems::expr::Val;
 use recollect_systems::formulas::{Called, Chosen, LABEL};
 use recollect_systems::notes;
 use recollect_systems::plan::{self, *};
+use recollect_systems::structure::*;
 use recollect_systems::view::ViewGraph;
 use serde_json::json;
 

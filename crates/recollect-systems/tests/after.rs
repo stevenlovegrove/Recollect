@@ -11,7 +11,8 @@ use recollect_graph::worlds::{Bool, Space};
 use recollect_graph::{CellType, Error, Graph, Registry};
 use recollect_systems::expr::{Estimate, Val};
 use recollect_systems::formulas::{AtLeast, Chosen, EVIDENCE, FOUND, Found, OPTIONS, Options, REQUIRES, ValueCell, install, known_draws, worlds_left};
-use recollect_systems::plan::{ALTERNATIVE, DECISION, Estimate as Days, KNOWING, TASK, UNCERTAIN, Weight};
+use recollect_systems::plan::{Estimate as Days, TASK};
+use recollect_systems::structure::{ALTERNATIVE, DECISION, KNOWING, UNCERTAIN, Weight};
 use support::N;
 
 fn sheet(reg: &mut Registry) {

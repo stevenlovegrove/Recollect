@@ -4,9 +4,11 @@
 use std::sync::Arc;
 
 use recollect_graph::{Cell, CellType, Cx, Entity, Error, Graph, LoadProblem, Log, Name, On, Op, Registry, SavedGraph, Severity, Stored, Target, cell};
+use recollect_systems::structure;
 use recollect_systems::formulas::LABEL;
 use recollect_systems::formulas::Chosen;
-use recollect_systems::plan::{self, ALTERNATIVE, DECISION, DEPENDS_ON, Done, Dropped, Estimate, GOAL, PART_OF, RuledOut, TASK};
+use recollect_systems::plan::{self, DEPENDS_ON, Done, Estimate, GOAL, TASK};
+use recollect_systems::structure::{ALTERNATIVE, DECISION, Dropped, PART_OF, RuledOut};
 use serde_json::json;
 
 fn plan_registry() -> Arc<Registry> {
@@ -58,7 +60,7 @@ fn calibration(log: &mut Log) -> Calib {
 }
 
 fn choose(decision: Entity, option: Entity) -> Op {
-    plan::choose(decision, option)
+    structure::choose(decision, option)
 }
 
 fn node(id: Entity) -> On {
@@ -658,7 +660,7 @@ fn undoing_and_redoing_anywhere_is_the_same_as_replaying_from_nothing() {
                 let _ = log.commit("t", "", vec![choose(d, if next(2) == 0 { a } else { b })]);
             }
             _ => {
-                let _ = log.commit("t", "", vec![plan::reopen(d)]);
+                let _ = log.commit("t", "", vec![structure::reopen(d)]);
             }
         }
         let head = log.last_seq().unwrap();

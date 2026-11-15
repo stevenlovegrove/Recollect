@@ -11,7 +11,8 @@ use recollect_graph::worlds::{Bool, DrawGroup, Picks, Var};
 use recollect_graph::{Backed, CellDef, CellType, ComponentDef, Entity, Error, Event, Graph, Log, On, Op, Origin, Shown, Source, Stored, Violation};
 use recollect_systems::formulas::{CHOICE, Called, EVIDENCE, FOUND, Found, LABEL, VALUE, ValueCell, draws_found, is_chance, known_draws, narrows, shown_free, worlds_left};
 use recollect_systems::expr::Val;
-use recollect_systems::plan::{self, Matrix, UNCERTAIN, WorkItem};
+use recollect_systems::plan::{self, Matrix, WorkItem};
+use recollect_systems::structure::{self, UNCERTAIN};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -284,7 +285,7 @@ pub(crate) fn looked_at(g: &Graph, world: &World) -> (Option<Graph>, Vec<Quantit
     let found: BTreeMap<String, String> = world.iter().filter(|(k, _)| !k.starts_with('=') && !k.starts_with('!') && is_chance(g, k)).map(|(k, v)| (k.clone(), v.clone())).collect();
     // Ruling out what's uncertain is something known, so it's evidence, and what's worked out from chances
     // takes it in. A choice that's someone's to make is only left out of the worlds looked at.
-    let unlikely: Vec<(Entity, Entity)> = plan::ruled_out(world)
+    let unlikely: Vec<(Entity, Entity)> = structure::ruled_out(world)
         .into_iter()
         .filter(|(c, _)| is_chance(g, c))
         .filter_map(|(c, o)| Some((c.parse::<Entity>().ok()?, o.parse::<Entity>().ok()?)))
@@ -621,10 +622,10 @@ impl Lens {
 
     /// The same, looking only at the worlds where `also` holds too, as a `where` formula says.
     pub(crate) fn looking(g: &Graph, world: &World, also: Option<&Bool>) -> Lens {
-        let picks = plan::picks(g, world);
+        let picks = structure::picks(g, world);
         // A draw that's several variables is pinned where whichever is in use lands there.
         // And whatever's ruled out, just for looking, is left out of every world.
-        let mut found = (&(&plan::pinned(g, world) & &draws_found(world)) & &plan::not_ruled_out(g, world)).given(&picks);
+        let mut found = (&(&structure::pinned(g, world) & &draws_found(world)) & &structure::not_ruled_out(g, world)).given(&picks);
         if let Some(also) = also {
             found = &found & &also.given(&picks);
         }
@@ -721,7 +722,7 @@ pub(crate) fn cell_view(g: &Graph, e: Entity, c: &str, lens: &Lens, labels: &Lab
 /// A choice that's someone's to make, where the rest are matters of chance: something uncertain, a
 /// puzzle's unknown, or a draw.
 fn is_own(g: &Graph, v: &Var) -> bool {
-    v.name().parse::<Entity>().is_ok_and(|e| g.has(e, plan::DECISION) && !g.has(e, UNCERTAIN) && !g.has(e, plan::NARROWED))
+    v.name().parse::<Entity>().is_ok_and(|e| g.has(e, structure::DECISION) && !g.has(e, UNCERTAIN) && !g.has(e, structure::NARROWED))
 }
 
 /// How likely something is for each way the open choices it differs over could go, where those are
@@ -806,7 +807,7 @@ fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap
     let in_play = &lens.in_play;
     // A decision whose options depend on other choices is several variables with its name, one for each
     // set of options that can be left, so it's asked where it lands rather than read off one of them.
-    let narrowed = plan::narrowed(g).unwrap_or_default();
+    let narrowed = structure::narrowed(g).unwrap_or_default();
     let mut applied = World::new();
     let mut unpicked = Vec::new();
     let mut count = Some(1u128);
@@ -912,13 +913,13 @@ fn worlds(g: &Graph, world: &World, lens: &Lens, labels: &Labels, vars: BTreeMap
     clues(&mut views, &asked, in_play, held);
     for v in views.iter_mut() {
         let Ok(d) = v.id.parse::<Entity>() else { continue };
-        if let Ok(Some(recollect_systems::structure::Leans(to))) = g.get::<recollect_systems::structure::Leans>(d) {
+        if let Ok(Some(structure::Leans(to))) = g.get::<structure::Leans>(d) {
             v.leaning = to.get("ref").and_then(Value::as_str).map(String::from);
-            v.leaning_why = g.get::<recollect_systems::structure::LeaningWhy>(d).ok().flatten().map(|w| w.0).filter(|w| !w.is_empty());
+            v.leaning_why = g.get::<structure::LeaningWhy>(d).ok().flatten().map(|w| w.0).filter(|w| !w.is_empty());
         }
     }
     // Each way things could go is counted once: a variable of a draw that isn't the one in use doesn't make another.
-    let at_rest = groups.iter().fold(plan::at_rest(g), |acc, group| Some(acc.map_or_else(|| group.at_rest(), |a| &a & &group.at_rest())));
+    let at_rest = groups.iter().fold(structure::at_rest(g), |acc, group| Some(acc.map_or_else(|| group.at_rest(), |a| &a & &group.at_rest())));
     let with_applied = |mut s: World| {
         s.extend(applied.clone());
         s
@@ -1315,7 +1316,7 @@ pub struct PlanView {
 pub fn planning(o: &Workspace, world: &World) -> Result<PlanView, String> {
     // Decisions are structure's, and a design has them too. Work is only a plan's.
     let has = |s: &str| o.built.names.iter().any(|n| n == s);
-    if !has(recollect_systems::structure::NAME) {
+    if !has(structure::NAME) {
         return Ok(PlanView { work: vec![], decisions: vec![] });
     }
     let (copy, _) = looked_at(o.log.graph(), world);

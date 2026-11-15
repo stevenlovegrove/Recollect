@@ -7,7 +7,8 @@ mod support;
 use recollect_graph::worlds::{Cond, Worldly};
 use recollect_systems::expr::Val;
 use recollect_systems::formulas::ValueCell;
-use recollect_systems::plan::{self, ALTERNATIVE, DECISION};
+use recollect_systems::plan::{self};
+use recollect_systems::structure::{ALTERNATIVE, DECISION};
 use serde_json::{Value, json};
 use support::N;
 

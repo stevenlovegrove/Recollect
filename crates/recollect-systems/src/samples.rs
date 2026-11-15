@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 
 use crate::formulas::{AT, At, AtLeast, Called, EVIDENCE, IS_A, LABEL, OPTIONS, Options, REQUIRES, VALUE, ValueCell};
 use crate::notes::{Body, DRAWING, Drawing, NOTES};
-use crate::plan::{ALTERNATIVE, DECISION, DEPENDS_ON, EXCLUDES, KNOWING, Done, Estimate, GOAL, PART_OF, RISK, TASK, UNCERTAIN, UNKNOWN, WITHIN, Weight};
+use crate::plan::{DEPENDS_ON, Done, Estimate, GOAL, RISK, TASK, UNKNOWN};
+use crate::structure::{ALTERNATIVE, DECISION, EXCLUDES, KNOWING, PART_OF, UNCERTAIN, WITHIN, Weight};
 
 pub struct Sample {
     pub name: &'static str,

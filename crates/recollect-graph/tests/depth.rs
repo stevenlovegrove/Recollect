@@ -4,7 +4,8 @@
 use std::sync::Arc;
 
 use recollect_graph::{Entity, Error, Graph, Log, Op, Registry, set_depth_limit};
-use recollect_systems::plan::{self, PART_OF, TASK};
+use recollect_systems::plan::{self, TASK};
+use recollect_systems::structure::PART_OF;
 use recollect_systems::samples::{SAMPLES, ops_of};
 use serde_json::{Value, json};
 

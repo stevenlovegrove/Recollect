@@ -9,8 +9,10 @@ mod support;
 
 use recollect_graph::worlds::{Cond, Worldly};
 use recollect_graph::{Cell, CellType, Cx, Entity, Error, Registry, cell};
+use recollect_systems::structure;
 use recollect_systems::formulas::Chosen;
-use recollect_systems::plan::{self, ALTERNATIVE, DECISION, Estimate, Need, TASK, UNKNOWN};
+use recollect_systems::plan::{self, Estimate, TASK, UNKNOWN};
+use recollect_systems::structure::{ALTERNATIVE, DECISION, Need};
 use recollect_systems::schedule::{self, Finish as WorldFinish, Slack as WorldSlack, Start as WorldStart};
 use support::N;
 
@@ -176,7 +178,7 @@ fn calibration() -> N {
     for (t, d, parents) in [("imu", 1.0, vec!["calib"]), ("static", 2.0, vec!["cad", "free"]), ("export", 3.0, vec!["cad"]), ("search", 5.0, vec!["free"]), ("detector", 4.0, vec!["board"])] {
         g.add(t, TASK).set(t, Estimate::days(d));
         for p in parents {
-            g.link(t, p, plan::PART_OF);
+            g.link(t, p, structure::PART_OF);
         }
     }
     g.link("export", "static", plan::DEPENDS_ON);
@@ -228,7 +230,7 @@ fn shared_work_only_inherits_from_parents_in_play() {
     g.link("a", "d", ALTERNATIVE).link("b", "d", ALTERNATIVE);
     g.add("prereq", TASK).set("prereq", Estimate::days(10.0));
     g.link("a", "prereq", plan::DEPENDS_ON);
-    g.add("shared", TASK).set("shared", Estimate::days(1.0)).link("shared", "a", plan::PART_OF).link("shared", "b", plan::PART_OF);
+    g.add("shared", TASK).set("shared", Estimate::days(1.0)).link("shared", "a", structure::PART_OF).link("shared", "b", structure::PART_OF);
     let start = g.get::<WorldStart>("shared").unwrap().unwrap().0.0.plain();
     let at = |o: &str| *start.at(&g.world(&[("d", o)]));
     assert_eq!((at("a"), at("b")), (Some(10.0), Some(0.0)));
@@ -241,8 +243,8 @@ fn a_loop_that_no_single_world_contains_is_still_reported() {
     let mut g = N::with(world_system);
     g.add("d", DECISION);
     g.link("a", "d", ALTERNATIVE).link("b", "d", ALTERNATIVE);
-    g.add("x", TASK).set("x", Estimate::days(1.0)).link("x", "a", plan::PART_OF);
-    g.add("y", TASK).set("y", Estimate::days(1.0)).link("y", "b", plan::PART_OF);
+    g.add("x", TASK).set("x", Estimate::days(1.0)).link("x", "a", structure::PART_OF);
+    g.add("y", TASK).set("y", Estimate::days(1.0)).link("y", "b", structure::PART_OF);
     g.link("x", "y", plan::DEPENDS_ON).link("y", "x", plan::DEPENDS_ON);
     assert!(g.get::<Need>("x").is_ok(), "x and y are never both needed");
     assert!(matches!(g.get::<WorldFinish>("x"), Err(Error::Cycle(_))));
@@ -382,7 +384,7 @@ fn with_worlds(p: &Plan) -> N {
         g.add(id, TASK).set(id, Estimate::days(*d));
     }
     for (c, par) in &p.parts {
-        g.link(c, par, plan::PART_OF);
+        g.link(c, par, structure::PART_OF);
     }
     for (o, d) in &p.options {
         g.link(o, d, ALTERNATIVE);
