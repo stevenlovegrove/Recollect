@@ -251,9 +251,11 @@ call     := name "(" (name "in" path ":" expr ("," expr)? | expr ("," expr)*)? "
 | `rows` | The group of rows in this node's table |
 | `in.part_of`, `out.depends_on` | The group of nodes at the other end of edges with that component |
 | `with.task` | The group of nodes with that component |
+| `kind.in.is_a`, `x.out.part_of`, `hub.out.relates.in.is_a` | Going on along edges from a labelled node, a node being gone over, or a group: the nodes at the other end, from each |
 | `whole.plan_end` | A cell on the graph as a whole |
 
 - `=` between truths means "exactly when".
+- A path that goes along edges is a group, wherever `in` or `out` comes in it, so `count(kind.in.is_a)` is how many instances a kind has, and `kind.in.is_a` on its own is an error rather than a cell. After a group, only `in.…` and `out.…` go on: a cell is read inside, as `sum(x in kind.in.is_a: x.cost)`, or in the short form `sum(kind.in.is_a.cost)`.
 - A plain label must be exactly one node, and that's an error otherwise. As a group, it can be any number, including none, so a total with no lines yet is 0.
 
 ## Typing one

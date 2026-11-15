@@ -718,12 +718,14 @@ impl<'c, 'a> Expander<'c, 'a> {
     /// A group's nodes, each with the edge it was reached by, if it was reached along one.
     fn members(&self, path: &[String], scope: &Scope) -> Result<Vec<(Entity, Option<Entity>)>, Error> {
         let (root, rest) = path.split_first().expect("a path has a first name");
+        let plain = |nodes: Vec<Entity>| nodes.into_iter().map(|n| (n, None)).collect::<Vec<_>>();
         if let Some(b) = scope.vars.get(root) {
-            return match b {
-                Binding::Node(n) => Ok(vec![(*n, None)]),
-                Binding::Group(g) => Ok(g.iter().map(|n| (*n, None)).collect()),
-                Binding::Value(_) => failed(format!("{root} isn't a group of nodes")),
+            let start = match b {
+                Binding::Node(n) => vec![(*n, None)],
+                Binding::Group(g) => plain(g.clone()),
+                Binding::Value(_) => return failed(format!("{root} isn't a group of nodes")),
             };
+            return self.go_on(root, start, rest);
         }
         if matches!(root.as_str(), "in" | "out" | "with") {
             if scope.is_macro() {
@@ -731,25 +733,48 @@ impl<'c, 'a> Expander<'c, 'a> {
             }
             let Some(component) = rest.first() else { return failed(format!("{root} needs to say which component, such as {root}.part_of")) };
             let along = |edges: Vec<(Entity, Entity)>| edges.into_iter().map(|(n, e)| (n, Some(e))).collect();
-            return Ok(match root.as_str() {
+            let start = match root.as_str() {
                 "in" => along(self.cx.incoming(component)),
                 "out" => along(self.cx.outgoing(component)),
-                _ => self.cx.scan(component).into_iter().map(|n| (n, None)).collect(),
-            });
+                _ => plain(self.cx.scan(component)),
+            };
+            return self.go_on(&format!("{root}.{component}"), start, &rest[1..]);
         }
         if scope.is_macro() {
             return failed(format!("a macro can only use its parameters, not {root}"));
         }
-        let nodes = if root == "rows" {
-            self.cx.rows()
-        } else if rest == ["rows"] && !self.labels.contains_key(root) {
+        if root == "rows" {
+            return self.go_on(root, plain(self.cx.rows()), rest);
+        }
+        if rest.first().is_some_and(|r| r == "rows") && !self.labels.contains_key(root) {
             // Another table's rows, by its name, as `Arrived.rows`.
-            self.cx.rows_of(root)
-        } else {
-            // No edges yet is fine for a group: a total with no lines is 0.
-            self.labels.get(root).cloned().unwrap_or_default()
-        };
-        Ok(nodes.into_iter().map(|n| (n, None)).collect())
+            return self.go_on(&format!("{root}.rows"), plain(self.cx.rows_of(root)), &rest[1..]);
+        }
+        // No edges yet is fine for a group: a total with no lines is 0.
+        self.go_on(root, plain(self.labels.get(root).cloned().unwrap_or_default()), rest)
+    }
+
+    /// Going on from a group along links, as `x.in.part_of` or `hub.out.relates.in.is_a` do: each step
+    /// is `in` or `out` and a component, from every node reached so far. Anything else after a group is
+    /// a cell, which a group hasn't got.
+    fn go_on(&self, said: &str, mut nodes: Vec<(Entity, Option<Entity>)>, mut rest: &[String]) -> Result<Vec<(Entity, Option<Entity>)>, Error> {
+        let mut said = said.to_string();
+        while let Some(step) = rest.first() {
+            let way = step.as_str();
+            if !matches!(way, "in" | "out") {
+                return failed(format!("{said}.{step}: a group of nodes goes on only by in.… or out.…, so read a cell inside, as sum(x in {said}: x.{step})"));
+            }
+            let Some(component) = rest.get(1) else { return failed(format!("{said}.{way} needs to say which component, such as {said}.{way}.part_of")) };
+            let mut next = Vec::new();
+            for (n, _) in &nodes {
+                let edges = if way == "in" { self.cx.incoming_at(*n, component) } else { self.cx.outgoing_at(*n, component) };
+                next.extend(edges.into_iter().map(|(m, e)| (m, Some(e))));
+            }
+            nodes = next;
+            said = format!("{said}.{way}.{component}");
+            rest = &rest[2..];
+        }
+        Ok(nodes)
     }
 
     /// On an edge, its source as `from` and its target as `to`.
@@ -773,6 +798,9 @@ impl<'c, 'a> Expander<'c, 'a> {
     fn binding(&self, e: &Expr, scope: &Scope) -> Result<Binding, Error> {
         if let Expr::Path(path) = e {
             let root = path[0].as_str();
+            if crate::expr::goes_along(path) {
+                return Ok(Binding::Group(self.group(path, scope)?));
+            }
             if let Some(b) = scope.vars.get(root) {
                 if path.len() == 1 {
                     return Ok(b.clone());
@@ -839,6 +867,10 @@ impl<'c, 'a> Expander<'c, 'a> {
 
     fn path(&self, path: &[String], scope: &Scope) -> Result<Id, Error> {
         let (root, rest) = path.split_first().expect("a path has a first name");
+        if crate::expr::goes_along(path) {
+            let said = path.join(".");
+            return failed(format!("{said} is a group of nodes, so it needs something like count({said}) or sum(x in {said}: …)"));
+        }
         match scope.vars.get(root) {
             // The edge a node was reached along, as `o.via.weight`.
             Some(Binding::Node(_)) if rest.first().is_some_and(|r| r == "via") => {

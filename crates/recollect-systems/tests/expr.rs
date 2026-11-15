@@ -399,6 +399,31 @@ fn groups_can_follow_any_kind_of_link_and_scan_a_component() {
 }
 
 #[test]
+fn a_group_can_go_on_along_links_from_a_node_or_a_group() {
+    let mut g = N::with(plan::install);
+    for (t, d) in [("a", 1.0), ("b", 2.0), ("c", 4.0)] {
+        g.add(t, TASK).set(t, Estimate::days(d)).link(t, "top", PART_OF);
+    }
+    g.formula("many", "count(x in hub.in.part_of: true)").input("many", "top", "hub");
+    assert_eq!(value(&g, "many"), ValueCell::num(3.0), "from a labelled node, not from the formula's own node");
+    g.formula("short", "sum(hub.in.part_of.estimate)").input("short", "top", "hub");
+    assert_eq!(value(&g, "short"), ValueCell::num(7.0), "the short form reads a cell after the group");
+    g.formula("up", "count(x in hub.out.part_of: true)").input("up", "a", "hub");
+    assert_eq!(value(&g, "up"), ValueCell::num(1.0));
+    g.formula("nested", "sum(t in with.task: count(p in t.out.part_of: true))");
+    assert_eq!(value(&g, "nested"), ValueCell::num(3.0), "from a node a fold is going over");
+    g.formula("twice", "count(x in hub.out.part_of.in.part_of: true)").input("twice", "a", "hub");
+    assert_eq!(value(&g, "twice"), ValueCell::num(3.0), "steps can follow steps");
+    g.formula("weights", "sum(x in hub.in.part_of: x.estimate)").input("weights", "top", "hub");
+    assert_eq!(value(&g, "weights"), ValueCell::num(7.0));
+
+    g.formula("cell", "hub.in.part_of").input("cell", "top", "hub");
+    assert!(error(&g, "cell").contains("group"), "a group read as a cell is refused: {}", error(&g, "cell"));
+    g.formula("odd", "count(x in hub.estimate: true)").input("odd", "a", "hub");
+    assert!(error(&g, "odd").contains("estimate"), "a cell isn't a way to go on from a node: {}", error(&g, "odd"));
+}
+
+#[test]
 fn a_cell_can_read_other_cells_and_their_fields() {
     let mut g = N::with(plan::install);
     g.add("gate", DECISION);

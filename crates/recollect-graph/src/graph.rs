@@ -1534,9 +1534,16 @@ impl Cx<'_> {
         self.outgoing_at(e, component).into_iter().map(|(to, _)| to).collect()
     }
 
-    fn outgoing_at(&self, at: Entity, component: &str) -> Vec<(Entity, Entity)> {
+    /// The edges with this component leaving another entity, each with its target.
+    pub fn outgoing_at(&self, at: Entity, component: &str) -> Vec<(Entity, Entity)> {
         self.s.note(Dep::From(at, component.to_string()));
         self.s.g.edges_from(at, component)
+    }
+
+    /// The edges with this component arriving at another entity, each with its source.
+    pub fn incoming_at(&self, at: Entity, component: &str) -> Vec<(Entity, Entity)> {
+        self.s.note(Dep::Into(at, component.to_string()));
+        self.s.g.edges_into(at, component)
     }
 
     /// The nodes linking here by an edge with this component.
