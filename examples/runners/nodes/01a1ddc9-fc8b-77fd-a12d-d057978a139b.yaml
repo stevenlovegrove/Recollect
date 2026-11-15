@@ -1,7 +1,0 @@
-id: 01a1ddc9-fc8b-77fd-a12d-d057978a139b
-components:
-- value
-cells:
-  name: Inside the 90% range, from their 5k, on a log scale
-formulas:
-  value: 'count(r in Newcomers.rows: or(r.inside_log_5k, false))'

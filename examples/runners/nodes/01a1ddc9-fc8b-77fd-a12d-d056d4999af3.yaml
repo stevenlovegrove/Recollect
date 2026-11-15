@@ -1,7 +1,0 @@
-id: 01a1ddc9-fc8b-77fd-a12d-d056d4999af3
-components:
-- value
-cells:
-  name: Average miss, from their 5k
-formulas:
-  value: sum(Newcomers.rows.miss_from_5k) / count(Newcomers.rows)

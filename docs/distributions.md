@@ -35,7 +35,7 @@ Late:      bernoulli(0.2)
 | `between(low, high)` | A normal with 90% of its weight between the two: "about 2 to 4" |
 | `integers(low, high)` | Each whole number from one to the other, equally |
 | `bernoulli(p)` | True with chance `p` |
-| `any_row(T.rows)`, `predict(r in T.rows: y, x…)` | A row of a table of data, and what its rows say about something new: see [data.md](data.md) |
+| `any_row(T.rows)` | One row of a table of data, each as likely: see [data.md](data.md) |
 
 The arguments are ordinary formulas, so they can read other cells, differ between worlds, and be uncertain themselves: `normal(base.value, 0.1 * base.value)`.
 
@@ -61,7 +61,7 @@ Each expression is held in the simplest exact form there is:
 
 **Laws are only combined when what they depend on is separate.** A sum of two normals is a normal only if they share no draw. That check is what makes simplifying safe, and a rule can be added one at a time, because the tree is right without it.
 
-**A histogram is for reading, never for working out.** One number's histogram can't answer `x - x`. If a tree is ever too big to keep, what stands in for it is a column of draws lined up with every other column, which still can. A person's own data is drawn from by the row, which keeps its columns together, and fitted to by inference: see [data.md](data.md).
+**A histogram is for reading, never for working out.** One number's histogram can't answer `x - x`. If a tree is ever too big to keep, what stands in for it is a column of draws lined up with every other column, which still can. A person's own data is drawn from by the row, which keeps its columns together: see [data.md](data.md).
 
 ## Truth under uncertainty
 
@@ -262,7 +262,7 @@ Anything else is read from 4,096 draws. Each draw's values are spread evenly, on
 | **The drawbridge** | A mixture with two humps: a route quicker on average and better in a hurry, and worse when you need to be sure, unless you can see the bridge before you choose, which is `knowing` |
 | **When was the tea made?** | Inference, exactly: one reading of a cooling cup leaves six separate answers for when it was made, and a second says which cup but not whether it had milk |
 | **Which die was it?** | Inference from a maximum: a highest roll of 7 makes a d8 three times as likely as a d12, and a 9 or more next less likely |
-| **Runners, given their 5k** | Data: a row as one draw, and `predict` from it, scored on rows it wasn't fitted to. See [data.md](data.md) |
+| **Runners, row by row** | Data: a row as one draw, so two columns read through it move together. See [data.md](data.md) |
 | **Painting a room** | `triangular` for a three-point guess: adding the likeliest of each underestimates the total |
 
 `tests/samples.rs` checks each says what it claims.

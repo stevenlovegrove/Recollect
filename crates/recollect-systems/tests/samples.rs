@@ -578,49 +578,17 @@ fn the_highest_of_three_rolls_says_which_die_and_what_comes_next() {
 }
 
 #[test]
-fn a_runners_5k_makes_their_10k_seven_times_sharper_and_both_are_honest() {
-    use recollect_graph::chance::{Reader, Share, Term};
+fn a_runner_seen_is_one_row_so_knowing_their_5k_says_what_their_10k_was() {
     let o = open("runners");
-    let g = o.g();
-    let cell = |row: &str, c: &str| -> Val {
-        let w: recollect_graph::worlds::Worldly<Val> = serde_json::from_value(g.get_value(o.id(row), c).unwrap().unwrap()).unwrap();
-        let cases = w.0.cases();
-        assert_eq!(cases.len(), 1, "{row}.{c}");
-        cases[0].1.clone()
-    };
-    let spread = |row: &str, c: &str| {
-        let Val::Rand(r) = cell(row, c) else { panic!("{row}.{c} isn't uncertain") };
-        let s = Reader::new().summary(&[Share { weight: 1.0, value: Term::Rand(r) }]);
-        assert!(!s.exact && s.draws == 4096, "a prediction says it was read from draws");
-        (s.mean, s.sd)
-    };
-    let (mean, alone) = spread("Newcomers[1]", "alone");
-    assert!((mean - 50.5).abs() < 0.2 && (alone - 8.0).abs() < 0.2, "50½ give or take 8: {mean} {alone}");
-    let (_, from_5k) = spread("Newcomers[1]", "from_5k");
-    assert!((from_5k - 1.2).abs() < 0.1 && (alone / from_5k).round() == 7.0, "give or take 1.2, seven times sharper: {from_5k}");
-    // Where the slowest's time fell: a surprise on a line, and not on a log scale.
-    let fell = |row: &str, c: &str| match cell(row, c) {
-        Val::Estimate(e) => e.value,
-        other => panic!("{row}.{c} is {other:?}"),
-    };
-    assert!(fell("Newcomers[7]", "fell_from_5k") < 0.06 && fell("Newcomers[7]", "fell_log_5k") > 0.07);
-    // Most inside each range, and one or two too near its edge to call. Which those are depends on each
-    // newcomer's own draw, so only that is claimed.
-    let count = |name: &str| o.number(name);
-    for says in ["from nothing", "from their 5k", "from their 5k, on a log scale"] {
-        let (inside, close) = (count(&format!("Inside the 90% range, {says}")), count(&format!("Too close to call, {says}")));
-        assert!(inside >= 7.0 && close <= 2.0 && inside + close <= 10.0, "{says}: {inside} inside and {close} too close");
-    }
-    let miss = |name: &str| match &o.get::<ValueCell>(name).0.0.cases()[0].1 {
-        Val::Estimate(e) => e.value,
-        other => panic!("{name} is {other:?}"),
-    };
-    assert!((miss("Average miss, from nothing") - 6.6).abs() < 0.05 && (miss("Average miss, from their 5k") - 1.1).abs() < 0.05);
-    // A runner seen is one of the forty, with their own two times together.
-    let five = o.get::<ValueCell>("Their 5k").0.0;
-    assert!((five.cases().iter().map(|(w, _)| w.prob()).sum::<f64>() - 1.0).abs() < 1e-12);
-    let mean: f64 = five.cases().iter().map(|(w, v)| w.prob() * if let Val::Num(n) = v { *n } else { panic!("{v:?}") }).sum();
-    let data: f64 = (1..=40).map(|i| if let Val::Num(n) = cell(&format!("Runners[{i}]"), "t5k") { n } else { panic!() }).sum::<f64>() / 40.0;
-    assert!((mean - data).abs() < 1e-9, "a runner seen is each of the forty equally: {mean} and {data}");
+    let ten = o.get::<ValueCell>("Their 10k").0.0;
+    let numbers = |c: &Cond<Val>| -> Vec<(f64, f64)> { c.cases().iter().map(|(w, v)| (w.prob(), if let Val::Num(n) = v { *n } else { panic!("{v:?}") })).collect() };
+    let all = numbers(&ten);
+    assert!((all.iter().map(|(p, _)| p).sum::<f64>() - 1.0).abs() < 1e-12);
+    let (least, most) = all.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, m), (_, v)| (l.min(*v), m.max(*v)));
+    assert_eq!((least, most), (35.5, 69.7), "from 35½ minutes to nearly 70");
+    // Knowing they were under 22 over 5k leaves the twelve who were, all under 47 over 10k.
+    let quick = truth(&o.get::<ValueCell>("Under 22 minutes over 5k"));
+    assert!((quick.prob() - 12.0 / 40.0).abs() < 1e-12);
+    let given: Vec<f64> = all.iter().zip(ten.cases()).filter(|(_, (w, _))| !(&quick & w).is_never()).map(|((_, v), _)| *v).collect();
+    assert!(!given.is_empty() && given.iter().all(|v| *v < 47.0), "{given:?}");
 }
-

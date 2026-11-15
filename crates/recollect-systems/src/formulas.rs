@@ -562,13 +562,6 @@ enum Part {
     Bernoulli(Id, u32),
     /// `chance(x)`, or `mean(x)`: over what's a matter of chance, given what's known.
     Expect { mean: bool, of: Id },
-    /// A standard draw named for what it's about, not where it's written, so everything about the same
-    /// thing shares it: what some data says about a line and the spread about it. See `docs/data.md`.
-    NamedDraw(Std, String),
-    /// What rows of data say about a straight line through them: each row, with its `y` and then its
-    /// `x`s. A record of the least-squares line, `b0` for its height and `b1`… for each slope, the
-    /// spread about it, `s`, and `l{j}_{k}`, a square root of how unsure the line is for a spread of 1.
-    Fit(Vec<(Entity, Vec<Id>)>),
     /// One of these rows, each as likely.
     AnyRow(Vec<Entity>, u32),
 }
@@ -590,15 +583,13 @@ impl Part {
             Part::Integers(a, b, site) => Part::Integers(to[a], to[b], site),
             Part::Bernoulli(p, site) => Part::Bernoulli(to[p], site),
             Part::Expect { mean, of } => Part::Expect { mean, of: to[of] },
-            Part::Fit(rows) => Part::Fit(rows.into_iter().map(|(r, ids)| (r, ids.into_iter().map(|i| to[i]).collect())).collect()),
             other => other,
         }
     }
 
     fn parts(&self) -> Vec<Id> {
         match self {
-            Part::Fit(rows) => rows.iter().flat_map(|(_, ids)| ids.iter().copied()).collect(),
-            Part::Lit(_) | Part::Read { .. } | Part::Has(..) | Part::Chose(..) | Part::Draw(..) | Part::NamedDraw(..) | Part::AnyRow(..) => vec![],
+            Part::Lit(_) | Part::Read { .. } | Part::Has(..) | Part::Chose(..) | Part::Draw(..) | Part::AnyRow(..) => vec![],
             Part::Field(a, _) | Part::Not(a) | Part::Neg(a) | Part::Defined(a) | Part::Floor(a) | Part::Ceil(a) | Part::Math(_, a) | Part::Bernoulli(a, _) | Part::Expect { of: a, .. } => vec![*a],
             Part::Bin(_, a, b) | Part::Round(a, b) | Part::Integers(a, b, _) => vec![*a, *b],
             Part::If(a, b, c) => vec![*a, *b, *c],
@@ -899,7 +890,6 @@ impl<'c, 'a> Expander<'c, 'a> {
                 }
             }
             Expr::Fold { func, var, group, body, start } => self.fold(func, var, group, body, start.as_deref(), scope),
-            Expr::Predict { var, group, y, xs } => self.predict(var, group, y, xs, scope),
             Expr::Call(name, args) => self.call(name, args, scope),
         })
     }
@@ -1055,63 +1045,6 @@ impl<'c, 'a> Expander<'c, 'a> {
             }
             _ => unreachable!("the parser only makes folds of these"),
         }
-    }
-
-    /// `predict(r in group: y, x₁, …)`: a straight line through the rows, with a bell curve about it, fitted
-    /// by inference with the reference prior, and what that says about `y` for something new at the `x`s
-    /// read on this row. Written out as arithmetic over draws, so it's exact: a χ² draw for the spread, a
-    /// bell curve for each part of the line, both named for the data so everything fitted to it shares
-    /// them, and one of this formula's own for the new thing's noise. See `docs/data.md`.
-    fn predict(&self, var: &str, group: &[String], y: &Expr, xs: &[Expr], scope: &Scope) -> Result<Id, Error> {
-        let rows = self.group(group, scope)?;
-        let p = xs.len() + 1;
-        let fitted = if xs.is_empty() { "a height".to_string() } else { format!("a height and {} slope{}", xs.len(), if xs.len() == 1 { "" } else { "s" }) };
-        if rows.len() <= p {
-            return failed(format!("predict needs more rows than things it fits, and it has {} row{} for {fitted}", rows.len(), if rows.len() == 1 { "" } else { "s" }));
-        }
-        let mut data = Vec::with_capacity(rows.len());
-        for r in &rows {
-            let mut inner = scope.clone();
-            inner.vars.insert(var.to_string(), Binding::Node(*r));
-            inner.via.remove(var);
-            let mut ids = vec![self.expand(y, &inner)?];
-            for x in xs {
-                ids.push(self.expand(x, &inner)?);
-            }
-            data.push((*r, ids));
-        }
-        let fit = self.add(Part::Fit(data));
-        // The `x`s for the new thing are the same expressions, read on this row.
-        let mut here = scope.clone();
-        here.vars.insert(var.to_string(), Binding::Node(self.cx.id()));
-        here.via.remove(var);
-        let mut at = vec![self.lit(Val::Num(1.0))];
-        for x in xs {
-            at.push(self.expand(x, &here)?);
-        }
-        // Named for the data: which rows, and what's read on them.
-        let about = format!("{group:?}|{var}|{y:?}|{xs:?}");
-        let name = format!("~fit:{:016x}", about.bytes().fold(0xCBF2_9CE4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3)));
-        let field = |f: String| self.add(Part::Field(fit, vec![f]));
-        let dof = (rows.len() - p) as u32;
-        let chi = self.add(Part::NamedDraw(Std::ChiSq(dof), format!("{name}#spread")));
-        let spread = self.bin(BinOp::Mul, field("s".to_string()), self.add(Part::Math(chance::Un::Sqrt, self.bin(BinOp::Div, self.lit(Val::Num(f64::from(dof))), chi))));
-        let zs: Vec<Id> = (0..p).map(|k| self.add(Part::NamedDraw(Std::Normal, format!("{name}#line{k}")))).collect();
-        let mut value = None;
-        for (j, x) in at.iter().enumerate() {
-            // This part of the line: its least-squares value, and how far off that could be.
-            let mut off = None;
-            for (k, z) in zs.iter().enumerate().skip(j) {
-                let term = self.bin(BinOp::Mul, field(format!("l{j}_{k}")), *z);
-                off = Some(off.map_or(term, |o| self.bin(BinOp::Add, o, term)));
-            }
-            let off = off.expect("each part of the line has at least its own draw");
-            let part = self.bin(BinOp::Add, field(format!("b{j}")), self.bin(BinOp::Mul, spread, off));
-            let term = if j == 0 { part } else { self.bin(BinOp::Mul, *x, part) };
-            value = Some(value.map_or(term, |v| self.bin(BinOp::Add, v, term)));
-        }
-        let own = self.add(Part::Draw(Std::Normal, self.site()));
-        Ok(self.bin(BinOp::Add, value.expect("there's always a height"), self.bin(BinOp::Mul, spread, own)))
     }
 
     fn call(&self, name: &str, args: &[Expr], scope: &Scope) -> Result<Id, Error> {
@@ -1276,8 +1209,7 @@ impl<'c, 'a> Expander<'c, 'a> {
                 wants(1)?;
                 match self.binding(&args[0], scope)? {
                     Binding::Group(rows) => Ok(self.add(Part::AnyRow(rows, self.site()))),
-                    Binding::Node(row) => Ok(self.add(Part::AnyRow(vec![row], self.site()))),
-                    Binding::Value(_) => failed("any_row needs the rows of a table, such as any_row(Runners.rows)"),
+                    Binding::Node(_) | Binding::Value(_) => failed("any_row needs the rows of a table, such as any_row(Runners.rows)"),
                 }
             }
             _ => unreachable!("every name in CORE is here"),
@@ -1359,22 +1291,8 @@ fn type_of(cx: &Cx, part: &Part, types: &[Type]) -> Result<Type, Error> {
             let x = &types[*x];
             if numberish(x) { Ok(Type::Number) } else { failed(format!("{} needs a number, not {}", math_name(*op), x.word())) }
         }
-        Part::Draw(..) | Part::NamedDraw(..) => Ok(Type::Number),
+        Part::Draw(..) => Ok(Type::Number),
         Part::AnyRow(..) => Ok(Type::Ref),
-        Part::Fit(rows) => {
-            let p = rows.first().map_or(1, |(_, ids)| ids.len());
-            if let Some(t) = rows.iter().flat_map(|(_, ids)| ids.iter()).map(|i| &types[*i]).find(|t| !numberish(t)) {
-                return failed(format!("predict needs numbers, not {}", t.word()));
-            }
-            let mut fields = BTreeMap::from([("s".to_string(), Type::Number)]);
-            for j in 0..p {
-                fields.insert(format!("b{j}"), Type::Number);
-                for k in j..p {
-                    fields.insert(format!("l{j}_{k}"), Type::Number);
-                }
-            }
-            Ok(Type::Record(fields))
-        }
         Part::Tri(_, a, b, c) => match [a, b, c].into_iter().find(|x| !numberish(&types[**x])) {
             None => Ok(Type::Number),
             Some(x) => failed(format!("triangular needs numbers, not {}", types[*x].word())),
@@ -1902,36 +1820,8 @@ fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
         Part::Bernoulli(p, site) => Ev::Data(bernoulli(cx, &values[*p].data(), *site)?),
         Part::Expect { mean, of } => Ev::Data(expect(cx, *mean, &values[*of])?),
         Part::Bin(op, a, b) => binary(*op, &values[*a], &values[*b])?,
-        Part::NamedDraw(std, name) => Ev::Data(pure(Val::Rand(chance::draw(*std, name)))),
         Part::AnyRow(rows, site) => Ev::Data(any_row(cx, rows, *site)?),
-        Part::Fit(rows) => {
-            let mut data = Vec::with_capacity(rows.len());
-            for (row, ids) in rows {
-                let mut numbers = Vec::with_capacity(ids.len());
-                for id in ids {
-                    let v = values[*id].data();
-                    let cases = v.cases();
-                    numbers.push(match cases.as_slice() {
-                        [(_, Val::Num(n))] => *n,
-                        [(_, Val::Undefined)] => return failed(format!("predict needs a number from every row, and {} is missing one", row_label(cx, *row))),
-                        [(_, Val::Rand(_) | Val::Estimate(_))] => return failed(format!("predict needs plain numbers, and one of {}'s is uncertain", row_label(cx, *row))),
-                        [_] => return failed(format!("predict needs numbers, and one of {}'s isn't one", row_label(cx, *row))),
-                        _ => return failed(format!("predict needs numbers that are the same in every world, and one of {}'s differs between them", row_label(cx, *row))),
-                    });
-                }
-                data.push(numbers);
-            }
-            Ev::Data(pure(least_squares(&data)?))
-        }
     })
-}
-
-/// What a row is called, for saying which one's wrong.
-fn row_label(cx: &Cx, row: Entity) -> String {
-    match cx.get::<recollect_graph::Name>(row) {
-        Ok(Some(n)) => n.0,
-        _ => "a row".to_string(),
-    }
 }
 
 /// One row of a table, each as likely: a variable with a row for each outcome, as a short list is.
@@ -1945,67 +1835,6 @@ fn any_row(cx: &Cx, rows: &[Entity], site: u32) -> Result<Cond<Val>, Error> {
     let options: Vec<(String, f64, bool)> = rows.iter().map(|r| (r.to_string(), 1.0, false)).collect();
     let var = Space::global().var(&draw_name(cx, site), &options);
     Ok(var.value().map(|o| Val::Ref(o.parse().expect("written as a node just above"))))
-}
-
-/// The least-squares line through rows of `[y, x₁, x₂, …]`, with a height, as `predict` reads it: `b{j}`,
-/// the spread about it `s`, and `l{j}_{k}`, an upper-triangular square root of (XᵀX)⁻¹.
-fn least_squares(rows: &[Vec<f64>]) -> Result<Val, Error> {
-    let p = rows[0].len();
-    let n = rows.len();
-    let x = |i: usize, j: usize| if j == 0 { 1.0 } else { rows[i][j] };
-    // XᵀX and Xᵀy.
-    let mut xtx = vec![vec![0.0; p]; p];
-    let mut xty = vec![0.0; p];
-    for i in 0..n {
-        for a in 0..p {
-            xty[a] += x(i, a) * rows[i][0];
-            for b in 0..p {
-                xtx[a][b] += x(i, a) * x(i, b);
-            }
-        }
-    }
-    // XᵀX = R Rᵀ, with R lower-triangular. A pivot that's next to nothing, beside what it started as, is
-    // an x that's made of the others.
-    let mut r = vec![vec![0.0; p]; p];
-    for j in 0..p {
-        let mut d = xtx[j][j];
-        for k in 0..j {
-            d -= r[j][k] * r[j][k];
-        }
-        if !(d > 1e-10 * xtx[j][j].abs().max(f64::MIN_POSITIVE)) {
-            return failed(if j == 0 { "predict needs rows to fit".to_string() } else { "predict can't fit a line when one x is made of the others, or is the same on every row: there's no one line".to_string() });
-        }
-        r[j][j] = d.sqrt();
-        for i in j + 1..p {
-            let mut s = xtx[i][j];
-            for k in 0..j {
-                s -= r[i][k] * r[j][k];
-            }
-            r[i][j] = s / r[j][j];
-        }
-    }
-    // R⁻¹, lower-triangular, so (XᵀX)⁻¹ = R⁻ᵀ R⁻¹ and R⁻ᵀ is the square root.
-    let mut inv = vec![vec![0.0; p]; p];
-    for j in 0..p {
-        inv[j][j] = 1.0 / r[j][j];
-        for i in j + 1..p {
-            let s: f64 = (j..i).map(|k| r[i][k] * inv[k][j]).sum();
-            inv[i][j] = -s / r[i][i];
-        }
-    }
-    // b = R⁻ᵀ R⁻¹ Xᵀy.
-    let w: Vec<f64> = (0..p).map(|i| (0..=i).map(|k| inv[i][k] * xty[k]).sum()).collect();
-    let b: Vec<f64> = (0..p).map(|j| (j..p).map(|i| inv[i][j] * w[i]).sum()).collect();
-    let rss: f64 = (0..n).map(|i| (rows[i][0] - (0..p).map(|j| x(i, j) * b[j]).sum::<f64>()).powi(2)).sum();
-    let mut out = BTreeMap::from([("s".to_string(), Val::num((rss / (n - p) as f64).sqrt()))]);
-    for j in 0..p {
-        out.insert(format!("b{j}"), Val::num(b[j]));
-        for k in j..p {
-            // The square root, R⁻ᵀ, is upper-triangular: row j, column k is R⁻¹'s row k, column j.
-            out.insert(format!("l{j}_{k}"), Val::num(inv[k][j]));
-        }
-    }
-    Ok(Val::Record(out))
 }
 
 fn binary(op: BinOp, a: &Ev, b: &Ev) -> Result<Ev, Error> {
@@ -2280,11 +2109,7 @@ fn render(closed: &Closed) -> String {
             Part::Draw(Std::Normal, site) => format!("normal#{site}"),
             Part::Draw(Std::Uniform, site) => format!("uniform#{site}"),
             Part::Draw(Std::Exponential, site) => format!("exponential#{site}"),
-            Part::Draw(Std::ChiSq(k), site) => format!("chi_sq{k}#{site}"),
-            Part::NamedDraw(Std::ChiSq(k), name) => format!("chi_sq{k}{name}"),
-            Part::NamedDraw(_, name) => format!("normal{name}"),
             Part::AnyRow(rows, _) => format!("any_row({} rows)", rows.len()),
-            Part::Fit(rows) => format!("fit({} rows)", rows.len()),
             Part::Tri(_, a, b, c) => format!("triangular({}, {}, {})", out[*a], out[*b], out[*c]),
             Part::Integers(a, b, _) => format!("integers({}, {})", out[*a], out[*b]),
             Part::Bernoulli(p, _) => format!("bernoulli({})", out[*p]),

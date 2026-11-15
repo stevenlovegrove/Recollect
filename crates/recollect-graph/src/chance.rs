@@ -39,9 +39,6 @@ pub enum Std {
     Normal,
     /// A wait that averages 1.
     Exponential,
-    /// A sum of this many squared bell curves: how a spread estimated from data is uncertain. See
-    /// `docs/data.md`.
-    ChiSq(u32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -202,109 +199,7 @@ fn apply_std(std: Std, u: f64) -> f64 {
         Std::Uniform => u,
         Std::Normal => probit(u),
         Std::Exponential => -(-u).ln_1p(),
-        Std::ChiSq(k) => 2.0 * gamma_quantile(f64::from(k) / 2.0, u),
     }
-}
-
-/// The log of the gamma function, for a positive number. Lanczos' approximation, right to about as
-/// many figures as a number holds.
-fn ln_gamma(x: f64) -> f64 {
-    const G: [f64; 9] = [0.999_999_999_999_809_9, 676.520_368_121_885_1, -1_259.139_216_722_402_8, 771.323_428_777_653_1, -176.615_029_162_140_6, 12.507_343_278_686_905, -0.138_571_095_265_720_12, 9.984_369_578_019_572e-6, 1.505_632_735_149_311_6e-7];
-    if x < 0.5 {
-        // Reflected, where the series is less accurate.
-        return (std::f64::consts::PI / (std::f64::consts::PI * x).sin()).ln() - ln_gamma(1.0 - x);
-    }
-    let x = x - 1.0;
-    let mut sum = G[0];
-    for (i, g) in G.iter().enumerate().skip(1) {
-        sum += g / (x + i as f64);
-    }
-    let t = x + 7.5;
-    0.5 * (2.0 * std::f64::consts::PI).ln() + (x + 0.5) * t.ln() - t + sum.ln()
-}
-
-/// How much of a gamma distribution of this shape, and a scale of 1, is below `x`: the regularised lower
-/// incomplete gamma function. A series below `a + 1`, and a continued fraction above it.
-fn gamma_below(a: f64, x: f64) -> f64 {
-    if x <= 0.0 {
-        return 0.0;
-    }
-    let front = (-x + a * x.ln() - ln_gamma(a)).exp();
-    if x < a + 1.0 {
-        let (mut sum, mut term, mut at) = (1.0 / a, 1.0 / a, a);
-        for _ in 0..100_000 {
-            at += 1.0;
-            term *= x / at;
-            sum += term;
-            if term.abs() < sum.abs() * 1e-17 {
-                break;
-            }
-        }
-        (sum * front).min(1.0)
-    } else {
-        // Lentz's method, for how much is above.
-        const TINY: f64 = 1e-300;
-        let mut b = x + 1.0 - a;
-        let (mut c, mut d) = (1.0 / TINY, 1.0 / b);
-        let mut h = d;
-        for i in 1..100_000 {
-            let an = -(i as f64) * (i as f64 - a);
-            b += 2.0;
-            d = an * d + b;
-            if d.abs() < TINY {
-                d = TINY;
-            }
-            c = b + an / c;
-            if c.abs() < TINY {
-                c = TINY;
-            }
-            d = 1.0 / d;
-            let step = d * c;
-            h *= step;
-            if (step - 1.0).abs() < 1e-16 {
-                break;
-            }
-        }
-        (1.0 - front * h).max(0.0)
-    }
-}
-
-/// Where a gamma distribution of this shape, and a scale of 1, has `p` of its weight below. A first guess
-/// from Wilson and Hilferty's cube root of a bell curve, then Halley's method on `gamma_below`, which
-/// leaves it right to about one part in a billion, as `probit` is.
-pub fn gamma_quantile(a: f64, p: f64) -> f64 {
-    if !(p > 0.0 && p < 1.0 && a > 0.0) {
-        return f64::NAN;
-    }
-    let gln = ln_gamma(a);
-    let a1 = a - 1.0;
-    let mut x = if a > 1.0 {
-        let z = probit(p);
-        (a * (1.0 - 1.0 / (9.0 * a) + z / (3.0 * a.sqrt())).powi(3)).max(1e-3)
-    } else {
-        let t = 1.0 - a * (0.253 + a * 0.12);
-        if p < t { (p / t).powf(1.0 / a) } else { 1.0 - (1.0 - (p - t) / (1.0 - t)).ln() }
-    };
-    for _ in 0..100 {
-        if x <= 0.0 {
-            return 0.0;
-        }
-        let err = gamma_below(a, x) - p;
-        let density = (-x + a1 * x.ln() - gln).exp();
-        if density == 0.0 {
-            break;
-        }
-        let u = err / density;
-        let step = u / (1.0 - 0.5 * (u * (a1 / x - 1.0)).min(1.0));
-        x -= step;
-        if x <= 0.0 {
-            x = 0.5 * (x + step);
-        }
-        if step.abs() < 1e-13 * x {
-            break;
-        }
-    }
-    x
 }
 
 /// Where a standard bell curve has this much of its weight below it. Acklam's rational approximation,
@@ -456,7 +351,7 @@ impl Arena {
         let (lo, hi) = match std {
             Std::Uniform => (0.0, 1.0),
             Std::Normal => ANYTHING,
-            Std::Exponential | Std::ChiSq(_) => (0.0, f64::INFINITY),
+            Std::Exponential => (0.0, f64::INFINITY),
         };
         self.mk(Node::Draw(std, i), Info { truth: false, total: true, lo, hi })
     }

@@ -170,7 +170,7 @@ fn plain(e: &Expr, vars: &BTreeMap<&str, f64>) -> Val {
         Expr::Lit(v) => v.clone(),
         Expr::Path(p) => Num(vars[p[0].as_str()]),
         Expr::Call(name, args) => call(name, args),
-        Expr::Fold { .. } | Expr::Row { .. } | Expr::Predict { .. } => panic!("not generated"),
+        Expr::Fold { .. } | Expr::Row { .. } => panic!("not generated"),
         Expr::Not(a) => match plain(a, vars) {
             Bool(b) => Bool(!b),
             _ => Undefined,
