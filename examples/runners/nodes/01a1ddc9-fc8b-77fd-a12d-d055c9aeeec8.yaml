@@ -1,0 +1,7 @@
+id: 01a1ddc9-fc8b-77fd-a12d-d055c9aeeec8
+components:
+- value
+cells:
+  name: Too close to call, from their 5k
+formulas:
+  value: 'count(r in Newcomers.rows: !defined(r.inside_from_5k))'

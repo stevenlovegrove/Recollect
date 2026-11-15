@@ -1,0 +1,9 @@
+id: 01a1ddc9-fc8b-77fd-a12d-d052f8e624f1
+components:
+- notes
+- value
+cells:
+  body: 'Newcomers whose time fell so near the edge of the range that 4,096 draws can''t say which side: their inside_ cell is undefined, and they aren''t counted either way.'
+  name: Too close to call, from nothing
+formulas:
+  value: 'count(r in Newcomers.rows: !defined(r.inside_alone))'

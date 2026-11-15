@@ -1,0 +1,9 @@
+id: 01a1ddc9-fc8b-77fd-a12d-d05396446e6a
+components:
+- notes
+- value
+cells:
+  body: How far the middle of each prediction was from the real time, on average, in minutes.
+  name: Average miss, from nothing
+formulas:
+  value: sum(Newcomers.rows.miss_alone) / count(Newcomers.rows)

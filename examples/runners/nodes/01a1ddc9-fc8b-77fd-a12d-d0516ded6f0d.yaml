@@ -1,0 +1,9 @@
+id: 01a1ddc9-fc8b-77fd-a12d-d0516ded6f0d
+components:
+- notes
+- value
+cells:
+  body: Of the ten newcomers, how many 10k times were inside the middle 90% of what was predicted for them. About nine in ten for a prediction that's honest about how unsure it is, and with only ten, anything from seven up is.
+  name: Inside the 90% range, from nothing
+formulas:
+  value: 'count(r in Newcomers.rows: or(r.inside_alone, false))'

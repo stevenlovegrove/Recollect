@@ -1,0 +1,24 @@
+id: 01a1ddc9-fc8b-77fd-a12d-d01c268e049b
+components:
+- notes
+cells:
+  body: |-
+    Forty runners' 5k and 10k times are in the table **Runners**. Ten more, in **Newcomers**, weren't fitted to: each has their 10k predicted three ways, with their real 10k beside it to say how each did.
+
+    - **alone**: `predict(r in Runners.rows: r.t10k)`, what any runner's 10k is likely to be, knowing nothing about them.
+    - **from_5k**: `predict(r in Runners.rows: r.t10k, r.t5k)`, given their own 5k, read on their row.
+    - **log_5k**: the same on a log scale, `exp(predict(r in Runners.rows: ln(r.t10k), ln(r.t5k)))`, so the 10k is a multiple of the 5k, give or take a share of it.
+
+    `predict` fits a straight line with a bell curve about it, by inference: how unsure the line and the spread are is worked out exactly from forty rows, and carried into every prediction. All three share what the data says, and each newcomer has their own draw on top.
+
+    From nothing, a newcomer's 10k is 50½ minutes give or take 8. From their 5k it's give or take 1.2: seven times sharper. Both are honest about it: most of the ten real times fell inside the middle 90% of each prediction, with one or two so near its edge that 4,096 draws can't say which side, and those are counted apart. About nine in ten is what honest looks like, and with ten newcomers anything from seven up is. But the middle of the prediction from nothing was out by 6.6 minutes on average, and from the 5k by 1.1.
+
+    A column's distribution isn't a runner's: the 5k and 10k move together, and fitting each column on its own throws that away.
+
+    **Things to try**
+
+    - Open the **Table** tab and pick **Newcomers**: each prediction, where the real time fell in it (`fell_`, which is spread evenly from 0 to 1 for an honest model), and how far out its middle was.
+    - Compare **from_5k** with **log_5k** on Newcomers[7], the slowest. A line puts their 67.1 at the very edge of what it expected, and the log scale, which widens as times get longer, inside it.
+    - Select **A runner seen**, one of the forty as a draw. **Their 5k** and **Their 10k** are the same runner's. Click **known?** on **Under 22 minutes over 5k**, and **Their 10k** becomes what the quicker runners ran.
+    - Change a time in **Runners** and every prediction moves.
+  name: About this example

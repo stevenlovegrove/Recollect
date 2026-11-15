@@ -35,6 +35,7 @@ pub const SAMPLES: &[Sample] = &[
     Sample { name: "tea", title: "When was the tea made?", about: "Inference: a mug at 40°C in a 20°C room, and nobody saying when it was made. One reading leaves six quite different answers. A second reading ten minutes later says which cup, and still can't tell made hot long ago from made with milk more recently.", group: "chance", systems: &["structure"], build: tea },
     Sample { name: "which-die", title: "Which die was it?", about: "Inference: a d6, a d8 or a d12, rolled three times, and all you're told is that the highest roll was a 7. The d8 is now three times as likely as the d12, and a big next roll is less likely than before you knew anything.", group: "chance", systems: &["structure"], build: which_die },
     Sample { name: "savings", title: "Savings, give or take", about: "A table of years that grow by an uncertain amount. Growth drawn afresh each year averages out, and one rate drawn once compounds, so the same formula ends up far wider. Both are exact.", group: "chance", systems: &[], build: savings },
+    Sample { name: "runners", title: "Runners, given their 5k", about: "Data: forty runners' 5k and 10k times, and ten more not fitted to. Predicting a newcomer's 10k from nothing is honest and vague. From their 5k it's as honest, and seven times sharper.", group: "chance", systems: &[], build: runners },
     Sample { name: "supplier", title: "Choosing a supplier", about: "Three quotes held three ways: a plain number, a three-point guess, and a price with extras. What each comes to with shipping, and how likely it is to be within budget.", group: "sheet", systems: &["structure"], build: supplier },
     Sample { name: "shelf", title: "Will the shelf fit?", about: "Two measurements, each a little uncertain: how much clearance there is, and how likely there is to be any.", group: "chance", systems: &[], build: shelf },
     Sample { name: "invoice", title: "Invoice", about: "Two lines, a subtotal, tax and a total. Edit a number and only what it reaches reruns.", group: "sheet", systems: &[], build: invoice },
@@ -516,6 +517,69 @@ Each year multiplies the last by `exp` of its growth, and a product of those is 
     let ahead = "Year by year comes out ahead";
     b.formula(ahead, "varied > steady").label(ahead, "After 10 years", "varied").label(ahead, "Steady after 10 years", "steady");
     b.note(ahead, "Which of two products is the greater is which has the greater log, and the gap between two logs is a bell curve. So this is exact too, and it's a half: they have the same middle.");
+}
+
+/// Forty runners' 5k and 10k times, in minutes, and their ages, then ten more. Made up, from a runner's
+/// ability, a little for age, and a 10k about 2.09 times the 5k, give or take.
+const RUNNERS: [(f64, f64, f64); 50] = [
+    (25.7, 53.0, 61.0), (19.4, 40.8, 55.0), (18.8, 40.0, 37.0), (26.2, 55.0, 37.0), (26.2, 54.2, 37.0), (32.2, 69.7, 46.0), (20.3, 44.1, 30.0), (29.5, 62.7, 22.0), (25.2, 54.0, 32.0), (23.1, 50.8, 35.0),
+    (30.4, 63.2, 34.0), (26.8, 55.6, 32.0), (23.3, 50.2, 43.0), (24.7, 52.0, 43.0), (21.2, 42.8, 41.0), (23.5, 51.8, 25.0), (24.6, 51.6, 44.0), (22.4, 45.9, 59.0), (16.8, 35.5, 33.0), (26.3, 55.9, 51.0),
+    (25.5, 51.5, 55.0), (21.3, 44.2, 45.0), (24.6, 51.0, 27.0), (25.8, 53.3, 39.0), (22.6, 47.7, 41.0), (19.8, 41.3, 41.0), (27.2, 57.2, 25.0), (24.8, 52.6, 60.0), (31.2, 63.6, 48.0), (19.7, 40.7, 43.0),
+    (29.6, 62.1, 58.0), (23.0, 48.3, 49.0), (23.9, 52.2, 48.0), (24.6, 51.7, 55.0), (21.4, 44.2, 42.0), (25.7, 52.5, 46.0), (20.4, 42.4, 33.0), (24.7, 51.4, 39.0), (21.7, 45.5, 54.0), (17.7, 36.3, 24.0),
+    (25.0, 54.1, 39.0), (23.3, 47.5, 43.0), (17.1, 35.4, 22.0), (26.7, 54.1, 40.0), (21.9, 45.7, 44.0), (18.1, 37.7, 44.0), (33.0, 67.1, 50.0), (23.1, 49.2, 32.0), (24.7, 51.1, 52.0), (22.5, 45.6, 61.0),
+];
+
+fn runners(b: &mut Build) {
+    about(b, r#"Forty runners' 5k and 10k times are in the table **Runners**. Ten more, in **Newcomers**, weren't fitted to: each has their 10k predicted three ways, with their real 10k beside it to say how each did.
+
+- **alone**: `predict(r in Runners.rows: r.t10k)`, what any runner's 10k is likely to be, knowing nothing about them.
+- **from_5k**: `predict(r in Runners.rows: r.t10k, r.t5k)`, given their own 5k, read on their row.
+- **log_5k**: the same on a log scale, `exp(predict(r in Runners.rows: ln(r.t10k), ln(r.t5k)))`, so the 10k is a multiple of the 5k, give or take a share of it.
+
+`predict` fits a straight line with a bell curve about it, by inference: how unsure the line and the spread are is worked out exactly from forty rows, and carried into every prediction. All three share what the data says, and each newcomer has their own draw on top.
+
+From nothing, a newcomer's 10k is 50½ minutes give or take 8. From their 5k it's give or take 1.2: seven times sharper. Both are honest about it: most of the ten real times fell inside the middle 90% of each prediction, with one or two so near its edge that 4,096 draws can't say which side, and those are counted apart. About nine in ten is what honest looks like, and with ten newcomers anything from seven up is. But the middle of the prediction from nothing was out by 6.6 minutes on average, and from the 5k by 1.1.
+
+A column's distribution isn't a runner's: the 5k and 10k move together, and fitting each column on its own throws that away.
+
+**Things to try**
+
+- Open the **Table** tab and pick **Newcomers**: each prediction, where the real time fell in it (`fell_`, which is spread evenly from 0 to 1 for an honest model), and how far out its middle was.
+- Compare **from_5k** with **log_5k** on Newcomers[7], the slowest. A line puts their 67.1 at the very edge of what it expected, and the log scale, which widens as times get longer, inside it.
+- Select **A runner seen**, one of the forty as a draw. **Their 5k** and **Their 10k** are the same runner's. Click **known?** on **Under 22 minutes over 5k**, and **Their 10k** becomes what the quicker runners ran.
+- Change a time in **Runners** and every prediction moves."#);
+    for (i, (t5k, t10k, age)) in RUNNERS.iter().enumerate() {
+        let (table, n) = if i < 40 { ("Runners", i + 1) } else { ("Newcomers", i - 39) };
+        let row = format!("{table}[{n}]");
+        b.put(&row, "t5k", json!(t5k)).put(&row, "t10k", json!(t10k)).put(&row, "age", json!(age));
+    }
+    b.note("Runners", "Forty runners' times over 5k and 10k, in minutes, and their ages. What everything is fitted to.");
+    b.note("Newcomers", "Ten more, not fitted to. Each has a prediction of their 10k three ways, and their real 10k beside it, to say how each did.");
+    let models = [("alone", "predict(r in Runners.rows: r.t10k)"), ("from_5k", "predict(r in Runners.rows: r.t10k, r.t5k)"), ("log_5k", "exp(predict(r in Runners.rows: ln(r.t10k), ln(r.t5k)))")];
+    for (model, formula) in models {
+        b.formula_on("Newcomers", model, formula);
+        b.formula_on("Newcomers", &format!("fell_{model}"), &format!("chance(self.{model} < self.t10k)"));
+        b.formula_on("Newcomers", &format!("inside_{model}"), &format!("abs(self.fell_{model} - 0.5) < 0.45"));
+        b.formula_on("Newcomers", &format!("miss_{model}"), &format!("abs(mean(self.{model}) - self.t10k)"));
+    }
+    for (model, says) in [("alone", "from nothing"), ("from_5k", "from their 5k"), ("log_5k", "from their 5k, on a log scale")] {
+        let inside = format!("Inside the 90% range, {says}");
+        b.formula(&inside, &format!("count(r in Newcomers.rows: or(r.inside_{model}, false))"));
+        let close = format!("Too close to call, {says}");
+        b.formula(&close, &format!("count(r in Newcomers.rows: !defined(r.inside_{model}))"));
+        let miss = format!("Average miss, {says}");
+        b.formula(&miss, &format!("sum(Newcomers.rows.miss_{model}) / count(Newcomers.rows)"));
+    }
+    b.note("Inside the 90% range, from nothing", "Of the ten newcomers, how many 10k times were inside the middle 90% of what was predicted for them. About nine in ten for a prediction that's honest about how unsure it is, and with only ten, anything from seven up is.");
+    b.note("Too close to call, from nothing", "Newcomers whose time fell so near the edge of the range that 4,096 draws can't say which side: their inside_ cell is undefined, and they aren't counted either way.");
+    b.note("Average miss, from nothing", "How far the middle of each prediction was from the real time, on average, in minutes.");
+    let pick = "A runner seen";
+    b.formula(pick, "any_row(Runners.rows)").note(pick, "One of the forty, each as likely. Everything read through it is the same runner's, so the columns move together as they do in the data.");
+    let (five, ten) = ("Their 5k", "Their 10k");
+    b.formula(five, "runner.value.t5k").label(five, pick, "runner");
+    b.formula(ten, "runner.value.t10k").label(ten, pick, "runner");
+    let quick = "Under 22 minutes over 5k";
+    b.formula(quick, "t5k < 22").label(quick, five, "t5k").note(quick, "Not known: click known? to look only at the runners quicker than this, and see what their 10k times are.");
 }
 
 fn supplier(b: &mut Build) {

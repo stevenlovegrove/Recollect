@@ -1,6 +1,6 @@
 # Data
 
-**Status:** written down before it's built, as [distributions.md](distributions.md) was. [Order of building](#order-of-building) says which parts are there. The engine's part is in `crates/recollect-graph/src/chance.rs`, the formula language's in `expr.rs` and `formulas.rs`, and reading a CSV in `crates/recollect-core/src/ops.rs`.
+**Status:** steps 1 to 4 are built, and the views aren't: [Order of building](#order-of-building) says which is which, and [Not yet](#not-yet) what's left out. The engine's part is in `crates/recollect-graph/src/chance.rs`, the formula language's in `expr.rs` and `formulas.rs`, and reading a CSV in `crates/recollect-core/src/ops.rs`.
 
 ## Why
 
@@ -57,7 +57,7 @@ predict(r in Runners.rows: r.t10k, r.t5k, r.age)
 
 It's a straight line with a bell curve about it, `y = b₀ + b₁x₁ + … + noise`, fitted by inference rather than by picking the best line:
 
-- **The line and the spread are uncertain,** and what the data says about them is worked out exactly: with nothing known beforehand (the usual reference prior), the spread squared is the residual spread times `ν / χ²ν`, where `ν` is the number of rows less the number of things fitted, and the line, given the spread, is a bell curve about the least-squares line, as wide as the data leaves it.
+- **The line and the spread are uncertain,** and what the data says about them is worked out exactly: with nothing known beforehand (the usual reference prior), the spread squared is the residual spread squared times `ν / χ²ν`, where `ν` is the number of rows less the number of things fitted, and the line, given the spread, is a bell curve about the least-squares line, as wide as the data leaves it.
 - **A new `y` is the line at its `x`s, plus noise of that spread.** So the prediction is wider than the scatter about the line by as much as the line itself is unsure, which is a lot with five rows and hardly anything with five thousand, and wider again far from where the data is.
 - **It's held as a formula over draws, like any distribution.** A `χ²` draw for the spread, a standard normal for each part of the line, and one for the new thing's own noise. Nothing is approximated by holding it: the tree is exact, and what's read from it says how it was got.
 
@@ -95,6 +95,8 @@ A hold-out table is rows that weren't fitted to, with the answer known. A column
 | Inside the 90% range | `abs(chance(pred < self.t10k) - 0.5) < 0.45` | About nine rows in ten, for an honest model |
 | How far out the middle was | `abs(mean(pred) - self.t10k)` | Smaller is sharper |
 
+A prediction is read from 4,096 draws, so where an answer falls very near the edge of the range, whether it's inside can't be called, and that cell is undefined rather than a guess. `or(r.inside, false)` counts only the ones that are, and `!defined(r.inside)` the ones too close to call. Which newcomers those are depends on each one's own draw.
+
 An honest model that ignores the 5k time is inside its range as often as it should be, and far out in the middle. One that reads it is as honest, and much sharper. That's the difference between a column's distribution and a runner's.
 
 ## Ways to look at it
@@ -120,22 +122,23 @@ The views should show data and what's fitted to it together. These are the ideas
 
 | Step | What | State |
 |---|---|---|
-| 1 | Reading a CSV into a table, in the `table` op and from the workspace menu | Not built |
-| 2 | `any_row`: a row as one draw | Not built |
-| 3 | `predict`, by exact inference, its line and spread shared by everything fitted to the same data | Not built |
-| 4 | The runners sample, with a hold-out table and its scores | Not built |
+| 1 | Reading a CSV into a table, in the `table` op and from the workspace menu | Built |
+| 2 | `any_row`: a row as one draw | Built |
+| 3 | `predict`, by exact inference, its line and spread shared by everything fitted to the same data | Built |
+| 4 | The runners sample, with a hold-out table and its scores | Built |
 | 5 | The views above | Not built |
 
 ## How it's checked
 
 | Check | How |
 |---|---|
+| **A χ² draw is where the tables say** | Against scipy, to nine figures, for shapes under one and up to a hundred |
 | **A CSV is its table** | Quoting, empty fields, keys, and names that can't be names, each read as the table op would write them by hand |
 | **A pick is the data** | Its mean and spread are the column's, two columns through one pick have the data's correlation, and evidence on one leaves the rows it should |
-| **A prediction is the textbook's** | With no `x`s, its spread is the Student t's, `s·√(1 + 1/n)` with `n - 1` degrees of freedom. With some, its middle is the least-squares line at the new `x`s |
+| **A prediction is the textbook's** | With no `x`s, its spread is the Student t's, `s·√(1 + 1/n)` with `n - 1` degrees of freedom, and draw by draw it's exactly the formula above. With some, its middle is the least-squares line at the new `x`s, and it's wider far from the data |
 | **What's shared is shared** | Two predictions from the same data are related, and their difference is narrower than if they weren't |
 | **Data that isn't plain is refused** | A missing cell, text, or an uncertain number, each an error naming the row |
 
 ## The sample
 
-**Runners, given their 5k** has forty runners' 5k and 10k times and ages, and ten more not fitted to. Each of the ten has three predictions of their 10k: from nothing, from their 5k, and from their 5k on a log scale. Their scores say all three are honest and that the 5k makes the prediction several times sharper. `tests/samples.rs` checks it says what it claims.
+**Runners, given their 5k** has forty runners' 5k and 10k times and ages, and ten more not fitted to. Each of the ten has three predictions of their 10k: from nothing, from their 5k, and from their 5k on a log scale. Their scores say all three are honest and that the 5k makes the prediction seven times sharper. A few newcomers' times fall so near the edge of a 90% range that 4,096 draws can't say which side, and those are counted apart, as too close to call. `tests/samples.rs` checks it says what it claims.

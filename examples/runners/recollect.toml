@@ -1,0 +1,3 @@
+name = "Runners, given their 5k"
+about = "Data: forty runners' 5k and 10k times, and ten more not fitted to. Predicting a newcomer's 10k from nothing is honest and vague. From their 5k it's as honest, and seven times sharper."
+systems = []

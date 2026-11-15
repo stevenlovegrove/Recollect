@@ -1,0 +1,7 @@
+id: 01a1ddc9-fc8b-77fd-a12d-d059db90bc70
+components:
+- value
+cells:
+  name: Average miss, from their 5k, on a log scale
+formulas:
+  value: sum(Newcomers.rows.miss_log_5k) / count(Newcomers.rows)
