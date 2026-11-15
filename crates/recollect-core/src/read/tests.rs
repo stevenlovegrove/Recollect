@@ -392,3 +392,24 @@ fn an_edge_that_doesnt_fit_its_relation_is_a_notice() {
     let bad = dispatch(&mut ws, "apply", json!({ "ops": [{ "op": "link", "from": "Header", "to": "Payload", "kind": "nothing" }] }), "t");
     assert!(bad.is_err(), "a kind has to be a node");
 }
+
+#[test]
+fn coverage_is_what_realises_each_concept_in_each_later_layer() {
+    let mut ws = design();
+    let ops = json!([
+        { "op": "add_node", "id": "new:format", "name": "Format", "cells": { "layer": "exchange" } },
+        { "op": "add_node", "id": "new:interface", "name": "Interface", "cells": { "layer": "implementation" } },
+        { "op": "add_node", "id": "new:wire", "name": "Delta wire format", "links": [{ "to": "new:format", "component": "is_a" }, { "to": "Delta", "component": "realises" }] },
+        { "op": "add_node", "id": "new:store", "name": "trait DeltaStore", "links": [{ "to": "new:interface", "component": "is_a" }, { "to": "new:wire", "component": "realises" }] }
+    ]);
+    dispatch(&mut ws, "apply", json!({ "ops": ops }), "t").unwrap();
+    let v = read_json(&mut ws, json!({ "coverage": { "kind": "Concept" } }));
+    let c = &v["coverage"];
+    assert_eq!(c["columns"], json!(["exchange", "implementation"]), "in the order they're reached: {c}");
+    let row = |name: &str| c["rows"].as_array().unwrap().iter().find(|r| r["name"] == name).unwrap().clone();
+    assert_eq!(row("Delta")["by"]["exchange"][0]["name"], "Delta wire format");
+    assert_eq!(row("Delta")["by"]["implementation"][0]["name"], "trait DeltaStore", "through what realises it");
+    assert_eq!(row("Delta")["gaps"], json!([]));
+    assert_eq!(row("Header")["gaps"], json!(["exchange", "implementation"]), "nothing realises the header yet");
+    assert!(v["nodes"].as_array().unwrap().is_empty());
+}

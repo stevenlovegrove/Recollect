@@ -4232,3 +4232,11 @@ button.icon.act.revert:hover {
   outline: 1px dashed var(--accent);
   outline-offset: 2px;
 }
+
+/* Coverage: a blank is a gap, still only an idea in that layer. */
+.coverage td.gap {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.coverage td .link + .link::before {
+  content: ", ";
+}

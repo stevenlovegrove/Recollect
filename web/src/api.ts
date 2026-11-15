@@ -401,6 +401,8 @@ export const api = {
   workspaces: async () => (await backend()).workspaces(),
   openSample: async (sample: string, reset = false) => (await backend()).openSample(sample, reset),
   view: (world: World, where?: string) => call<View>("view", where ? { world, where } : { world }),
+  /** Read what a specification asks for: see `read.rs`. */
+  read: (spec: Record<string, unknown>) => call<ReadOut>("read", spec),
   /** The world that comes `at`th among those `world` leaves, counting from 0, with every choice pinned. `at` is text because there can be more worlds than a number holds exactly. */
   worldAt: (world: World, at: string, where?: string) => call<World | null>("world_at", where ? { world, at, where } : { world, at }),
   plan: (world: World) => call<PlanData>("plan", { world }),
@@ -418,3 +420,16 @@ export const api = {
   files: async () => (await backend()).files(),
   file: async (path: string) => (await backend()).file(path),
 };
+
+/** What realises each instance of a kind, layer by layer. */
+export interface Coverage {
+  kind: string;
+  columns: string[];
+  rows: { id: string; name: string; by: Record<string, { id: string; name: string }[]>; gaps: string[] }[];
+}
+
+/** What a read gives, as far as the app uses it. */
+export interface ReadOut {
+  nodes: unknown[];
+  coverage?: Coverage;
+}

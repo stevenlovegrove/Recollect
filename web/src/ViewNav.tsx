@@ -36,6 +36,13 @@ const ICONS: Record<string, ReactNode> = {
     </>
   ),
   timeline: <path d="M4 6h9M8 12h10M6 18h8M3 3v18" {...P} />,
+  coverage: (
+    <>
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2" {...P} />
+      <path d="M9 4.5v15M14.5 4.5v15M3.5 12h17" {...P} />
+      <path d="m11 8 1.5 1.5L14 7" {...P} />
+    </>
+  ),
   checks: (
     <>
       <path d="M12 3.5 21 19.5H3z" {...P} />

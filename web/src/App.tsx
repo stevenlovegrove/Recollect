@@ -8,6 +8,7 @@ import { OutlineView } from "./views/OutlineView";
 import { TableView } from "./views/TableView";
 import { DecisionsView } from "./views/DecisionsView";
 import { WorkView } from "./views/WorkView";
+import { CoverageView } from "./views/CoverageView";
 import { TimelineView } from "./views/TimelineView";
 import { ChecksView } from "./views/ChecksView";
 import { HistoryView } from "./views/HistoryView";
@@ -24,7 +25,7 @@ import { AskHost, askSure, askWhy } from "./Ask";
 import { BottomNav } from "./ViewNav";
 import { useRoute } from "./route";
 
-type Tab = "map" | "outline" | "table" | "decisions" | "work" | "timeline" | "checks" | "history" | "files";
+type Tab = "map" | "outline" | "table" | "decisions" | "coverage" | "work" | "timeline" | "checks" | "history" | "files";
 
 /** Views for looking after a workspace rather than working in it: behind ⋯ at the end of the tabs. */
 const MENU_TABS: Tab[] = ["files", "history", "checks"];
@@ -67,6 +68,8 @@ export function App() {
     "outline",
     "table",
     ...(holds("decision") ? (["decisions"] as Tab[]) : []),
+    // Coverage once something realises something: how far each concept has got through the layers.
+    ...(view?.edges.some((e) => e.components.includes("realises")) ? (["coverage"] as Tab[]) : []),
     ...(holds("work") ? (["work"] as Tab[]) : []),
     ...(holds("task") && view?.workspace.systems.includes("schedule") ? (["timeline"] as Tab[]) : []),
   ];
@@ -212,6 +215,8 @@ export function App() {
         return <TableView {...common} focus={focusTable} />;
       case "decisions":
         return <DecisionsView {...common} focus={focusDecision} />;
+      case "coverage":
+        return <CoverageView {...common} />;
       case "work":
         return <WorkView {...common} />;
       case "timeline":

@@ -55,6 +55,94 @@ pub struct ReadSpec {
     /// them in the worlds in play.
     #[serde(default)]
     pub plan: bool,
+    /// What realises each instance of a kind in each later layer, and where nothing does yet.
+    #[serde(default)]
+    pub coverage: Option<CoverageSpec>,
+}
+
+/// Which concepts to say coverage for, and what says which layer something is in.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoverageSpec {
+    /// The kind whose instances are the rows, by name or handle.
+    pub kind: String,
+    /// The cell that says which layer something is in. `layer`, if not given.
+    #[serde(default = "layer")]
+    pub by: String,
+}
+
+fn layer() -> String {
+    "layer".to_string()
+}
+
+/// A row for each instance of a kind, and a column for each layer that realises any of them. A cell
+/// names what realises that instance in that layer, directly or through something else that does. An
+/// empty one is a gap: what's still only an idea there.
+#[derive(Debug, Serialize)]
+pub struct Coverage {
+    pub kind: String,
+    /// The layers, in the order they're reached along `realises` from the instances.
+    pub columns: Vec<String>,
+    pub rows: Vec<CoverageRow>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CoverageRow {
+    pub id: Entity,
+    pub name: String,
+    /// What realises it in each layer. A layer with nothing is a gap.
+    pub by: BTreeMap<String, Vec<Named>>,
+    /// The layers nothing realises it in yet.
+    pub gaps: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Named {
+    pub id: Entity,
+    pub name: String,
+}
+
+/// What realises each instance of a kind, layer by layer.
+pub fn coverage(o: &Workspace, spec: &CoverageSpec) -> Result<Coverage, String> {
+    use recollect_systems::notes::REALISES;
+    let g = o.log.graph();
+    let kind = one(g, &spec.kind)?;
+    let layer_of = |e: Entity| match g.get_value(e, &spec.by) {
+        Ok(Some(Value::String(s))) => Some(s),
+        Ok(Some(v)) if !v.is_null() => Some(v.to_string()),
+        _ => None,
+    };
+    let own: Option<String> = layer_of(kind);
+    let mut columns: Vec<String> = Vec::new();
+    let mut rows = Vec::new();
+    for c in instances(g, kind) {
+        let mut by: BTreeMap<String, Vec<Named>> = BTreeMap::new();
+        // Along realises, nearest first, so a layer reached sooner comes first.
+        let mut seen = BTreeSet::from([c]);
+        let mut level = vec![c];
+        while !level.is_empty() {
+            let mut next = Vec::new();
+            for n in level {
+                for r in g.sources_of(n, REALISES) {
+                    if !seen.insert(r) {
+                        continue;
+                    }
+                    next.push(r);
+                    let Some(l) = layer_of(r) else { continue };
+                    if !columns.contains(&l) && own.as_ref() != Some(&l) {
+                        columns.push(l.clone());
+                    }
+                    by.entry(l).or_default().push(Named { id: r, name: label_of(g, r) });
+                }
+            }
+            level = next;
+        }
+        rows.push(CoverageRow { id: c, name: label_of(g, c), by, gaps: Vec::new() });
+    }
+    for row in &mut rows {
+        row.gaps = columns.iter().filter(|l| !row.by.contains_key(*l)).cloned().collect();
+    }
+    Ok(Coverage { kind: label_of(g, kind), columns, rows })
 }
 
 /// A formula saying which worlds to look at: plain, when it names no nodes, as
@@ -171,6 +259,8 @@ pub struct ReadOut {
     pub nodes: Vec<NodeOut>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan: Option<views::PlanView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<Coverage>,
     /// How many more matched than were given.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub more: Option<usize>,
@@ -272,6 +362,9 @@ pub fn read(o: &Workspace, spec: &ReadSpec) -> Result<ReadOut, String> {
     let reader = Reader::new(o, g, spec, narrowing.as_ref());
     let looking = narrowing.as_ref().map(|n| looking(g, &spec.world, n, reader.lens.as_ref().expect("a where makes a lens")));
     let plan = spec.plan.then(|| views::planning(o, &spec.world)).transpose()?;
+    let coverage = spec.coverage.as_ref().map(|c| coverage(o, c)).transpose()?;
+    // Asked only for the plan, or for coverage, there are no nodes to give unless some are asked for.
+    let only_sections = (spec.plan || coverage.is_some()) && spec.nodes.is_empty();
     let limit = spec.limit.unwrap_or(MOST_NODES);
     if let Some(tree) = &spec.nodes.tree {
         let root = one(g, &tree.root)?;
@@ -279,12 +372,12 @@ pub fn read(o: &Workspace, spec: &ReadSpec) -> Result<ReadOut, String> {
         let mut given = 0;
         let top = reader.tree(root, tree.depth, &mut seen, &mut given, limit);
         let more = given.saturating_sub(limit);
-        return Ok(ReadOut { looking, nodes: vec![top], plan, more: (more > 0).then_some(more) });
+        return Ok(ReadOut { looking, nodes: vec![top], plan, coverage, more: (more > 0).then_some(more) });
     }
     let chosen = select(g, &spec.nodes)?;
     let more = chosen.len().saturating_sub(limit);
-    let nodes = if spec.plan && spec.nodes.is_empty() { Vec::new() } else { chosen.into_iter().take(limit).map(|e| reader.node(e)).collect() };
-    Ok(ReadOut { looking, nodes, plan, more: (more > 0 && !(spec.plan && spec.nodes.is_empty())).then_some(more) })
+    let nodes = if only_sections { Vec::new() } else { chosen.into_iter().take(limit).map(|e| reader.node(e)).collect() };
+    Ok(ReadOut { looking, nodes, plan, coverage, more: (more > 0 && !only_sections).then_some(more) })
 }
 
 /// The worlds a `where` formula keeps: where it's true, and where it can't be told, so a gap in what's

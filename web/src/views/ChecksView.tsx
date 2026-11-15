@@ -23,6 +23,9 @@ const HELP: Record<string, string> = {
   undeveloped_goal: "Goals with nothing decomposing or serving them yet.",
   risk_without_target: "Risks not linked to what they threaten.",
   oversized_task: "Big tasks with no breakdown.",
+  leaning_must_be_a_live_option: "A decision leaning towards something that's no longer an option.",
+  edge_of_the_wrong_kinds: "An edge whose ends aren't the kinds its relation says, or whose kind isn't a relation.",
+  arranging_loop: "A relation that lays the map out, whose edges go round in a loop.",
 };
 
 /** What the checks have to say. Anything broken got there by a hand edit, because a commit would refuse it. */
