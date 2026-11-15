@@ -69,8 +69,37 @@ So the engine is right about the model it was given. What's wrong is the model: 
 
 - **Evidence is a truth, so a residual can only be in or out.** "Every runner is within 5 minutes of the line" is a box: every line that keeps them all inside it is as good as any other. It's why the slope comes out ±0.14 from forty points, about what it was from one.
 - **What's meant is that residuals are spread like a bell curve,** so a line that misses by a little is likelier than one that misses by a lot. That's how likely the data is under each `m` and `c`, a weight, not a truth, and there's no way to write it. `evidence` drops draws; nothing weighs them.
-- **And weighing 4,096 draws from the prior wouldn't be enough.** With the bell curve's spread at 1 minute, the slope given forty runners is 2.099 ± 0.043, a tenth as wide as before. Weighting the prior's draws by how likely they make the data leaves the equivalent of about 22 of them, and about 6 with a spread of half a minute. Read honestly, that's a value saying it was got from 22 draws. Read as 4,096, it's wrong without saying so.
+- **And weighing 4,096 draws from the prior wouldn't be enough.** With the bell curve's spread at 1 minute, the slope given forty runners is 2.099 ± 0.043, a third as wide. Weighting the prior's draws by how likely they make the data leaves the equivalent of about 22 of them, and about 6 with a spread of half a minute. Read honestly, that's a value saying it was got from 22 draws. Read as 4,096, it's wrong without saying so.
 - **Narrowing the box doesn't get there.** It runs out of draws (10 rows within ±1 leaves none), and then out of lines (40 within ±2 has none at all), before it says anything a bell curve would.
+
+### A residual for each row, drawn
+
+The other way to write it is the model as it's usually stated: each row is the line plus a residual of its own, drawn from a bell curve, in a table beside the data.
+
+```
+E.e:   normal(0, 1)                                      a column: each row its own draw
+Fits:  all(r in T.rows: r.y = m * r.x + c + E[r.row].e)   evidence
+```
+
+That's cheap to hold: forty rows are 456 expressions and a quarter of a second. It fails at the first row, and not for cost. `r.y = m * r.x + c + E[r.row].e` asks whether an uncertain number is exactly another, which it never is. For one row the engine says so exactly, since the difference has a law. For two or more it's read from draws, as "0 in 4,096". Either way no draw is left, and the slope is undefined.
+
+Loosened to `abs(r.y - (m * r.x + c + E[r.row].e)) < tol`, it's the right model. As `tol` narrows, what it leaves is exactly the bell curve's answer, where the box round the line alone is a different model however narrow it gets. The engine reads it as a grid over the same prior and evidence says it should:
+
+| Rows | Within | Draws left, read | Draws left, expected | Slope, exactly at that width | Bell curve's slope |
+|---|---|---|---|---|---|
+| 1 | ±1 | 253 | 234.6 | 2.054 ± 0.185 | 2.054 ± 0.184 |
+| 2 | ±1 | 86 | 92.7 | 2.017 ± 0.161 | 2.008 ± 0.151 |
+| 3 | ±1 | 40 | 44.1 | 1.992 ± 0.152 | 1.979 ± 0.140 |
+| 4 | ±1 | 20 | 20.5 | 2.026 ± 0.130 | 2.019 ± 0.118 |
+| 5 | ±1 | 11 | 11.2 | 2.011 ± 0.121 | 2.004 ± 0.109 |
+| 6 | ±1 | 1 | 0.9 | 2.161 ± 0.090 | 2.163 ± 0.081 |
+| 3 | ±0.5 | 1 | 6.3 | 1.982 ± 0.143 | |
+
+Each row keeps the share of draws whose residual happens to land within `tol` of the one that fits, about `2·tol` times the bell curve's height there: a half or less at ±1, and an eighth at ±0.25. Draws left fall by that much again with every row, so six rows at ±1 leave one, and all forty would need about 3 × 10¹⁶ draws for each one left at ±1, and 10⁴¹ at ±0.25. Narrowing `tol` to get closer to the bell curve makes it worse. It breaks on drawing, not on holding.
+
+Read with what's left, every answer says how few draws it came from, so none of this is wrong without saying so: "2.215 ± 0.001" from two draws says it's from two.
+
+It's the same trade as before. The engine can say what's true of a model with a truth, and the only cure for its running out of draws is not dropping them: weighing each by how likely it makes each row, as below. A residual for each row drawn and then pinned near where it has to be is that weight, got by dropping instead.
 
 ### What it would take
 
@@ -96,6 +125,7 @@ The views should show data and what's fitted to it together. These are ideas, no
 | **A CSV is its table** | Quoting, empty fields, keys, and names that can't be names, each read as the table op would write them by hand |
 | **A pick is the data** | Each row as often as the others, two columns through one pick keep each row's pairing, and evidence on one leaves the rows it should |
 | **A line, as written, is read honestly** | Evidence about residuals leaves the draws a grid over the same prior says it should, and none where no line fits |
+| **A residual drawn for each row** | Exactly equal leaves nothing, within half a minute one row leaves what a grid says, and five rows leave nothing |
 
 ## The sample
 

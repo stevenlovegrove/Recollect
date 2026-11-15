@@ -129,3 +129,45 @@ fn a_line_fitted_as_evidence_about_residuals_keeps_the_draws_that_fit_and_says_h
     assert_eq!(Reader::given(recollect_systems::formulas::known_draws(&g)).draws_kept(), 0);
     assert_eq!(only(&g, "Slope"), Val::Undefined);
 }
+
+
+/// The same line, with a parallel table of residuals, each a draw of its own, and each row saying it's
+/// the line plus its residual: exactly, or within `within`.
+fn residual_table(rows: usize, within: Option<f64>) -> N {
+    let mut g = N::with(install);
+    g.formula("m", "normal(2, 0.5)");
+    g.formula("c", "normal(0, 5)");
+    g.e("T");
+    g.e("E");
+    for (i, (x, y)) in RUNNERS.iter().take(rows).enumerate() {
+        let k = format!("T[{}]", i + 1);
+        g.e(&k);
+        g.formula_on(&k, "x", &x.to_string()).formula_on(&k, "y", &y.to_string());
+        g.e(&format!("E[{}]", i + 1));
+    }
+    g.formula_on("E", "e", "normal(0, 1)");
+    let each = match within {
+        None => "r.y = m * r.x + c + E[r.row].e".to_string(),
+        Some(w) => format!("abs(r.y - (m * r.x + c + E[r.row].e)) < {w}"),
+    };
+    g.formula("Fits", &format!("all(r in T.rows: {each})")).input("Fits", "m", "m").input("Fits", "c", "c").add("Fits", EVIDENCE);
+    g.formula("Slope", "mean(m)").input("Slope", "m", "m");
+    g
+}
+
+#[test]
+fn a_residual_drawn_for_each_row_fits_exactly_nowhere_and_within_a_little_for_only_a_few_rows() {
+    use recollect_graph::chance::Reader;
+    let kept = |g: &N| Reader::given(recollect_systems::formulas::known_draws(g)).draws_kept();
+    // A number that could be anything is never exactly another, so with even one row nothing's left.
+    let g = residual_table(1, None);
+    assert_eq!((kept(&g), only(&g, "Slope")), (0, Val::Undefined));
+    // Within half a minute, one row leaves what a grid says it should, about 117 draws, and the slope
+    // they say is the bell curve's.
+    let g = residual_table(1, Some(0.5));
+    assert!((90..150).contains(&kept(&g)), "{}", kept(&g));
+    let Val::Estimate(slope) = only(&g, "Slope") else { panic!() };
+    assert!((slope.value - 2.054).abs() < 3.0 * slope.error.unwrap(), "{slope:?}");
+    // Each row keeps a few in ten of the draws the last one left: by five rows there's none.
+    assert_eq!(kept(&residual_table(5, Some(0.5))), 0);
+}
