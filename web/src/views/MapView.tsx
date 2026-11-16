@@ -668,20 +668,32 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
   const refit = useRef(false);
   // An option of several questions, with nothing to say but what it's an option or a part of, would be a
   // card with a line to each of them, and the lines would be most of the map. It's drawn on each instead.
+  // A table of data is one card too: rows that only hold values, written as values, link to nothing and
+  // aren't linked to, aren't asked about, and aren't read one by one by rows of their own table, as `prev`
+  // reads the row before. Forty runners are a table, where forty cards would say less.
   const folded = useMemo(() => {
     const out = new Set<string>();
+    const asked = new Set(g.worlds.vars.map((v) => v.id));
+    const touched = new Set(g.edges.flatMap((e) => [e.from, e.to]));
+    const byTable = new Map<string, GraphNode[]>();
+    for (const n of g.nodes) if (n.row && !n.unwritten) byTable.set(n.row.table, [...(byTable.get(n.row.table) ?? []), n]);
+    for (const [table, rows] of byTable) {
+      const ids = new Set(rows.map((r) => r.id));
+      const data = rows.every((r) => !touched.has(r.id) && !asked.has(r.id) && Object.values(r.cells).every((c) => c.source !== "own" || c.formula === undefined));
+      const readBeside = g.nodes.some((n) => n.row?.table === table && (n.reads ?? []).some((x) => ids.has(x)));
+      if (rows.length > 1 && data && !readBeside) rows.forEach((r) => out.add(r.id));
+    }
     if (layoutPref.fold === false) return out;
     const into = new Set(g.edges.map((e) => e.to));
     const from = new Map<string, typeof g.edges>();
     for (const e of g.edges) from.set(e.from, [...(from.get(e.from) ?? []), e]);
-    const asked = new Set(g.worlds.vars.map((v) => v.id));
     for (const [id, edges] of from) {
       const plain = edges.every((e) => e.components.every((c) => c === "alternative" || c === "part_of"));
       if (plain && !into.has(id) && !asked.has(id) && edges.filter((e) => e.components.includes("alternative")).length > 1) out.add(id);
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [g.edges, g.worlds.vars, layoutPref.fold]);
+  }, [g.nodes, g.edges, g.worlds.vars, layoutPref.fold]);
   // The options each question has drawn on it, where any of them isn't a card.
   const cardOptions = useMemo(() => {
     const out = new Map<string, CardData["options"]>();
@@ -723,14 +735,26 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [g.nodes, g.edges, folded, ws.byId, layoutPref.groupBy]);
-  // One line from a table to each question that lands on its rows, where there'd have been one from every row.
+  // One line from a table to each question that lands on its rows, and one to it from each card that reads
+  // them, where there'd have been one for every row.
   const links = useMemo(() => {
     const out = [...baseLinks];
-    for (const t of tables)
+    for (const t of tables) {
+      const lands = new Set<string>();
       for (const asked of g.worlds.vars)
-        if (asked.options.some((o) => t.rows.has(o.id))) out.push({ from: t.id, to: asked.id, kind: "alternative", value: undefined, key: `${t.id}|${asked.id}`, called: "one of" });
+        if (asked.options.some((o) => t.rows.has(o.id))) {
+          // A draw from a short list, `~node/cell#site`, is asked where it's written.
+          const at = asked.id.startsWith("~") ? asked.id.slice(1).split("/")[0] : asked.id;
+          lands.add(standsFor.get(at) ?? at);
+          out.push({ from: t.id, to: standsFor.get(at) ?? at, kind: "alternative", value: undefined, key: `${t.id}|${asked.id}`, called: "one of" });
+        }
+      for (const n of g.nodes) {
+        const at = standsFor.get(n.id) ?? n.id;
+        if (!t.rows.has(n.id) && !lands.has(at) && (n.reads ?? []).some((x) => t.rows.has(x))) out.push({ from: at, to: t.id, kind: "label", value: "rows", key: `reads:${n.id}|${t.id}` });
+      }
+    }
     return out;
-  }, [baseLinks, tables, g.worlds.vars]);
+  }, [baseLinks, tables, g.worlds.vars, g.nodes, standsFor]);
   const updateNodeInternals = useUpdateNodeInternals();
   const [focus, setFocus] = useState(0);
   const [query, setQuery] = useState("");
@@ -1101,8 +1125,8 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
       }
       ids = new Set([...ids].filter((id) => (level.get(id) ?? 0) <= layoutPref.depth!));
     }
-    // A table's card is there when any question that lands on its rows is.
-    for (const t of tables) if (links.some((e) => e.from === t.id && ids.has(e.to))) ids.add(t.id);
+    // A table's card is there when any question that lands on its rows is, or anything that reads them.
+    for (const t of tables) if (links.some((e) => (e.from === t.id && ids.has(e.to)) || (e.to === t.id && ids.has(e.from)))) ids.add(t.id);
     return ids;
   }, [g.nodes, links, tables, standsFor, folded, hiddenFacts, hiddenKinds, hiddenLanes, laneOf, setup, showSetup, kindsOf, showDead, focus, selectedNode, layoutPref.depth, shapes, ws]);
 
