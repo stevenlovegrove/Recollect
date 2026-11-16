@@ -2451,6 +2451,11 @@ input.sheet-input {
 }
 .derived-v {
   min-width: 0;
+  overflow-wrap: anywhere;
+}
+.derived-v .link {
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 .tick-row {
   padding: 4px 0 8px;

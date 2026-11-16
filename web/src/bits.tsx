@@ -266,7 +266,10 @@ export function valueText(v: unknown): string {
   if (typeof v === "number") return Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 2 });
   if (typeof v === "string") return v;
   if (typeof v === "boolean") return v ? "yes" : "no";
-  return JSON.stringify(v);
+  // A record, such as a chart's {from, to, points}, as its fields in words, and anything inside it the same.
+  if (Array.isArray(v)) return v.map((x) => (x !== null && typeof x === "object" ? `(${valueText(x)})` : valueText(x))).join(", ");
+  if (typeof v === "object") return Object.entries(v as Record<string, unknown>).map(([k, x]) => (x !== null && typeof x === "object" ? `${k} (${valueText(x)})` : `${k} ${valueText(x)}`)).join(", ");
+  return String(v);
 }
 
 /** Numbers as a range, and anything else as a short list. Worlds are the point, so never just one of them. */
