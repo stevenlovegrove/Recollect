@@ -436,10 +436,12 @@ type LayoutPref = {
   lanes?: string;
   /** Show only this many levels beneath the top, over the links that lay the map out. */
   depth?: number;
-  /** Cards stay where they're dragged to, rather than being laid out: a new card is put where layout would. */
+  /**
+   * Cards stay where they're dragged to, rather than being laid out: one never put anywhere is put where
+   * layout would. Where they're put is saved with each node, in its `placed` cell, so it goes where the
+   * workspace goes; this only says whether this browser shows it. Unsaid, it does if anything's been placed.
+   */
   manual?: boolean;
-  /** Where each card has been put by hand, by id, kept while placing by hand is off too, for when it's back on. */
-  placed?: Record<string, XY>;
 };
 
 function loadLayoutPref(dir: string): LayoutPref {
@@ -784,8 +786,26 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
   const entering = useRef<Set<string>>(new Set());
   const leaving = useRef<Map<string, XY>>(new Map());
   const anim = useRef(0);
-  // Where cards were put by hand, read when laying out without being a reason to.
-  const placedRef = useRef<Record<string, XY>>(layoutPref.placed ?? {});
+  // Where cards were put by hand, as each node says: its own card in `placed`, and the card of the table it
+  // names, which stands for its rows, in `placed_rows`.
+  const placements = useMemo(() => {
+    const at = (v: unknown): XY | null => (v && typeof v === "object" && typeof (v as XY).x === "number" && typeof (v as XY).y === "number" ? { x: (v as XY).x, y: (v as XY).y } : null);
+    const out: Record<string, XY> = {};
+    for (const n of g.nodes) {
+      const own = at(n.cells.placed?.value);
+      if (own) out[n.id] = own;
+      const rows = at(n.cells.placed_rows?.value);
+      if (rows && !n.row) out[TABLE + n.name] = rows;
+    }
+    return out;
+  }, [g.nodes]);
+  const manual = layoutPref.manual ?? Object.keys(placements).length > 0;
+  // Read when laying out, without being a reason to. A card just dropped is where it was dropped until the
+  // save comes back saying so; after that, it's wherever the workspace says, as when a move is undone.
+  const dropped = useRef<Record<string, XY>>({});
+  for (const [id, at] of Object.entries(dropped.current)) if (placements[id] && Math.abs(placements[id].x - at.x) < 1 && Math.abs(placements[id].y - at.y) < 1) delete dropped.current[id];
+  const placedRef = useRef<Record<string, XY>>(placements);
+  placedRef.current = { ...placements, ...dropped.current };
   const { fitBounds, fitView, zoomTo, getZoom, getViewport, setViewport } = useReactFlow();
   const searchRef = useRef<HTMLInputElement>(null);
   const stepMatch = useRef<(by: number) => void>(() => {});
@@ -1203,9 +1223,11 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
         layoutPref.direction,
         layoutPref.lanes,
         tables.map((t) => [t.id, t.lines.length]),
-        !!layoutPref.manual,
+        manual,
+        // Somewhere else saying a card is somewhere else, as undoing a move does, moves it.
+        manual ? placements : null,
       ]),
-    [visible, layoutEdges, g.nodes, layoutPref.direction, layoutPref.lanes, tables, layoutPref.manual],
+    [visible, layoutEdges, g.nodes, layoutPref.direction, layoutPref.lanes, tables, manual, placements],
   );
   // The bands a cell's values make, in the order they first appear, with anything without one last.
   const lanes = useMemo(() => {
@@ -1273,7 +1295,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
           below += nodeHeight(n) + noteHeight(freeNote(n)!) + 26;
         }
         // Placed by hand, a card is where it was put, and one that hasn't been is where layout puts it.
-        if (layoutPref.manual) for (const [id, at] of Object.entries(placedRef.current)) if (target.has(id)) target.set(id, at);
+        if (manual) for (const [id, at] of Object.entries(placedRef.current)) if (target.has(id)) target.set(id, at);
         const ids = [...nodes.map((n) => n.id), ...tables.filter((t) => visible.has(t.id)).map((t) => t.id)];
         setLayout({ ids, target });
         updateNodeInternals(ids);
@@ -1682,17 +1704,15 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
               ))}
             </span>
           )}
-          <label className="toggle" title={layoutPref.manual ? "Cards stay where you drag them. Untick to lay the map out again" : "Tick to drag cards where you like: they stay there, and only a new card is placed for you"}>
-            <input
-              type="checkbox"
-              checked={!!layoutPref.manual}
-              onChange={(e) => {
-                // Ticked, each card goes back to where it was put by hand, and one never put anywhere stays where it is.
-                const placed = e.target.checked ? { ...Object.fromEntries(posRef.current), ...placedRef.current } : placedRef.current;
-                placedRef.current = placed;
-                setLayoutPref({ ...layoutPref, manual: e.target.checked, placed }, !e.target.checked);
-              }}
-            />
+          <label
+            className="toggle"
+            title={
+              manual
+                ? "Cards stay where you drag them, saved with the workspace. Untick to see it laid out instead: where they were put is kept"
+                : "Tick to drag cards where you like: where you put them is saved with the workspace, and a card never put anywhere is placed for you"
+            }
+          >
+            <input type="checkbox" checked={manual} onChange={(e) => setLayoutPref({ ...layoutPref, manual: e.target.checked }, !e.target.checked)} />
             place by hand
           </label>
           <label className="toggle" title="Show only so many levels beneath the top">
@@ -1755,7 +1775,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
             }}
             onPaneClick={() => onSelect(null)}
             nodesConnectable={false}
-            nodesDraggable={!!layoutPref.manual}
+            nodesDraggable={manual}
             // A click still selects: only a move of a few pixels is a drag.
             nodeDragThreshold={4}
             onNodeDrag={(_, n) => {
@@ -1764,8 +1784,14 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
               setPos(next);
             }}
             onNodeDragStop={(_, n) => {
-              placedRef.current = { ...placedRef.current, [n.id]: n.position };
-              setLayoutPref({ ...layoutPref, placed: placedRef.current }, false);
+              const at = { x: Math.round(n.position.x), y: Math.round(n.position.y) };
+              dropped.current[n.id] = at;
+              placedRef.current = { ...placedRef.current, [n.id]: at };
+              // Saved with the node it's the card of, or for a table's card, with the node the table's named for.
+              const table = n.id.startsWith(TABLE) ? g.nodes.find((x) => !x.row && !x.unwritten && x.name === n.id.slice(TABLE.length)) : undefined;
+              const own = !n.id.startsWith(TABLE) && ws.byId.has(n.id) && !ws.byId.get(n.id)!.unwritten;
+              const op = table ? { op: "set" as const, id: table.id, cell: "placed_rows", value: at } : own ? { op: "set" as const, id: n.id, cell: "placed", value: at } : null;
+              if (op) ws.apply([op], `Moved ${table ? `the table ${table.name}` : (ws.byId.get(n.id)?.name ?? "a card")} on the map`).catch((e) => alert(String(e)));
             }}
             // All keys are ours: arrows move the selection and ⌫ asks before dropping.
             disableKeyboardA11y

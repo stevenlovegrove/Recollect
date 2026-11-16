@@ -19,6 +19,21 @@ pub struct Sources(pub Vec<Value>);
 #[cell]
 pub struct Drawing(pub String);
 
+/// Where a node's card was put on the map by hand, if it was: a view's to read, saved with the node so
+/// it goes where the workspace goes.
+#[cell("placed")]
+pub struct Placed {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// Where the card of the table a node names, which stands for its rows, was put on the map by hand.
+#[cell("placed_rows")]
+pub struct PlacedRows {
+    pub x: f64,
+    pub y: f64,
+}
+
 /// A kind of edge a workspace defines, such as *names*: a node, as a kind is, which edges of that kind
 /// take the cells they don't say from.
 pub const RELATION: &str = "relation";
@@ -67,6 +82,8 @@ const RELATIONS: &[(&str, &str)] = &[
 pub fn install(reg: &mut Registry) {
     reg.component(Named::NAME, "What it's called.").everywhere();
     reg.cell::<Name>(Named::NAME, "What it's called. It isn't an identity: two nodes can share one.").per_entity().initial(json!(""));
+    reg.cell::<Placed>(Named::NAME, "Where its card was put on the map by hand, {x, y}, if it was.").per_entity().quiet();
+    reg.cell::<PlacedRows>(Named::NAME, "Where the card of the table it names was put on the map by hand, {x, y}, if it was.").per_entity().quiet();
     reg.component(NOTES, "Notes, in markdown.").icon("¶");
     // A kind's notes say what the kind is, which isn't something each instance says about itself.
     reg.cell::<Body>(NOTES, "Notes, in markdown.").initial(json!("")).per_entity();

@@ -1483,6 +1483,27 @@ async fn the_runners_chart_sweeps_its_input_and_each_curve_is_exact() {
     }
 }
 
+/// Where a card was put on the map by hand is saved with its node, and read back by a view, so it goes
+/// where the workspace goes. It's a view's to read, not something that's worked out.
+#[tokio::test]
+async fn a_card_placed_by_hand_is_saved_with_its_node() {
+    let c = Client::new();
+    c.open("runners").await;
+    let v = c.view(json!({})).await;
+    let slope = id(&v, "Slope");
+    assert!(cell(&v, "Slope", "placed").is_null(), "nowhere until it's put somewhere");
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": slope, "cell": "placed", "value": { "x": 120.5, "y": -40 } }, { "op": "set", "id": id(&v, "Runners"), "cell": "placed_rows", "value": { "x": 10, "y": 900 } }], "why": "Moved on the map" })).await;
+    let v = c.view(json!({})).await;
+    let at = |name: &str, c: &str| { let p = &cell(&v, name, c)["value"]; (p["x"].as_f64(), p["y"].as_f64()) };
+    assert_eq!(at("Slope", "placed"), (Some(120.5), Some(-40.0)));
+    assert_eq!(at("Runners", "placed_rows"), (Some(10.0), Some(900.0)));
+    let file = std::fs::read_to_string(format!("{}/nodes/{}.yaml", c.dir().await, slope)).unwrap();
+    assert!(file.contains("placed"), "{file}");
+    // Somewhere that isn't a place is refused.
+    let refused = c.claude_applies("move", vec![json!({ "op": "set", "id": slope, "cell": "placed", "value": "left a bit" })]);
+    assert!(refused.is_err(), "{refused:?}");
+}
+
 /// Something seen, not yet known, says how much it would: how many-fold it narrows the worlds, which is
 /// the model's and not the number of draws'. Here m ~ normal(0, 1) and 1 ~ normal(m, 0.1): weighing by
 /// that, 1 + its χ² divergence is 11.66, by quadrature.
