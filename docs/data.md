@@ -103,7 +103,7 @@ It's the same trade as before. The engine can say what's true of a model with a 
 
 ### What it would take
 
-Two things, each of use beyond fitting, designed in [inference.md](inference.md). Both are built, and the runners sample writes its line with them: 2.10 give or take 0.04, which is the bell curve's answer, read from draws moved to fit the forty runners.
+Two things, each of use beyond fitting, designed in [inference.md](inference.md). Both are built, and the runners sample writes its line with them: 2.099 give or take 0.043, the bell curve's answer, exactly, since a bell curve about a straight line with a plain spread is taken in [exactly](inference.md#exact-where-it-can-be). With an uncertain spread it would be read from draws moved to fit the forty.
 
 1. **A way to say how likely something observed is,** as a weight rather than a truth: say `likely(r.residual, normal(0, sigma))`, whose meaning is the bell curve's density at each draw's residual, multiplied over the rows. It would sit beside `evidence`, as `evidence` sits beside `requires`, because it's a third thing: not "this is so" but "this is how likely what was seen is".
 2. **Draws that follow the weights,** so what's read after them is a few thousand that count, not a few that count for a lot: drawing again near the draws that weigh the most, or a Markov chain over the draws. Either way the reading has to say how many independent draws it really is, which a weighted reading can work out.
@@ -129,4 +129,4 @@ The views should show data and what's fitted to it together. These are ideas, no
 
 ## The sample
 
-**Runners, row by row** has forty runners' 5k and 10k times. One picked at random is a row, so knowing their 5k was under 22 minutes says their 10k was under 47. A line through them is written with `~` as evidence: its slope comes out 2.10 give or take 0.04, read from draws moved to fit the forty, as a grid over the same prior says it should.
+**Runners, row by row** has forty runners' 5k and 10k times. One picked at random is a row, so knowing their 5k was under 22 minutes says their 10k was under 47. A line through them is written with `~` as evidence: its slope comes out 2.099 give or take 0.043, exactly, as the bell curve's own algebra and a grid over the same prior both say it should.

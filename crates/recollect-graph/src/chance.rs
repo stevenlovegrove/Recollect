@@ -1188,6 +1188,117 @@ struct Forms {
     log: Option<Arc<Straight>>,
 }
 
+/// The most pairs of draws a quadratic is kept with. Past this, what's seen is read by drawing.
+const MOST_PAIRS: usize = 100_000;
+
+/// The most draws what's seen is taken in exactly over. Past this, it's read by drawing.
+const MOST_EXACT: usize = 400;
+
+/// A plain number, plus so much of each of some draws, plus so much of each product of two: what the log
+/// of a bell curve's density is when its middle is a straight line over draws and its spread is plain.
+/// That's what lets what's seen be taken in exactly. See `docs/inference.md`.
+#[derive(Debug, Clone, Default)]
+struct Quad {
+    plain: f64,
+    lin: std::collections::BTreeMap<X, f64>,
+    /// Each pair once, the lesser first. A square is a pair with itself.
+    sq: std::collections::BTreeMap<(X, X), f64>,
+}
+
+impl Quad {
+    fn of_straight(s: &Straight) -> Quad {
+        Quad { plain: s.plain, lin: s.of.iter().copied().collect(), sq: Default::default() }
+    }
+
+    fn only(&self) -> Option<f64> {
+        (self.lin.is_empty() && self.sq.is_empty()).then_some(self.plain)
+    }
+
+    fn scaled(&self, k: f64) -> Quad {
+        Quad { plain: self.plain * k, lin: self.lin.iter().map(|(x, v)| (*x, v * k)).collect(), sq: self.sq.iter().map(|(x, v)| (*x, v * k)).collect() }
+    }
+
+    fn plus(&self, other: &Quad) -> Option<Quad> {
+        let mut out = self.clone();
+        out.plain += other.plain;
+        for (x, v) in &other.lin {
+            *out.lin.entry(*x).or_insert(0.0) += v;
+        }
+        for (x, v) in &other.sq {
+            *out.sq.entry(*x).or_insert(0.0) += v;
+        }
+        (out.sq.len() <= MOST_PAIRS).then_some(out)
+    }
+
+    /// Two of these multiplied, where that's still one: by a plain number, or two straight lines.
+    fn times(&self, other: &Quad) -> Option<Quad> {
+        if let Some(k) = self.only() {
+            return Some(other.scaled(k));
+        }
+        if let Some(k) = other.only() {
+            return Some(self.scaled(k));
+        }
+        if !self.sq.is_empty() || !other.sq.is_empty() || self.lin.len() * other.lin.len() > MOST_PAIRS {
+            return None;
+        }
+        let mut out = Quad { plain: self.plain * other.plain, ..Quad::default() };
+        for (x, v) in &self.lin {
+            *out.lin.entry(*x).or_insert(0.0) += v * other.plain;
+        }
+        for (x, v) in &other.lin {
+            *out.lin.entry(*x).or_insert(0.0) += v * self.plain;
+        }
+        for (a, u) in &self.lin {
+            for (b, v) in &other.lin {
+                *out.sq.entry((*a.min(b), *a.max(b))).or_insert(0.0) += u * v;
+            }
+        }
+        Some(out)
+    }
+
+    fn draws(&self) -> std::collections::BTreeSet<X> {
+        self.lin.keys().copied().chain(self.sq.keys().flat_map(|(a, b)| [*a, *b])).collect()
+    }
+}
+
+/// A draw, given what's been seen, as what it exactly is: a straight line over bell-curve draws of its own.
+struct Swap {
+    straight: Arc<Straight>,
+    /// Those draws.
+    draws: Vec<u32>,
+}
+
+/// How what's been seen was taken in exactly. See `Reader::exactly`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Exactly {
+    /// How many bell-curve draws were replaced by what they are given what's been seen.
+    pub draws: usize,
+    /// Some of what's seen isn't a bell curve about a straight line through them, so it's still weighed
+    /// or moved, over what's exactly so given the rest.
+    pub rest: bool,
+}
+
+/// `L` with `L·Lᵀ = a`, lower triangular, if `a` is symmetric and positive definite.
+fn cholesky(a: &[Vec<f64>]) -> Option<Vec<Vec<f64>>> {
+    let d = a.len();
+    let mut l = vec![vec![0.0; d]; d];
+    for i in 0..d {
+        for j in 0..=i {
+            let sum: f64 = (0..j).map(|k| l[i][k] * l[j][k]).sum();
+            if i == j {
+                let v = a[i][i] - sum;
+                if !(v > 0.0) || !v.is_finite() {
+                    return None;
+                }
+                l[i][i] = v.sqrt();
+            } else {
+                l[i][j] = (a[i][j] - sum) / l[j][j];
+            }
+        }
+    }
+    Some(l)
+}
+
 // ---------- reading: by a law where there is one, and otherwise by drawing ----------
 
 /// A number between 0 and 1 for each of `DRAWS` draws of something with this name. Each stretch of
@@ -1310,6 +1421,9 @@ pub struct Reader {
     /// Where weighting the draws would leave too few worth anything, the draws what's known depends on are
     /// moved to fit it instead, and this says how that went.
     moved: Option<Moved>,
+    /// Draws replaced by what they exactly are given what's been seen, by the draw's index.
+    swaps: HashMap<u32, Swap>,
+    exactly: Option<Exactly>,
 }
 
 /// How what's known was taken into account, where it says anything about what's read.
@@ -1320,6 +1434,8 @@ pub enum Given {
     Weighted,
     /// The draws what's known depends on were moved to fit it, and each counts the same.
     Moved,
+    /// What it depends on was replaced by what it exactly is, given what's been seen.
+    Exact,
 }
 
 /// How moving the draws went.
@@ -1484,8 +1600,155 @@ impl Reader {
     /// what was seen is. What shares a draw with it is read from the draws, each counting as much as it
     /// weighs, and says how many draws that's worth. What shares none is as it was, so a law it has
     /// still stands.
+    ///
+    /// Where what's been seen is bell curves about straight lines through bell-curve draws, those draws are
+    /// first replaced by exactly what they are given it, and what's read through them has a law again.
     pub fn given(known: Known) -> Reader {
+        let mut reader = Reader { known, ..Reader::default() };
+        reader.take_exactly();
+        reader
+    }
+
+    /// As `given`, but never taking anything in exactly: read only by weighing or moving the draws, to
+    /// check what's exact against.
+    pub fn given_by_drawing(known: Known) -> Reader {
         Reader { known, ..Reader::default() }
+    }
+
+    /// How what's been seen was taken in exactly, if any of it was.
+    pub fn exactly(&self) -> Option<Exactly> {
+        self.exactly
+    }
+
+    /// Take in exactly what can be of what's been seen. Its log is a sum, and each part of it that's a
+    /// quadratic over bell-curve draws, as a bell curve's log density is about a straight line through
+    /// them with a plain spread, is, all together, how a bell curve over those draws is weighed. With each
+    /// a standard bell curve beforehand, they're a bell curve afterwards, exactly: with `log w = b·z +
+    /// zᵀAz`, its precision is `P = I - 2A` and its middle `P⁻¹b`. So each draw is replaced by its middle
+    /// plus a straight line over new standard draws, with `M·Mᵀ = P⁻¹`, and everything read through them is
+    /// a straight line over those, with a law where it had one before. What's left of what's seen is
+    /// weighed, or moved, over that, as anything seen is. See `docs/inference.md`.
+    fn take_exactly(&mut self) {
+        let Some(log) = self.known.log_weight else { return };
+        // The parts it's a sum of, each with its sign.
+        let mut parts = Vec::new();
+        {
+            let t = arena();
+            let mut stack = vec![(log.0, 1.0)];
+            while let Some((x, sign)) = stack.pop() {
+                match t.nodes[x as usize] {
+                    Node::Bin(Op::Add, a, b) => stack.extend([(b, sign), (a, sign)]),
+                    Node::Bin(Op::Sub, a, b) => stack.extend([(b, -sign), (a, sign)]),
+                    Node::Un(Un::Neg, a) => stack.push((a, -sign)),
+                    _ => parts.push((x, sign)),
+                }
+            }
+        }
+        let normal = |x: &X| matches!(arena().nodes[*x as usize], Node::Draw(Std::Normal, _));
+        let (mut exact, mut rest) = (Quad::default(), Vec::new());
+        for (x, sign) in parts {
+            match self.quad(x) {
+                Some(q) if q.draws().iter().all(normal) => match exact.plus(&q.scaled(sign)) {
+                    Some(sum) => exact = sum,
+                    None => return,
+                },
+                // What can't have been seen at all is read as it is, by drawing, which says so.
+                _ if arena().plain(x).is_some_and(f64::is_nan) => return,
+                _ => rest.push((x, sign)),
+            }
+        }
+        let over: Vec<X> = exact.draws().into_iter().collect();
+        if over.is_empty() || over.len() > MOST_EXACT {
+            return;
+        }
+        let d = over.len();
+        let at: HashMap<X, usize> = over.iter().enumerate().map(|(k, x)| (*x, k)).collect();
+        let mut precision: Vec<Vec<f64>> = (0..d).map(|i| (0..d).map(|j| f64::from(u8::from(i == j))).collect()).collect();
+        for ((a, b), v) in &exact.sq {
+            let (i, j) = (at[a], at[b]);
+            if i == j {
+                precision[i][i] -= 2.0 * v;
+            } else {
+                precision[i][j] -= v;
+                precision[j][i] -= v;
+            }
+        }
+        let b: Vec<f64> = over.iter().map(|x| exact.lin.get(x).copied().unwrap_or(0.0)).collect();
+        // P = R·Rᵀ, so P⁻¹ = R⁻ᵀ·R⁻¹, and M = R⁻ᵀ will do.
+        let Some(r) = cholesky(&precision) else { return };
+        let mut r_inv = vec![vec![0.0; d]; d];
+        for k in 0..d {
+            for i in k..d {
+                let sum: f64 = (k..i).map(|j| r[i][j] * r_inv[j][k]).sum();
+                r_inv[i][k] = (f64::from(u8::from(i == k)) - sum) / r[i][i];
+            }
+        }
+        // The middle, P⁻¹b = R⁻ᵀ(R⁻¹b).
+        let half: Vec<f64> = (0..d).map(|i| (0..=i).map(|j| r_inv[i][j] * b[j]).sum()).collect();
+        let middle: Vec<f64> = (0..d).map(|i| (i..d).map(|j| r_inv[j][i] * half[j]).sum()).collect();
+        if middle.iter().chain(r_inv.iter().flatten()).any(|v| !v.is_finite()) {
+            return;
+        }
+        // A new standard draw for each, named for the one it stands in for.
+        let (fresh, indices): (Vec<X>, Vec<u32>) = {
+            let mut t = arena();
+            let names: Vec<String> = over
+                .iter()
+                .map(|x| match t.nodes[*x as usize] {
+                    Node::Draw(_, i) => format!("{}|seen", t.draws[i as usize]),
+                    _ => unreachable!("only draws are kept"),
+                })
+                .collect();
+            let fresh: Vec<X> = names.iter().map(|n| t.draw(Std::Normal, n)).collect();
+            let indices = fresh.iter().map(|x| if let Node::Draw(_, i) = t.nodes[*x as usize] { i } else { unreachable!("just made") }).collect();
+            (fresh, indices)
+        };
+        for (i, x) in over.iter().enumerate() {
+            let mut of: Vec<(X, f64)> = (i..d).map(|j| (fresh[j], r_inv[j][i])).filter(|(_, k)| *k != 0.0).collect();
+            of.sort_by_key(|(x, _)| *x);
+            let draws = of.iter().map(|(x, _)| indices[fresh.iter().position(|f| f == x).expect("one of them")]).collect();
+            let Node::Draw(_, index) = arena().nodes[*x as usize] else { unreachable!("only draws are kept") };
+            self.swaps.insert(index, Swap { straight: Arc::new(Straight { plain: middle[i], of }), draws });
+        }
+        let left = rest.iter().fold(Term::Num(0.0), |sum, (x, sign)| {
+            let part = arena().out(*x);
+            bin(if *sign > 0.0 { Op::Add } else { Op::Sub }, &sum, &part)
+        });
+        self.known.log_weight = match left {
+            Term::Rand(r) => Some(r),
+            _ => None,
+        };
+        self.exactly = Some(Exactly { draws: d, rest: self.known.log_weight.is_some() });
+        // What was worked out before is about the draws as they were.
+        (self.forms, self.laws, self.columns, self.draws) = Default::default();
+    }
+
+    /// It as a quadratic over draws, where it's one.
+    fn quad(&mut self, root: X) -> Option<Quad> {
+        let parts = arena().reach(root, |_| false);
+        let mut found: HashMap<X, Option<Quad>> = HashMap::with_capacity(parts.len());
+        for (x, node) in parts {
+            let of = |y: &X| found.get(y).cloned().flatten();
+            let q = match self.straight(x) {
+                Some(s) => Some(Quad::of_straight(&s)),
+                None => match node {
+                    Node::Un(Un::Neg, a) => of(&a).map(|a| a.scaled(-1.0)),
+                    Node::Bin(Op::Add, a, b) => of(&a).zip(of(&b)).and_then(|(a, b)| a.plus(&b)),
+                    Node::Bin(Op::Sub, a, b) => of(&a).zip(of(&b)).and_then(|(a, b)| a.plus(&b.scaled(-1.0))),
+                    Node::Bin(Op::Mul, a, b) => of(&a).zip(of(&b)).and_then(|(a, b)| a.times(&b)),
+                    Node::Bin(Op::Div, a, b) => of(&a).zip(of(&b).and_then(|b| b.only()).filter(|k| *k != 0.0)).map(|(a, k)| a.scaled(1.0 / k)),
+                    Node::Bin(Op::Pow, a, b) if of(&b).and_then(|b| b.only()) == Some(2.0) => of(&a).and_then(|a| a.times(&a)),
+                    _ => None,
+                },
+            };
+            found.insert(x, q);
+        }
+        found.remove(&root).flatten()
+    }
+
+    /// Whether it depends on a draw that was replaced by what it exactly is.
+    fn swapped(&self, r: &Rand) -> bool {
+        !self.swaps.is_empty() && arena().reach(r.0, |_| false).iter().any(|(_, n)| matches!(n, Node::Draw(_, i) if self.swaps.contains_key(i)))
     }
 
     /// Whether what's known says anything about this: they share a draw.
@@ -1711,6 +1974,23 @@ impl Reader {
             let column: Vec<f64> = match &node {
                 Node::Num(b) => vec![f64::from_bits(*b); DRAWS],
                 Node::Flag(b) => vec![f64::from(u8::from(*b)); DRAWS],
+                Node::Draw(_, i) if self.swaps.contains_key(i) => {
+                    let swap = &self.swaps[i];
+                    let mut column = vec![swap.straight.plain; DRAWS];
+                    for ((_, k), j) in swap.straight.of.iter().zip(swap.draws.iter()) {
+                        let u = match over.and_then(|o| o.get(j)) {
+                            Some(u) => u.clone(),
+                            None => {
+                                let name = arena().draws[*j as usize].clone();
+                                self.uniforms.entry(*j).or_insert_with(|| Arc::new(uniforms(&name))).clone()
+                            }
+                        };
+                        for (c, u) in column.iter_mut().zip(u.iter()) {
+                            *c += k * probit(*u);
+                        }
+                    }
+                    column
+                }
                 Node::Draw(std, i) => {
                     let u = match over.and_then(|o| o.get(i)) {
                         Some(u) => u.clone(),
@@ -1758,7 +2038,10 @@ impl Reader {
             let take = |a: &Straight, b: &Straight| a.plus(&b.scaled(-1.0));
             let straight = match &node {
                 Node::Num(b) if !f64::from_bits(*b).is_nan() => Some(Straight { plain: f64::from_bits(*b), of: vec![] }),
-                Node::Draw(..) => Some(Straight { plain: 0.0, of: vec![(x, 1.0)] }),
+                Node::Draw(_, i) => Some(match self.swaps.get(i) {
+                    Some(swap) => (*swap.straight).clone(),
+                    None => Straight { plain: 0.0, of: vec![(x, 1.0)] },
+                }),
                 Node::Un(Un::Neg, a) => of(a).straight.map(|a| a.scaled(-1.0)),
                 // The log of what's a product of powers is a sum.
                 Node::Un(Un::Ln, a) => of(a).log.map(|a| (*a).clone()),
@@ -1791,7 +2074,16 @@ impl Reader {
         if let Some(known) = self.draws.get(&x) {
             return known.clone();
         }
-        let found: std::collections::BTreeSet<u32> = arena().reach(x, |_| false).into_iter().filter_map(|(_, n)| if let Node::Draw(_, i) = n { Some(i) } else { None }).collect();
+        // A draw replaced by what it exactly is depends on the draws it's made of instead.
+        let found: std::collections::BTreeSet<u32> = arena()
+            .reach(x, |_| false)
+            .into_iter()
+            .filter_map(|(_, n)| if let Node::Draw(_, i) = n { Some(i) } else { None })
+            .flat_map(|i| match self.swaps.get(&i) {
+                Some(swap) => swap.draws.clone(),
+                None => vec![i],
+            })
+            .collect();
         let found = Arc::new(found);
         self.draws.insert(x, found.clone());
         found
@@ -2049,6 +2341,8 @@ impl Reader {
             (least, most) = (least.min(lo), most.max(hi));
         }
         let (least, most) = (Some(least).filter(|v| v.is_finite()), Some(most).filter(|v| v.is_finite()));
+        // Through draws replaced by what they exactly are, given what's been seen.
+        let exactly = live.iter().any(|s| matches!(&s.value, Term::Rand(r) if self.swapped(r))).then_some(Given::Exact);
 
         // Each as a law, if every one of them is one.
         let mut undefined = 0.0;
@@ -2082,7 +2376,7 @@ impl Reader {
                 (hist.from, hist.to) = (points[0].0, points[points.len() - 1].0);
             }
             let below0 = (hist.from < 0.0 && hist.to > 0.0).then(|| law.mass(0.0, false));
-            return Summary { mean: law.mean(), sd: law.sd(), low: law.quantile(0.05), mid: law.quantile(0.5), high: law.quantile(0.95), least, most, undefined, hist, below0, points, law: named, exact: true, draws: 0, given: None, error: 0.0 };
+            return Summary { mean: law.mean(), sd: law.sd(), low: law.quantile(0.05), mid: law.quantile(0.5), high: law.quantile(0.95), least, most, undefined, hist, below0, points, law: named, exact: true, draws: 0, given: exactly, error: 0.0 };
         }
 
         let mut values = Vec::new();
@@ -2103,7 +2397,7 @@ impl Reader {
         let draws = if tied { self.draws_kept() } else { DRAWS };
         let hist = values.hist();
         let below0 = (hist.from < 0.0 && hist.to > 0.0).then(|| values.0.iter().filter(|(v, _)| *v < 0.0).map(|(_, w)| w).sum::<f64>() / values.total());
-        Summary { mean: values.mean(), sd, low: values.quantile(0.05), mid: values.quantile(0.5), high: values.quantile(0.95), least, most, undefined, hist, below0, points: None, law: None, exact: false, draws, given: if tied { self.given_how() } else { None }, error: sd / (draws.max(1) as f64).sqrt() }
+        Summary { mean: values.mean(), sd, low: values.quantile(0.05), mid: values.quantile(0.5), high: values.quantile(0.95), least, most, undefined, hist, below0, points: None, law: None, exact: false, draws, given: if tied { self.given_how().or(exactly) } else { exactly }, error: sd / (draws.max(1) as f64).sqrt() }
     }
 
     /// How likely a truth is, if it's each of these this much of the time.
@@ -2118,6 +2412,9 @@ impl Reader {
             match &share.value {
                 Term::Flag(true) => yes += w,
                 Term::Rand(r) => {
+                    if self.swapped(r) {
+                        given = given.or(Some(Given::Exact));
+                    }
                     let tied = self.tied(r);
                     // A law says how likely exactly, and what has one is never undefined. Given something
                     // that shares a draw with it, that's no longer how likely it is.
@@ -2141,7 +2438,7 @@ impl Reader {
                     drawn += 1;
                     read += if tied { self.draws_kept() } else { DRAWS };
                     if tied {
-                        given = given.or(self.given_how());
+                        given = self.given_how().or(given);
                     }
                 }
                 Term::Undefined => undefined += w,
@@ -2609,5 +2906,102 @@ mod tests {
         let at = |ua: f64, ub: f64| x.at(&|name| if name == "t/at/a" { ua } else { ub });
         assert_eq!(at(0.5, 0.25), Some((1.0 + 2.0 * probit(0.5)) * 0.25));
         assert_eq!(at(0.5, 0.75), Some(0.75f64.ln()));
+    }
+
+    // ---------- what's seen, taken in exactly ----------
+
+    /// The log of how likely `y` is from a bell curve about `mean` with spread `sd`, as it's written for `~`.
+    fn seen_normal(y: f64, mean: &Term, sd: f64) -> Term {
+        let z = bin(Op::Div, &bin(Op::Sub, &n(y), mean), &n(sd));
+        bin(Op::Sub, &bin(Op::Mul, &n(-0.5), &bin(Op::Mul, &z, &z)), &n(sd.ln() + 0.5 * (2.0 * std::f64::consts::PI).ln()))
+    }
+
+    fn given_log(log: &Term) -> Reader {
+        Reader::given(Known { truth: None, log_weight: Some(rand(log)) })
+    }
+
+    #[test]
+    fn a_bell_curve_seen_through_a_bell_curve_is_one_exactly() {
+        let m = normal("t/exact/m", 2.0, 0.5);
+        let mut reader = given_log(&seen_normal(3.0, &m, 1.0));
+        // Precision 4 + 1, so the middle is (2·4 + 3·1)/5 and the spread √(1/5).
+        let s = reader.summary(&one(&m));
+        assert!(s.exact && s.given == Some(Given::Exact), "{s:?}");
+        assert!((s.mean - 2.2).abs() < 1e-12 && (s.sd - 0.2f64.sqrt()).abs() < 1e-12, "{s:?}");
+        assert_eq!(reader.exactly(), Some(Exactly { draws: 1, rest: false }));
+        // Its chances are a law's too.
+        let above = reader.chance(&one(&bin(Op::Lt, &n(2.5), &m)));
+        assert!(above.exact && above.given == Some(Given::Exact) && (above.chance - (1.0 - phi((2.5 - 2.2) / 0.2f64.sqrt()))).abs() < 1e-12, "{above:?}");
+        // What doesn't depend on it is as it was, and doesn't say it was given anything.
+        let other = reader.summary(&one(&normal("t/exact/other", 1.0, 1.0)));
+        assert!(other.exact && other.given.is_none() && other.mean == 1.0, "{other:?}");
+    }
+
+    #[test]
+    fn a_line_through_points_is_its_slope_and_height_exactly_and_together() {
+        let (m, c) = (normal("t/exact/slope", 2.0, 0.5), normal("t/exact/height", 0.0, 5.0));
+        let points = [(25.7, 53.0), (19.4, 40.8), (18.8, 40.0), (26.2, 55.0), (32.2, 69.7)];
+        let log = points.iter().fold(Term::Num(0.0), |sum, (x, y)| bin(Op::Add, &sum, &seen_normal(*y, &bin(Op::Add, &bin(Op::Mul, &m, &n(*x)), &c), 1.0)));
+        let mut reader = given_log(&log);
+        // By hand: precision is the prior's, diag(4, 1/25), plus XᵀX, and the middle P⁻¹(prior's precision ·
+        // its middle + Xᵀy).
+        let (sxx, sx, sxy, sy, k) = points.iter().fold((0.0, 0.0, 0.0, 0.0, 0.0), |(a, b, c, d, e), (x, y)| (a + x * x, b + x, c + x * y, d + y, e + 1.0));
+        let p = [[4.0 + sxx, sx], [sx, 1.0 / 25.0 + k]];
+        let det = p[0][0] * p[1][1] - p[0][1] * p[1][0];
+        let cov = [[p[1][1] / det, -p[0][1] / det], [-p[1][0] / det, p[0][0] / det]];
+        let rhs = [4.0 * 2.0 + sxy, sy];
+        let mean = [cov[0][0] * rhs[0] + cov[0][1] * rhs[1], cov[1][0] * rhs[0] + cov[1][1] * rhs[1]];
+        let (slope, height) = (reader.summary(&one(&m)), reader.summary(&one(&c)));
+        assert!(slope.exact && (slope.mean - mean[0]).abs() < 1e-9 && (slope.sd - cov[0][0].sqrt()).abs() < 1e-9, "{slope:?} and {mean:?} {cov:?}");
+        assert!(height.exact && (height.mean - mean[1]).abs() < 1e-9 && (height.sd - cov[1][1].sqrt()).abs() < 1e-9, "{height:?}");
+        // A prediction from both is exact too, with their relation in it: the spread of 22·slope + height.
+        let at22 = reader.summary(&one(&bin(Op::Add, &bin(Op::Mul, &m, &n(22.0)), &c)));
+        let var = 22.0 * 22.0 * cov[0][0] + 2.0 * 22.0 * cov[0][1] + cov[1][1];
+        assert!(at22.exact && (at22.mean - (22.0 * mean[0] + mean[1])).abs() < 1e-9 && (at22.sd - var.sqrt()).abs() < 1e-9, "{at22:?}");
+        // Slope and height are related now, so both above their middles isn't a quarter: for two bell
+        // curves related by ρ it's ¼ + asin(ρ)/2π.
+        let both = reader.chance(&one(&bin(Op::And, &bin(Op::Lt, &n(mean[0]), &m), &bin(Op::Lt, &n(mean[1]), &c))));
+        let rho = cov[0][1] / (cov[0][0] * cov[1][1]).sqrt();
+        let want = 0.25 + rho.asin() / (2.0 * std::f64::consts::PI);
+        assert!(!both.exact && both.given == Some(Given::Exact), "{both:?}");
+        assert!((both.chance - want).abs() < 4.0 * both.error.max(1.0 / DRAWS as f64) && (want - 0.25).abs() > 0.1, "{} against {want}, ρ {rho}", both.chance);
+        // And it's what drawing comes to, weighed or moved.
+        let drawn = Reader::given_by_drawing(Known { truth: None, log_weight: Some(rand(&log)) }).summary(&one(&m));
+        assert!(!drawn.exact && (drawn.mean - mean[0]).abs() < 5.0 * drawn.error, "{drawn:?} and {}", mean[0]);
+    }
+
+    #[test]
+    fn what_isnt_a_bell_curve_about_a_line_is_weighed_over_what_is() {
+        let (m, w) = (normal("t/exact/rest/m", 2.0, 0.5), normal("t/exact/rest/w", 0.0, 3.0));
+        // m is taken in exactly, and w, seen through its square, isn't, so it's weighed or moved.
+        let log = bin(Op::Add, &seen_normal(3.0, &m, 1.0), &seen_normal(1.0, &bin(Op::Mul, &w, &w), 0.5));
+        let mut reader = given_log(&log);
+        assert_eq!(reader.exactly(), Some(Exactly { draws: 1, rest: true }));
+        let s = reader.summary(&one(&m));
+        assert!(s.exact && (s.mean - 2.2).abs() < 1e-12, "{s:?}");
+        let size = reader.summary(&one(&un(Un::Sqrt, &bin(Op::Mul, &w, &w))));
+        // By quadrature over w: the mean of |w| is 0.8596.
+        assert!(!size.exact && size.given.is_some() && (size.mean - 0.859629269322752).abs() < 4.0 * size.error, "{size:?}");
+    }
+
+    #[test]
+    fn a_truth_known_too_is_kept_to_over_what_is_exact() {
+        let m = normal("t/exact/truth/m", 2.0, 0.5);
+        let truth = rand(&bin(Op::Lt, &n(2.2), &m));
+        let mut reader = Reader::given(Known { truth: Some(truth), log_weight: Some(rand(&seen_normal(3.0, &m, 1.0))) });
+        // A bell curve about 2.2 with spread √0.2, above its middle: its mean is the middle plus the spread
+        // times φ(0)/½.
+        let want = 2.2 + 0.2f64.sqrt() * (2.0 / std::f64::consts::PI).sqrt();
+        let s = reader.summary(&one(&m));
+        assert!(!s.exact && s.given == Some(Given::Exact) && (s.mean - want).abs() < 4.0 * s.error, "{s:?} and {want}");
+    }
+
+    #[test]
+    fn only_bell_curves_are_taken_in_exactly() {
+        let u = Term::Rand(draw(Std::Uniform, "t/exact/uniform"));
+        let mut reader = given_log(&seen_normal(0.7, &u, 0.1));
+        assert_eq!(reader.exactly(), None);
+        let s = reader.summary(&one(&u));
+        assert!(!s.exact && s.given.is_some(), "{s:?}");
     }
 }

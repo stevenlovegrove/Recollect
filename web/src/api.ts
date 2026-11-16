@@ -51,13 +51,16 @@ export interface Dist {
    */
   exact: boolean;
   draws: number;
-  /** How what's been seen was taken into account: the draws weighted by how likely each makes it, or moved to fit it. */
+  /**
+   * How what's been seen was taken into account: the draws weighted by how likely each makes it, moved to
+   * fit it, or replaced by exactly what they are given it, in which case it can still be `exact`.
+   */
   given?: Given;
   error: number;
 }
 
 /** How what's been seen was taken into account. See docs/inference.md. */
-export type Given = "weighted" | "moved";
+export type Given = "weighted" | "moved" | "exact";
 
 /**
  * Something seen whose likelihood depends on draws, `y ~ normal(…)`, sent as `{"seen": …}`: how many-fold it

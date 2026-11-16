@@ -1,0 +1,9 @@
+id: 01a1e1ef-c605-763a-b137-57f47083777d
+components:
+- notes
+- value
+cells:
+  body: 'Where the line would cross a 5k of nothing: about 0, give or take 5 minutes, before anything''s seen.'
+  name: Height
+formulas:
+  value: normal(0, 5)

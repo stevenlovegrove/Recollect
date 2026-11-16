@@ -61,6 +61,7 @@ export function estimateText(e: Estimate): string {
 function fromDraws(given?: Given): string {
   if (given === "weighted") return "Read from draws weighted by how likely each makes what's been seen";
   if (given === "moved") return "Read from draws moved to fit what's been seen";
+  if (given === "exact") return "Read from draws of exactly what it is given what's been seen";
   return "Read from draws";
 }
 
@@ -112,7 +113,7 @@ export function distText(d: Dist): string {
 export function distHow(d: Dist): string {
   const range = `Nine times in ten it's between ${figures(d.low)} and ${figures(d.high)}`;
   const gaps = d.undefined > 0 && d.undefined < 1 ? `. Undefined ${beliefText(d.undefined)} of the time` : "";
-  if (d.exact) return `${d.law ? `Exactly ${d.law}` : "Exact"}. ${range}${gaps}`;
+  if (d.exact) return `${d.law ? `Exactly ${d.law}` : "Exact"}${d.given === "exact" ? ", given what's been seen" : ""}. ${range}${gaps}`;
   return `${fromDraws(d.given)}, so drawing could put the mean out by about ${smallFigures(d.error)}. ${range}${gaps}`;
 }
 
@@ -140,7 +141,7 @@ export function chanceText(c: Chance): string {
 
 export function chanceHow(c: Chance): string {
   const gaps = c.undefined > 0 ? ` Undefined ${beliefText(c.undefined)} of the time.` : "";
-  if (c.exact) return `Exactly this likely.${gaps}`;
+  if (c.exact) return `Exactly this likely${c.given === "exact" ? ", given what's been seen" : ""}.${gaps}`;
   if (c.hits === 0 || c.hits === c.draws) return `${fromDraws(c.given)}, and ${c.hits === 0 ? "it was true in none of them" : "it was true in all of them"}, so all that can be said is that ${c.hits === 0 ? "it's at most this likely" : "it's at least this likely"}: drawing more would narrow it.${gaps}`;
   return `${fromDraws(c.given)}, so drawing could put it out by about ${(c.error * 100).toFixed(1)} points.${gaps}`;
 }

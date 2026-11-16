@@ -81,7 +81,17 @@ Weighting the prior's draws can't do better than the prior's draws. The answer i
 
 ## Exact where it can be
 
-Some fits need no drawing at all, as sums of bell curves need none now. When the unknowns are bell curves, each observation is a bell curve whose middle is a straight line in them, and its spread is plain, what's known about them afterwards is a bell curve over them too. Recognising that is a rule like the ones laws already have: then the line through the runners, with σ known, is exact. With σ uncertain too it isn't, and it's drawn. This is a rule that makes some answers exact, and changes nothing about how a model is written.
+Some fits need no drawing at all, as sums of bell curves need none now. The idea that makes that general is that **what's exactly so, given what's been seen, is a change of the draws, not a new kind of reading.**
+
+Every uncertain number is an expression over named standard draws, and the reader already keeps two forms of each: a straight line over draws, and a straight line for its log. A straight line over bell-curve draws, each once, has an exact law, and that's how sums, scalings, products of lognormals and chances like *slope > 2* are exact now, through any formula. So if what's been seen can be taken in by replacing some draws with what they exactly are given it, as straight lines over new draws, everything read through them keeps its law with nothing else new. The laws are the identities that carry exactness through formulas; taking in what's seen only has to hand them new draws.
+
+- **Recognising it.** Beside the two forms there's a third: a quadratic over draws. A straight line squared is one, and sums and scalings of them are. `y ~ normal(mean, sd)` has the log density `-(y - mean)²/2sd²`, which is one exactly when `mean` is a straight line over draws and `sd` is plain. The line through the runners is: `slope * r.t5k + height` is straight in the slope's and height's draws, since `t5k` is data. So recognising it falls out of the forms there already are, with nothing matched against how a formula is written.
+- **The substitution.** With standard bell-curve draws `z` beforehand, and what's seen weighing them by `b·z + zᵀAz`, they're a bell curve afterwards, exactly: precision `P = I - 2A`, middle `P⁻¹b`. Each `z` is replaced by its middle plus `M·ε`, where `ε` are new standard draws and `M·Mᵀ = P⁻¹`. Every formula that read `z` is now a straight line over `ε`, so the slope is `normal(2.0989…, 0.0433…)` exactly, the slope and height are related as they should be because they share `ε`, and the next runner's 10k and how likely it is to be under 46 are exact too.
+- **What's left.** What's seen is a sum of logs, and only the parts that are quadratics over bell-curve draws are taken in this way. The rest, and any truth that's known, weigh or move the draws as before, over what's exact. That's still right, since weighing what's exactly so given some of what's seen by the rest is exactly Bayes' rule, and it's how an uncertain σ, or a middle that's not a straight line, goes on being drawn.
+- **The same, beyond bell curves.** Every draw is a number between 0 and 1 put through a law's quantile, so anything whose law given what's seen has a quantile can be a new draw put through it. That makes exactness a table of rules, each a prior's form and a likelihood's form going to a law: a uniform chance and counts going to a Beta, an exponential rate and waits going to a Gamma, and anything seen about a single draw, such as a truth that cuts a bell curve off, whose law is one-dimensional and can be worked out to as many figures as a number holds. Each rule is small, tested on its own, and never touches how anything is read.
+- **Partly exact.** Where what's seen is a bell curve about a line through `z` only once some other draws `w` are fixed, as when σ is uncertain, each draw of `w` gives `z` a bell curve, and how likely what's seen is given `w` alone has a closed form. Weighing or moving only `w` by that, and replacing `z` draw by draw, needs far fewer dimensions moved. This is what other probabilistic languages call delayed sampling, or automatic Rao-Blackwellisation (Murray et al., 2018).
+- **Comparing models.** The same algebra gives exactly how likely what was seen was, all told. Where a model differs between worlds, a line against a flat one, say, that's the chance of the coin in each, so which model is likelier is exact Bayes through the diagram.
+- **What it says.** What's read this way is `given: exact`, and `exact` where it has a law. A notice on the evidence says how many draws were replaced, and, where some of what's seen wasn't taken in exactly, that the draws are weighed or moved by the rest.
 
 ## The runners, as they'd be written
 
@@ -108,7 +118,10 @@ Everything `predict` did is here, in the open. The prior is two cells anyone can
 | 1 | `~` and the families' densities, as evidence, read with weights and effective draws, and exact over short lists. **Built** |
 | 2 | Named arguments, and the editor saying what a function takes and gives, and a statement shown as one |
 | 3 | Moving the draws: tempering, resampling and moves, with its budget and what it says. **Built** |
-| 4 | Bell curves seen through straight lines, exactly |
+| 4 | Bell curves seen through straight lines, exactly. **Built**, as the first rule of [exact where it can be](#exact-where-it-can-be) |
+| 5 | Exactly how likely what's seen was, for comparing models between worlds |
+| 6 | Partly exact: what's a bell curve about a line once other draws are fixed |
+| 7 | More rules: a Beta for a chance seen through counts, a Gamma for a rate seen through waits, and anything seen about one draw |
 
 ## What step 1 is
 
@@ -137,6 +150,17 @@ It leaves out:
 - **How related the moved draws are** isn't measured. What's said is what the last step was worth, which the usual practice takes as the figure, and the notice says how often moves were taken. A run of rarely taken moves is warned of, not corrected.
 - **The budget** isn't a setting. Running out of it before the weight is all the way in is a notice that says how far it got, and that what's read is wrong; what's read doesn't say so itself.
 
+## What step 4 is
+
+- **Where:** `take_exactly`, in `chance.rs`, when a reader is given what's known. `Reader::given_by_drawing` never does it, so tests can check one against the other.
+- **What's taken:** the parts of what's seen, a sum of logs, that are quadratics (`Quad`) over bell-curve draws, together. What's not a quadratic, or is over a draw that's not a bell curve, is left, and is weighed or moved as in steps 1 and 3, over what's exact. A truth that's known is kept to the same way.
+- **The algebra:** precision `P = I - 2A`, Cholesky `P = R·Rᵀ`, middle `P⁻¹b`, and each draw replaced by its middle plus `R⁻ᵀ` times new standard draws, named for the ones they stand in for with `|seen` after, so it's the same every time. At most 400 draws are replaced at once; past that, it's drawn.
+- **Reading through it:** a replaced draw's straight-line form is its replacement, its column is that worked out from the new draws, and what it depends on is the new draws, so two things that share none of them are still told apart and two that share one aren't. Nothing else in how anything is read changed.
+- **What it says:** a summary or a chance through a replaced draw is `given: exact`, and `exact` where it has a law. The app says *exactly normal(2.099, 0.04328), given what's been seen*, or, where there's no law, *read from draws of exactly what it is given what's been seen*. The notice `evidence_taken_exactly` says how many draws were replaced, and whether any of what's seen was left to weighing or moving.
+- **The runners:** the slope is `normal(2.0989115110224503, 0.04327818833887758)` to nine figures against numpy's own, and a 22-minute runner's 10k is `normal(46.1702…, 1.0162…)`, exact, where moving gave 2.099 ± 0.043 from draws.
+
+It leaves out steps 5 to 7.
+
 ## How it'd be checked
 
 | Check | How |
@@ -145,6 +169,6 @@ It leaves out:
 | **An observation over short lists is Bayes' rule** | A coin's bias from tosses, a middle from a reading, and a die from a roll, against the sums done by hand (`tests/seen.rs`) |
 | **Weighted reading is honest** | A bell curve seen through a bell curve against its exact answer, 2.2 ± 0.45, and a line through five rows against a grid, 2.004. Forty rows leave a few dozen draws counting (`tests/seen.rs`) |
 | **What's seen isn't asked about** | Another roll of 7 moves which die it was by Bayes' rule, with nothing new among the questions (`recollect-server`'s tests) |
-| **Moving gets there** | The line through one, five and forty runners against a grid, the forty 2.099 ± 0.043 with σ = 1, middle and spread. Two humps far apart, both kept about evenly (`tests/seen.rs`). Not yet: the tea's six humps, whose inference is over short lists and so never moves |
+| **Moving gets there** | Read by drawing alone, the line through one, five and forty runners against a grid, the forty 2.099 ± 0.043 with σ = 1, middle and spread. Two humps far apart, both kept about evenly (`tests/seen.rs`). Not yet: the tea's six humps, whose inference is over short lists and so never moves |
 | **It's repeatable** | The same graph read twice, the same answer to the last figure |
-| **Exact is exact** | Bell curves seen through straight lines, exactly, against moving draws, within what drawing allows |
+| **Exact is exact** | A bell curve seen through a bell curve, and a line through five points, against the algebra by hand to nine figures, slope and height related as they should be (both above their middles ¼ + asin ρ/2π), and against moving the draws within what drawing allows (`chance.rs`). The line through one, five and forty runners against numpy to nine figures (`tests/seen.rs`). An uncertain spread, a draw that isn't a bell curve, or a square seen, are left to drawing; a truth known too is kept to over what's exact |

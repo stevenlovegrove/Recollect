@@ -600,9 +600,13 @@ fn a_line_through_the_runners_is_about_two_and_says_how_it_was_got() {
     let Val::Rand(slope) = o.get::<ValueCell>("Slope").0.0.cases()[0].1.clone() else { panic!("the slope is uncertain") };
     let mut reader = Reader::given(recollect_systems::formulas::known_draws(o.g()));
     let s = reader.summary(&[Share { weight: 1.0, value: Term::Rand(slope) }]);
-    assert_eq!(s.given, Some(Given::Moved), "{s:?}");
-    // A fine grid over the same prior and the same forty runners says 2.099 ± 0.043.
-    assert!((s.mean - 2.099).abs() < 4.0 * 0.043 / (s.draws as f64).sqrt() && (s.sd - 0.043).abs() < 0.005, "{s:?}");
+    // Exactly the bell curve's own algebra, in numpy, over the same prior and the same forty runners.
+    assert!(s.exact && s.given == Some(Given::Exact), "{s:?}");
+    assert!((s.mean - 2.0989115110224503).abs() < 1e-9 && (s.sd - 0.04327818833887758).abs() < 1e-9, "{s:?}");
+    // So is a 22-minute runner's 10k, with the slope and height's relation and the runner's own minute.
+    let Val::Rand(next) = o.get::<ValueCell>("A 22-minute 5k runner's 10k").0.0.cases()[0].1.clone() else { panic!("it's uncertain") };
+    let p = reader.summary(&[Share { weight: 1.0, value: Term::Rand(next) }]);
+    assert!(p.exact && (p.mean - 46.17023178142037).abs() < 1e-9 && (p.sd - 1.0161815933291896).abs() < 1e-9, "{p:?}");
     let advice = o.g().registry().all_advice(o.g());
-    assert!(advice.iter().any(|a| a.rule == "evidence_moved_draws" && a.on == o.id("Runners")), "{advice:?}");
+    assert!(advice.iter().any(|a| a.rule == "evidence_taken_exactly" && a.on == o.id("Runners")), "{advice:?}");
 }

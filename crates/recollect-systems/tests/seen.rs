@@ -119,14 +119,13 @@ fn a_reading_of_a_bell_curve_is_weighed_draw_by_draw_and_says_what_its_worth() {
     g.formula("Middle", "mean(m)").input("Middle", "m", "m");
     g.formula("Seen", "3 ~ normal(m, 1)").input("Seen", "m", "m").add("Seen", EVIDENCE);
     // A bell curve seen through a bell curve: precision 4 + 1, so the middle is (2·4 + 3·1)/5 and the
-    // spread √(1/5).
-    let e = estimate(&g, "Middle");
-    assert!(e.draws < 4096 && e.draws > 2000, "weighted, so worth fewer than all of them: {}", e.draws);
-    assert!((e.value - 2.2).abs() < 4.0 * e.error.unwrap(), "{e:?}");
-    let known = known_draws(&g);
+    // spread √(1/5). That's taken in exactly.
+    assert!((number(&g, "Middle") - 2.2).abs() < 1e-12, "{:?}", only(&g, "Middle"));
+    // Weighed instead, it's worth fewer draws than there are, and comes to the same.
     let Val::Rand(m) = only(&g, "m") else { panic!() };
-    let s = Reader::given(known).summary(&[Share { weight: 1.0, value: Term::Rand(m) }]);
-    assert!(s.given.is_some() && !s.exact && s.draws == e.draws, "{s:?}");
+    let s = Reader::given_by_drawing(known_draws(&g)).summary(&[Share { weight: 1.0, value: Term::Rand(m) }]);
+    assert!(s.given == Some(recollect_graph::chance::Given::Weighted) && !s.exact && s.draws < 4096 && s.draws > 2000, "{s:?}");
+    assert!((s.mean - 2.2).abs() < 4.0 * s.error, "{s:?}");
     assert!((s.sd - 0.2f64.sqrt()).abs() < 0.02, "{}", s.sd);
 }
 
@@ -153,12 +152,31 @@ fn slope(g: &N) -> recollect_graph::chance::Summary {
     Reader::given(known_draws(g)).summary(&[Share { weight: 1.0, value: Term::Rand(m) }])
 }
 
+/// The slope as read by drawing alone, weighed or moved, never taken in exactly.
+fn slope_drawn(g: &N) -> recollect_graph::chance::Summary {
+    let Val::Rand(m) = only(g, "m") else { panic!("the slope is uncertain") };
+    Reader::given_by_drawing(known_draws(g)).summary(&[Share { weight: 1.0, value: Term::Rand(m) }])
+}
+
+/// The slope's middle and spread given the first so many runners, by the bell curve's own algebra in
+/// numpy: precision diag(4, 1/25) + XᵀX, and middle its inverse times (8, 0) + Xᵀy.
+const LINE: [(usize, f64, f64); 3] = [(1, 2.0537874923151236, 0.18441692214117186), (5, 2.0040223663337855, 0.10943424690845951), (40, 2.0989115110224503, 0.04327818833887758)];
+
 #[test]
-fn a_line_through_the_runners_is_the_bell_curves_answer_however_many_rows() {
+fn a_line_through_the_runners_is_the_bell_curves_answer_exactly_however_many_rows() {
     use recollect_graph::chance::Given;
-    // Against a fine grid over the same prior, rows, and spread of 1: the slope's middle and spread.
-    for (rows, mean, sd) in [(1, 2.054, 0.184), (5, 2.004, 0.109), (40, 2.099, 0.043)] {
+    for (rows, mean, sd) in LINE {
         let s = slope(&line(rows));
+        assert!(s.exact && s.given == Some(Given::Exact), "{rows}: {s:?}");
+        assert!((s.mean - mean).abs() < 1e-9 && (s.sd - sd).abs() < 1e-9, "{rows}: {} ± {} and {mean} ± {sd}", s.mean, s.sd);
+    }
+}
+
+#[test]
+fn moving_the_draws_gets_to_the_same_answer() {
+    use recollect_graph::chance::Given;
+    for (rows, mean, sd) in LINE {
+        let s = slope_drawn(&line(rows));
         assert_eq!(s.given, Some(Given::Moved), "{rows} rows leave too few draws' worth weighted, so they're moved");
         assert!(s.draws > 2000, "{rows}: worth {} draws", s.draws);
         assert!((s.mean - mean).abs() < 4.0 * sd / (s.draws as f64).sqrt(), "{rows}: {} and {mean}", s.mean);
@@ -172,7 +190,18 @@ fn where_weighing_is_enough_the_draws_stay_where_they_are() {
     let mut g = N::with(install);
     g.formula("m", "normal(2, 0.5)");
     g.formula("Seen", "3 ~ normal(m, 1)").input("Seen", "m", "m").add("Seen", EVIDENCE);
-    assert_eq!(slope(&g).given, Some(Given::Weighted));
+    assert_eq!(slope_drawn(&g).given, Some(Given::Weighted));
+}
+
+#[test]
+fn a_spread_that_isnt_known_leaves_it_to_drawing() {
+    use recollect_graph::chance::Given;
+    // With the spread uncertain too, what's seen isn't a bell curve about a line with a plain spread.
+    let mut g = line(5);
+    g.formula("s", "lognormal(1, 0.3)");
+    g.formula("T", "all(r in rows: r.y ~ normal(m * r.x + c, s))").input("T", "s", "s");
+    let s = slope(&g);
+    assert!(!s.exact && matches!(s.given, Some(Given::Weighted | Given::Moved)), "{s:?}");
 }
 
 #[test]
@@ -193,7 +222,7 @@ fn two_humps_far_apart_are_both_kept() {
 #[test]
 fn moving_is_the_same_every_time() {
     let g = line(10);
-    let (a, b) = (slope(&g), slope(&g));
+    let (a, b) = (slope_drawn(&g), slope_drawn(&g));
     assert_eq!(a, b);
 }
 

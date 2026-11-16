@@ -415,6 +415,20 @@ fn judging(g: &Graph) -> Vec<Advice> {
             out.push(Advice { rule: "evidence_never_drawn".to_string(), on: *e, detail: format!("what's known held in none of {} draws, so nothing that depends on it can be read", chance::DRAWS) });
         }
     }
+    if let Some(exactly) = reader.exactly()
+        && let Some(e) = g.having(EVIDENCE).into_iter().find(|e| matches!(g.get::<ValueCell>(*e), Ok(Some(v)) if v.0.0.cases().iter().any(|(_, v)| matches!(v, Val::Likely(_)))))
+    {
+        out.push(Advice {
+            rule: "evidence_taken_exactly".to_string(),
+            on: e,
+            detail: format!(
+                "what's been seen is bell curves about straight lines through {} bell-curve draw{}, so each was replaced by exactly what it is given that, and what's read through them is exact where it would be without anything seen{}",
+                exactly.draws,
+                if exactly.draws == 1 { "" } else { "s" },
+                if exactly.rest { ". The rest of what's seen isn't, so the draws are weighed or moved by it, over that" } else { "" }
+            ),
+        });
+    }
     if let Some(moved) = reader.moved()
         && moved.distinct > 0
         && let Some(e) = g.having(EVIDENCE).into_iter().find(|e| matches!(g.get::<ValueCell>(*e), Ok(Some(v)) if v.0.0.cases().iter().any(|(_, v)| matches!(v, Val::Likely(_)))))
@@ -2636,7 +2650,8 @@ the worlds, and the draws, where it's false, and never a choice. Use `evidence` 
 What was seen, with how likely it was: `y ~ normal(m * x + c, sigma)` says y was drawn from that, and as evidence each world and draw \
 counts as much as it makes y likely, so `m` and `c` are found out. The right of `~` is one of normal, lognormal, between, uniform, \
 exponential, triangular, bernoulli, integers or one_of. Combine with `&&` or `all(r in T.rows: …)`, never `||` or `!`, and never as a \
-requirement. Over short lists it's exact. Over draws, they're weighted, or moved to fit what's seen where weighting leaves too few, and \
+requirement. Over short lists it's exact. Over bell-curve draws, where it's a bell curve about a straight line through them with a plain \
+spread, it's exact too, and says `given: exact`. Otherwise, over draws, they're weighted, or moved to fit what's seen where weighting leaves too few, and \
 what's read says which, and how much drawing adds to its error: say so. See docs/inference.md.\n\
 \n\
 A number can be uncertain: normal(mean, sd), lognormal(mean, sd), uniform(low, high), triangular(low, likely, high), exponential(mean), \

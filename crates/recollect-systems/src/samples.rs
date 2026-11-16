@@ -61,7 +61,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "36";
+pub const FORMAT: &str = "37";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -541,7 +541,7 @@ fn runners(b: &mut Build) {
 
 **A line through them** is written as it would be on paper. **Slope** and **Height** are what's believed of the line before the data, and **Runners** itself says what was seen: every runner's 10k drawn from a bell curve about the line at their 5k, a minute either way, `all(r in rows: r.t10k ~ normal(slope * r.t5k + height, 1))`. It's evidence, so each draw of the slope and height counts as much as it makes the forty times likely.
 
-The slope comes out 2.10 give or take 0.04. Forty runners narrow what's believed of the line a couple of hundred-fold, so weighing the prior's draws by them would leave too few counting, and the draws the slope and height depend on are moved to fit what was seen instead, a step at a time, and every number read through them says so: hover over one, and see the notice on **Runners** for how it went. See docs/inference.md.
+The slope comes out 2.099 give or take 0.043, exactly. Each time is a bell curve about a straight line through the slope and height, with a spread that's plain, and they're bell curves beforehand, so what they are given the forty is a bell curve too, worked out rather than drawn, and so is everything read through them: hover over one, and see the notice on **Runners**. Make the spread uncertain too and it isn't, and the draws are moved to fit what was seen instead, and say so. See docs/inference.md.
 
 - Select **Slope** and look at its histogram, then hover for how it was got.
 - Click **known?** off on **Runners** and back: the prior's spread, and then the data's.
