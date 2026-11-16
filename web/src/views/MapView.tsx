@@ -20,7 +20,7 @@ import type { GraphNode } from "../api";
 import type { Workspace } from "../workspace";
 import { badgesOf, compColor, dominant, isDropped, label as labelOf, linkLabel, nodeColor } from "../theme";
 import { renderMarkdown } from "../markdown";
-import { Brackets, CompBadges, TableIcon, beliefText, cellText, chanceOf, edgeKey, edgeText, parseEdgeKey, reading } from "../bits";
+import { Brackets, CompBadges, TableIcon, beliefText, cellText, chanceOf, edgeKey, edgeText, parseEdgeKey, reading, seenOf } from "../bits";
 import { type SummaryLine, summaryOf } from "../summary";
 import { DdItem, Dropdown } from "../Dropdown";
 import { Key, isTyping } from "../Shortcuts";
@@ -123,7 +123,9 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
   const value = node.cells.value;
   // A value that's true or false, worked out or typed in, on a node somebody wrote: plainly, or as a chance.
   const chancy = !!chanceOf(value?.value) || (value?.shown?.kind === "cond" && value.shown.cases.some((c) => chanceOf(c.value)));
-  const truth = !node.unwritten && (required || known || value?.shown?.kind === "bool" || chancy);
+  // Something seen, y ~ normal(…), can be known too, though it isn't true or false.
+  const seen = !!seenOf(value?.value) || (value?.shown?.kind === "cond" && value.shown.cases.some((c) => seenOf(c.value)));
+  const truth = !node.unwritten && (required || known || value?.shown?.kind === "bool" || chancy || seen);
   // Demanded of a choice, where it depends on one that's someone's to make. Otherwise it can only be known.
   const yours = (value?.vars ?? []).some((id) => data.ws.view!.worlds.vars.some((v) => v.id === id && !v.uncertain));
   const mark = known ? "evidence" : required || yours ? "requires" : "evidence";
