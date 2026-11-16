@@ -1450,6 +1450,18 @@ async fn a_roll_seen_weighs_which_die_and_isnt_asked_about() {
     assert_eq!(after["worlds"]["count"], before["worlds"]["count"]);
 }
 
+/// One of a table's rows, picked, is only what's left once something about it is known: knowing the
+/// runner was under 22 minutes over 5k leaves the twelve who were.
+#[tokio::test]
+async fn a_row_picked_lists_only_the_rows_whats_known_leaves() {
+    let c = Client::new();
+    c.open("runners").await;
+    let items = |v: &Value| cell(v, "A runner seen", "value")["shown"]["items"].as_array().unwrap_or_else(|| panic!("{}", cell(v, "A runner seen", "value"))).len();
+    assert_eq!(items(&c.view(json!({})).await), 40);
+    c.claude_applies("known", vec![json!({"op": "add", "id": "Under 22 minutes over 5k", "component": "evidence"})]).unwrap();
+    assert_eq!(items(&c.view(json!({})).await), 12);
+}
+
 /// Something seen, not yet known, says how much it would: how many-fold it narrows the worlds, which is
 /// the model's and not the number of draws'. Here m ~ normal(0, 1) and 1 ~ normal(m, 0.1): weighing by
 /// that, 1 + its χ² divergence is 11.66, by quadrature.

@@ -615,7 +615,8 @@ fn show(s: &Shown, labels: &Labels, lens: &Lens) -> ShownView {
     match s {
         Shown::Bool(b) => ShownView::Bool(labels.read(b, in_play)),
         Shown::Cond(c) => ShownView::Cond { cases: c.cases().into_iter().map(|(g, v)| CaseView { when: labels.read(&g, in_play), value: present(v, &lens.reader) }).collect() },
-        Shown::Named(items) => ShownView::Named { items: items.iter().map(|(e, b)| NamedView { node: *e, when: labels.read(b, in_play) }).collect() },
+        // What it could be among the worlds left: one only what's known rules out is left out with them.
+        Shown::Named(items) => ShownView::Named { items: items.iter().filter(|(_, b)| !(b & in_play).is_never()).map(|(e, b)| NamedView { node: *e, when: labels.read(b, in_play) }).collect() },
     }
 }
 
