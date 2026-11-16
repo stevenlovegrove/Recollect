@@ -1,3 +1,4 @@
+import { ChartView } from "./views/ChartView";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, type Cell, type Edge, type EventView, type GraphNode, type Has, type Labels, type Op, type Written } from "./api";
 import { edgesOf, labelsOf, type Workspace } from "./workspace";
@@ -263,6 +264,7 @@ export function Inspector({
       </div>
 
       {err && <div className="error">{err}</div>}
+      {node.components.some((c) => c.name === "chart") && <ChartView ws={ws} node={node} />}
 
       {shown.map((c) => (
         <ComponentCard key={c.name} ws={ws} node={node} has={c} run={run} onSelect={onSelect} onShowDecisions={onShowDecisions} />

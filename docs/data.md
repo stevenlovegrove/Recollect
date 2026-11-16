@@ -1,6 +1,6 @@
 # Data
 
-**Status:** reading a CSV and `one_of` are built. Fitting a model to data is written as ordinary cells, and [Fitting](#fitting) says what the engine makes of that today, and what it would take to fit the way that's meant. The views aren't built. `one_of` is in `crates/recollect-systems/src/formulas.rs`, and reading a CSV in `crates/recollect-core/src/ops.rs`.
+**Status:** reading a CSV, `one_of` and a chart are built. Fitting a model to data is written as ordinary cells, and [Fitting](#fitting) says what the engine makes of that today, and what it would take to fit the way that's meant. Of the views, only the chart is built. `one_of` is in `crates/recollect-systems/src/formulas.rs`, and reading a CSV in `crates/recollect-core/src/ops.rs`.
 
 ## Why
 
@@ -112,7 +112,11 @@ Where `m` and `c` have laws and the residuals are bell curves about a straight l
 
 ## Ways to look at it
 
-The views should show data and what's fitted to it together. These are ideas, none built yet:
+The views should show data and what's fitted to it together.
+
+- **A chart.** Built. A node with `chart` plots what it labels `y` against what it labels `x`, a number typed in: each `y` is read as `x` is tried at each of a run of values on a copy, as typing each in would, and drawn with the band it falls in nine times in ten, and a table's two columns are drawn behind as points. Nothing in it knows about lines or fits: the curves are whatever their formulas say, with whatever uncertainty they have. In the runners sample, **The line through the runners** plots `slope * x + height`, where the line is, and `normal(slope * x + height, 1)`, where a new runner would be, over the forty runners: the first band is what isn't known about the line, and the second adds each runner's own minute. The chart's spec is `{from, to, points: {table, x, y}}` (`Chart` in `formulas.rs`), and it's drawn in the Inspector (`ChartView.tsx`).
+
+These are ideas, not built yet:
 
 - **A grid of pairs.** Each column's histogram on the diagonal and each pair's scatter off it.
 - **Brushing.** Dragging over one histogram pins a range on a pick, and every other histogram becomes what it is given that, with what it was faded behind.

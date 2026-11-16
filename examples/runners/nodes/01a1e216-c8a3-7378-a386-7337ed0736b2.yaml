@@ -1,0 +1,25 @@
+id: 01a1e216-c8a3-7378-a386-7337ed0736b2
+components:
+- notes
+- value
+cells:
+  body: 'Someone new: the line at their 5k, and a minute either way of their own. It reads the same slope and height as everything else, so it''s exact too.'
+  name: A new runner's 10k
+formulas:
+  value: normal(slope * x + height, 1)
+links:
+- to: 01a1e216-c8a3-7378-a386-73332c1c923f
+  components:
+  - label
+  cells:
+    called: slope
+- to: 01a1e216-c8a3-7378-a386-7334b84ce921
+  components:
+  - label
+  cells:
+    called: height
+- to: 01a1e216-c8a3-7378-a386-73350f2b2b0f
+  components:
+  - label
+  cells:
+    called: x

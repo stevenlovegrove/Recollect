@@ -1,0 +1,25 @@
+id: 01a1e216-c8a3-7378-a386-73367a5c0c3d
+components:
+- notes
+- value
+cells:
+  body: 'The line at the new runner''s 5k: only as uncertain as the slope and height are.'
+  name: Where the line is
+formulas:
+  value: slope * x + height
+links:
+- to: 01a1e216-c8a3-7378-a386-73332c1c923f
+  components:
+  - label
+  cells:
+    called: slope
+- to: 01a1e216-c8a3-7378-a386-7334b84ce921
+  components:
+  - label
+  cells:
+    called: height
+- to: 01a1e216-c8a3-7378-a386-73350f2b2b0f
+  components:
+  - label
+  cells:
+    called: x

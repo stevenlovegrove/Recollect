@@ -42,6 +42,8 @@ pub const EVIDENCE: &str = "evidence";
 /// What a view has found out by pinning, on a copy of the graph it looks through. Never saved.
 pub const FOUND: &str = "found";
 pub const MACRO: &str = "macro";
+/// A chart of what it labels `y` against what it labels `x`. See `docs/data.md`.
+pub const CHART: &str = "chart";
 /// What should be true, said so a notice can say where it isn't: it never rules any world out.
 pub const SHOULD: &str = "should";
 
@@ -529,6 +531,33 @@ pub struct Called(pub String);
 pub struct Macro {
     pub params: Vec<String>,
     pub body: String,
+}
+
+/// What a chart plots, beside what it labels: what it labels `x`, a number typed in, tried at each of a
+/// run of values from `from` to `to`, and what it labels `y` read at each, with how uncertain it is; and
+/// behind them, a table's two columns as points.
+#[cell("chart")]
+pub struct Chart {
+    pub from: f64,
+    pub to: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points: Option<ChartPoints>,
+}
+
+/// A table's rows, as points: one column across, and one up.
+#[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ChartPoints {
+    pub table: String,
+    pub x: String,
+    pub y: String,
+}
+
+fn valid_chart(v: &Value) -> Result<(), String> {
+    let c: Chart = serde_json::from_value(v.clone()).map_err(|e| format!("a chart is {{from, to, points?: {{table, x, y}}}}: {e}"))?;
+    if !(c.from.is_finite() && c.to.is_finite() && c.from < c.to) {
+        return Err(format!("a chart runs from one number to a greater one, not {} to {}", c.from, c.to));
+    }
+    Ok(())
 }
 
 /// A macro, with the macros it uses found. It's a cell so a macro calling itself is a loop in these
@@ -2593,6 +2622,8 @@ pub fn install(reg: &mut Registry) {
     reg.component(MACRO, "A function of your own, which formulas call by labelling this node.").icon("ƒ");
     reg.cell::<Macro>(MACRO, "Its parameters, and the formula it stands for.").initial(json!({ "params": [], "body": "0" }));
     reg.cell::<MacroBody>(MACRO, "").builtin(macro_of).internal();
+    reg.component(CHART, "A chart: what it labels y, read as what it labels x goes from one number to another, each with how uncertain it is, and a table's two columns as points behind them.").icon("∿");
+    reg.cell::<Chart>(CHART, "Where what it labels x goes from and to, and, as points, a table and its two columns: {from, to, points: {table, x, y}}.").validate(valid_chart).initial(json!({ "from": 0, "to": 1 }));
 
     reg.edge(LABEL, "The name a formula on this node uses for that one.").arranges().reversed();
     reg.cell::<Called>(LABEL, "The name a formula on the source uses for the target.").validate(valid_name).initial(json!(""));
@@ -2659,4 +2690,9 @@ between(low, high) for about that nine times in ten, integers(low, high), bernou
 a cell read twice is the same one. chance(x) is how likely x is, and mean(x) what it comes to on average, over everything that's a matter \
 of chance and never over a choice, so `requires` can say chance(cost < 4000) >= 0.9.\n\
 \n\
-To reuse logic, a node with a `macro` cell {params: [t], body: \"t.estimate * 100\"} is a function its callers link to with a label.";
+To reuse logic, a node with a `macro` cell {params: [t], body: \"t.estimate * 100\"} is a function its callers link to with a label.\n\
+\n\
+To chart something, give a node `chart` with {from, to, points?: {table, x, y}}, label a number that's typed in `x`, and label what to \
+plot `y`, as many as there are curves: each is read as x goes from `from` to `to`, with the band it falls in nine times in ten, and a \
+table's two columns are drawn behind them as points. So a fit and its data are one chart: `y` labels `slope * x + height` for where the \
+line is, and `normal(slope * x + height, sigma)` for where a new point would be.";

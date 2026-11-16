@@ -604,7 +604,7 @@ fn a_line_through_the_runners_is_about_two_and_says_how_it_was_got() {
     assert!(s.exact && s.given == Some(Given::Exact), "{s:?}");
     assert!((s.mean - 2.0989115110224503).abs() < 1e-9 && (s.sd - 0.04327818833887758).abs() < 1e-9, "{s:?}");
     // So is a 22-minute runner's 10k, with the slope and height's relation and the runner's own minute.
-    let Val::Rand(next) = o.get::<ValueCell>("A 22-minute 5k runner's 10k").0.0.cases()[0].1.clone() else { panic!("it's uncertain") };
+    let Val::Rand(next) = o.get::<ValueCell>("A new runner's 10k").0.0.cases()[0].1.clone() else { panic!("it's uncertain") };
     let p = reader.summary(&[Share { weight: 1.0, value: Term::Rand(next) }]);
     assert!(p.exact && (p.mean - 46.17023178142037).abs() < 1e-9 && (p.sd - 1.0161815933291896).abs() < 1e-9, "{p:?}");
     let advice = o.g().registry().all_advice(o.g());

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use recollect_graph::{CellType, Entity, Name, On, Op, Stored};
 use serde_json::{Value, json};
 
-use crate::formulas::{AT, At, AtLeast, Called, EVIDENCE, IS_A, LABEL, OPTIONS, Options, REQUIRES, SHOULD, Should, VALUE, ValueCell};
+use crate::formulas::{AT, At, AtLeast, CHART, Called, Chart, ChartPoints, EVIDENCE, IS_A, LABEL, OPTIONS, Options, REQUIRES, SHOULD, Should, VALUE, ValueCell};
 use crate::notes::{Body, DRAWING, Drawing, EdgeKind, FromKind, NOTES, REALISES, RELATES, RELATION, ToKind};
 use crate::plan::{DEPENDS_ON, Done, Estimate, GOAL, RISK, TASK, UNKNOWN};
 use crate::structure::{ALTERNATIVE, DECISION, EXCLUDES, KNOWING, LEANING, LeaningWhy, Leans, PART_OF, UNCERTAIN, WITHIN, Weight};
@@ -61,7 +61,7 @@ pub const SAMPLES: &[Sample] = &[
 ];
 
 /// Changes when samples mean something different, so an old working copy gets replaced, not misread.
-pub const FORMAT: &str = "37";
+pub const FORMAT: &str = "38";
 
 /// Ops for a sample, referring to nodes by name while they're being written.
 #[derive(Default)]
@@ -545,7 +545,9 @@ The slope comes out 2.099 give or take 0.043, exactly. Each time is a bell curve
 
 - Select **Slope** and look at its histogram, then hover for how it was got.
 - Click **known?** off on **Runners** and back: the prior's spread, and then the data's.
-- **A 22-minute 5k runner's 10k** is an ordinary formula over the same slope and height."#);
+- **A new runner's 10k** is an ordinary formula over the same slope and height, at **A new runner's 5k**: type in another time and it follows.
+
+**The line through the runners** is a chart: the forty runners as points, and two curves read as **A new runner's 5k** goes from 15 to 35 minutes, each with the band it falls in nine times in ten. **Where the line is** is only the line, so its band is only what isn't known about the slope and height, and it's narrow. **A new runner's 10k** is a minute either way of that, so its band is wider, and about as wide as the points are scattered. Select the chart to see it, and click **known?** off on **Runners** to see what the line was before the data."#);
     for (i, (t5k, t10k, age)) in RUNNERS.iter().enumerate() {
         let row = format!("Runners[{}]", i + 1);
         b.put(&row, "t5k", json!(t5k)).put(&row, "t10k", json!(t10k)).put(&row, "age", json!(age));
@@ -561,9 +563,18 @@ The slope comes out 2.099 give or take 0.043, exactly. Each time is a bell curve
     b.formula("Slope", "normal(2, 0.5)").note("Slope", "How many minutes over 10k each minute over 5k is worth: about 2, give or take half, before anything's seen.");
     b.formula("Height", "normal(0, 5)").note("Height", "Where the line would cross a 5k of nothing: about 0, give or take 5 minutes, before anything's seen.");
     b.formula("Runners", "all(r in rows: r.t10k ~ normal(slope * r.t5k + height, 1))").label("Runners", "Slope", "slope").label("Runners", "Height", "height").add("Runners", EVIDENCE);
-    let next = "A 22-minute 5k runner's 10k";
-    b.formula(next, "normal(slope * 22 + height, 1)").label(next, "Slope", "slope").label(next, "Height", "height");
-    b.note(next, "Someone new: the line at 22, and a minute either way of their own. It reads the same slope and height as everything else, so it's read from the same weighted draws.");
+    let x = "A new runner's 5k";
+    b.value(x, 22.0).note(x, "Someone new's time over 5k, in minutes: type in another, or see the chart for all of them at once.");
+    let line = "Where the line is";
+    b.formula(line, "slope * x + height").label(line, "Slope", "slope").label(line, "Height", "height").label(line, x, "x");
+    b.note(line, "The line at the new runner's 5k: only as uncertain as the slope and height are.");
+    let next = "A new runner's 10k";
+    b.formula(next, "normal(slope * x + height, 1)").label(next, "Slope", "slope").label(next, "Height", "height").label(next, x, "x");
+    b.note(next, "Someone new: the line at their 5k, and a minute either way of their own. It reads the same slope and height as everything else, so it's exact too.");
+    let chart = "The line through the runners";
+    let points = Some(ChartPoints { table: "Runners".to_string(), x: "t5k".to_string(), y: "t10k".to_string() });
+    b.set(chart, CHART, Chart { from: 15.0, to: 35.0, points }).label(chart, x, "x").label(chart, line, "y").label(chart, next, "y");
+    b.note(chart, "The runners as points, and where the line is and where a new runner would be, as their 5k goes from 15 to 35 minutes.");
 }
 
 fn supplier(b: &mut Build) {

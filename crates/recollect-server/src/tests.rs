@@ -1462,6 +1462,27 @@ async fn a_row_picked_lists_only_the_rows_whats_known_leaves() {
     assert_eq!(items(&c.view(json!({})).await), 12);
 }
 
+/// The runners' chart: what it labels y, swept over what it labels x, is the line and a new runner's
+/// time, each exact, against numpy's own algebra at 15, 25 and 35 minutes.
+#[tokio::test]
+async fn the_runners_chart_sweeps_its_input_and_each_curve_is_exact() {
+    let c = Client::new();
+    c.open("runners").await;
+    let v = c.view(json!({})).await;
+    let chart = node(&v, "The line through the runners");
+    assert_eq!(chart["cells"]["chart"]["value"], json!({ "from": 15.0, "to": 35.0, "points": { "table": "Runners", "x": "t5k", "y": "t10k" } }));
+    let id = |name: &str| node(&v, name)["id"].clone();
+    let read = json!([{ "node": id("Where the line is"), "cell": "value" }, { "node": id("A new runner's 10k"), "cell": "value" }]);
+    let swept = c.post("/api/call/sweep", json!({ "set": { "node": id("A new runner's 5k"), "cell": "value" }, "values": [15, 25, 35], "read": read })).await;
+    let want = [(31.477851204263217, 0.4211843599765929, 1.0850789211338003), (52.46696631448772, 0.16361620771176225, 1.0132967301960363), (73.45608142471222, 0.5007440253683879, 1.1183669250036576)];
+    for (i, (mean, line, next)) in want.into_iter().enumerate() {
+        for (j, sd) in [(0, line), (1, next)] {
+            let d = &swept[i]["cells"][j]["value"]["dist"];
+            assert!(d["exact"] == true && (d["mean"].as_f64().unwrap() - mean).abs() < 1e-9 && (d["sd"].as_f64().unwrap() - sd).abs() < 1e-9, "{i} {j}: {d}");
+        }
+    }
+}
+
 /// Something seen, not yet known, says how much it would: how many-fold it narrows the worlds, which is
 /// the model's and not the number of draws'. Here m ~ normal(0, 1) and 1 ~ normal(m, 0.1): weighing by
 /// that, 1 + its χ² divergence is 11.66, by quadrature.

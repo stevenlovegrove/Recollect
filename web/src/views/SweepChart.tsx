@@ -108,6 +108,9 @@ export function SweepChart({ ws, lines, inputs, title }: { ws: Workspace; lines:
 
 const [W, H, LEFT, RIGHT, TOP, BOTTOM] = [640, 240, 64, 112, 12, 30];
 
+/** How wide a run of bands is, all told. */
+const widthOf = (row: (Band | null)[]) => row.reduce((w, b) => w + (b ? b.high - b.low : 0), 0);
+
 /**
  * Round numbers to mark an axis with, from below `lo` to above `hi`: steps of 1, 2 or 5 times a power of
  * ten, so that zero is one of them wherever it's in range.
@@ -127,13 +130,33 @@ function niceTicks(lo: number, hi: number, about = 4): number[] {
 /**
  * Lines over a run of numbers, one per name, with each named at its end and a crosshair that reads them
  * all. A null is a gap in a line. A line through uncertain numbers can have a band behind it: where each
- * falls nine times in ten.
+ * falls nine times in ten. Points, such as a table's rows, can be drawn behind them all; only those across
+ * the run are.
  */
-export function LinePlot({ xs, ys, bands, names, xName, label }: { xs: number[]; ys: (number | null)[][] | null; bands?: (Band | null)[][] | null; names: string[]; xName: string; label: string }) {
+export function LinePlot({
+  xs,
+  ys,
+  bands,
+  names,
+  xName,
+  label,
+  points,
+  pointsName,
+}: {
+  xs: number[];
+  ys: (number | null)[][] | null;
+  bands?: (Band | null)[][] | null;
+  names: string[];
+  xName: string;
+  label: string;
+  points?: { x: number; y: number; name: string }[];
+  pointsName?: string;
+}) {
   const [hover, setHover] = useState<number | null>(null);
   const [from, to] = [xs[0] ?? 0, xs[xs.length - 1] ?? 1];
   const last = xs.length - 1;
-  const all = [...(ys ?? []).flat().filter((v): v is number => v !== null), ...(bands ?? []).flat().flatMap((b) => (b ? [b.low, b.high] : []))];
+  const shownPoints = (points ?? []).filter((p) => p.x >= Math.min(from, to) && p.x <= Math.max(from, to));
+  const all = [...(ys ?? []).flat().filter((v): v is number => v !== null), ...(bands ?? []).flat().flatMap((b) => (b ? [b.low, b.high] : [])), ...shownPoints.map((p) => p.y)];
   const [ylo, yhi] = all.length ? [Math.min(...all), Math.max(...all)] : [0, 1];
   // Round ticks that cover everything, so zero is marked wherever it's in range.
   const ticks = niceTicks(ylo, yhi);
@@ -158,6 +181,11 @@ export function LinePlot({ xs, ys, bands, names, xName, label }: { xs: number[];
             <i className="sweep-swatch" style={{ background: `var(--series-${(i % 8) + 1})` }} /> {n}
           </span>
         ))}
+        {pointsName && (
+          <span>
+            <i className="sweep-swatch sweep-point-swatch" /> {pointsName}
+          </span>
+        )}
       </div>
       <svg
         viewBox={`0 0 ${W} ${H}`}
@@ -185,7 +213,9 @@ export function LinePlot({ xs, ys, bands, names, xName, label }: { xs: number[];
             {valueText(+xs[i].toPrecision(3))}
           </text>
         ))}
-        {bands?.map((row, li) => {
+        {/* Widest first, so a narrow band that shares its middle with a wider one is still seen on top. */}
+        {bands && [...bands.keys()].sort((a, b) => widthOf(bands[b]) - widthOf(bands[a])).map((li) => {
+          const row = bands[li];
           // One shape for each unbroken run: along the top, and back along the bottom.
           const runs: number[][] = [];
           row.forEach((b, i) => {
@@ -202,7 +232,15 @@ export function LinePlot({ xs, ys, bands, names, xName, label }: { xs: number[];
             return <path key={`${li}-${run[0]}`} d={`M${[...top, ...bottom].join("L")}Z`} fill={`var(--series-${(li % 8) + 1})`} className={`sweep-band ${run.every((i) => row[i]!.exact) ? "" : "drawn"}`} />;
           });
         })}
-        {ys?.map((row, li) => {
+        {shownPoints.map((p, i) => (
+          <circle key={`p${i}`} cx={px(p.x)} cy={py(p.y)} r={3} className="sweep-point">
+            <title>
+              {p.name}: {valueText(p.x)}, {valueText(p.y)}
+            </title>
+          </circle>
+        ))}
+        {ys && [...ys.keys()].sort((a, b) => (bands ? widthOf(bands[b] ?? []) - widthOf(bands[a] ?? []) : a - b)).map((li) => {
+          const row = ys[li];
           const pts = row.map((y, i) => (y === null ? null : `${px(xs[i])},${py(y)}`));
           const d = pts.reduce<string>((acc, p, i) => (p === null ? acc : `${acc}${i === 0 || pts[i - 1] === null ? "M" : "L"}${p}`), "");
           return <path key={names[li]} d={d} fill="none" stroke={`var(--series-${(li % 8) + 1})`} strokeWidth={2} strokeLinejoin="round" />;

@@ -1,0 +1,30 @@
+id: 01a1e216-c8a3-7378-a386-7338891d574d
+components:
+- chart
+- notes
+cells:
+  body: The runners as points, and where the line is and where a new runner would be, as their 5k goes from 15 to 35 minutes.
+  chart:
+    from: 15.0
+    points:
+      table: Runners
+      x: t5k
+      y: t10k
+    to: 35.0
+  name: The line through the runners
+links:
+- to: 01a1e216-c8a3-7378-a386-73350f2b2b0f
+  components:
+  - label
+  cells:
+    called: x
+- to: 01a1e216-c8a3-7378-a386-73367a5c0c3d
+  components:
+  - label
+  cells:
+    called: y
+- to: 01a1e216-c8a3-7378-a386-7337ed0736b2
+  components:
+  - label
+  cells:
+    called: y

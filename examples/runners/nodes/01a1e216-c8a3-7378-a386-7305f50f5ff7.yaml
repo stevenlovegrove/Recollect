@@ -1,0 +1,25 @@
+id: 01a1e216-c8a3-7378-a386-7305f50f5ff7
+components:
+- notes
+cells:
+  body: |-
+    Forty runners' 5k and 10k times are in the table **Runners**, in minutes.
+
+    **A runner seen** is `one_of(Runners.rows)`: one of the forty, each as likely. It's a short list, as a die is, so everything worked out from it is counted exactly, and nothing is fitted. **Their 5k** and **Their 10k** are read through it, so they're always the same runner's: the two columns move together, as they do in the data.
+
+    **Things to try**
+
+    - Select **Their 10k** and look at its histogram: the forty times, from 35½ minutes to nearly 70.
+    - Click **known?** on **Under 22 minutes over 5k**. Only the runners quicker than that are left, and **Their 10k** is now what they ran: all under 47 minutes.
+    - Open the worlds chip at the top: the forty runners, which can be pinned or stepped through one at a time.
+
+    **A line through them** is written as it would be on paper. **Slope** and **Height** are what's believed of the line before the data, and **Runners** itself says what was seen: every runner's 10k drawn from a bell curve about the line at their 5k, a minute either way, `all(r in rows: r.t10k ~ normal(slope * r.t5k + height, 1))`. It's evidence, so each draw of the slope and height counts as much as it makes the forty times likely.
+
+    The slope comes out 2.099 give or take 0.043, exactly. Each time is a bell curve about a straight line through the slope and height, with a spread that's plain, and they're bell curves beforehand, so what they are given the forty is a bell curve too, worked out rather than drawn, and so is everything read through them: hover over one, and see the notice on **Runners**. Make the spread uncertain too and it isn't, and the draws are moved to fit what was seen instead, and say so. See docs/inference.md.
+
+    - Select **Slope** and look at its histogram, then hover for how it was got.
+    - Click **known?** off on **Runners** and back: the prior's spread, and then the data's.
+    - **A new runner's 10k** is an ordinary formula over the same slope and height, at **A new runner's 5k**: type in another time and it follows.
+
+    **The line through the runners** is a chart: the forty runners as points, and two curves read as **A new runner's 5k** goes from 15 to 35 minutes, each with the band it falls in nine times in ten. **Where the line is** is only the line, so its band is only what isn't known about the slope and height, and it's narrow. **A new runner's 10k** is a minute either way of that, so its band is wider, and about as wide as the points are scattered. Select the chart to see it, and click **known?** off on **Runners** to see what the line was before the data.
+  name: About this example

@@ -1115,6 +1115,18 @@ table.matrix.compare th.elsewhere {
   stroke-width: 1;
   opacity: 0.6;
 }
+.sweep-point {
+  fill: var(--muted);
+  fill-opacity: 0.55;
+}
+.sweep-point-swatch {
+  border-radius: 50%;
+  background: var(--muted);
+  opacity: 0.55;
+}
+.chart-view {
+  margin: 4px 0 12px;
+}
 .sweep-cross {
   stroke: var(--muted);
   stroke-width: 1;

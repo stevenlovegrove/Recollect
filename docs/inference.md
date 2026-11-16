@@ -157,7 +157,7 @@ It leaves out:
 - **The algebra:** precision `P = I - 2A`, Cholesky `P = R·Rᵀ`, middle `P⁻¹b`, and each draw replaced by its middle plus `R⁻ᵀ` times new standard draws, named for the ones they stand in for with `|seen` after, so it's the same every time. At most 400 draws are replaced at once; past that, it's drawn.
 - **Reading through it:** a replaced draw's straight-line form is its replacement, its column is that worked out from the new draws, and what it depends on is the new draws, so two things that share none of them are still told apart and two that share one aren't. Nothing else in how anything is read changed.
 - **What it says:** a summary or a chance through a replaced draw is `given: exact`, and `exact` where it has a law. The app says *exactly normal(2.099, 0.04328), given what's been seen*, or, where there's no law, *read from draws of exactly what it is given what's been seen*. The notice `evidence_taken_exactly` says how many draws were replaced, and whether any of what's seen was left to weighing or moving.
-- **The runners:** the slope is `normal(2.0989115110224503, 0.04327818833887758)` to nine figures against numpy's own, and a 22-minute runner's 10k is `normal(46.1702…, 1.0162…)`, exact, where moving gave 2.099 ± 0.043 from draws.
+- **The runners:** the slope is `normal(2.0989115110224503, 0.04327818833887758)` to nine figures against numpy's own, and a new runner's 10k at 22 minutes is `normal(46.1702…, 1.0162…)`, exact, where moving gave 2.099 ± 0.043 from draws.
 
 It leaves out steps 5 to 7.
 

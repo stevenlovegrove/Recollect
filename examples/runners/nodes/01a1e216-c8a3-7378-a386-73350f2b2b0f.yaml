@@ -1,0 +1,8 @@
+id: 01a1e216-c8a3-7378-a386-73350f2b2b0f
+components:
+- notes
+- value
+cells:
+  body: 'Someone new''s time over 5k, in minutes: type in another, or see the chart for all of them at once.'
+  name: A new runner's 5k
+  value: 22.0
