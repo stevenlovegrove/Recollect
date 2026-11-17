@@ -668,6 +668,9 @@ enum Part {
     Seen { family: String, what: Id, args: Vec<Id>, site: u32 },
     /// `what ~ one_of(group)`.
     SeenOneOf { what: Id, nodes: Vec<Entity>, site: u32 },
+    /// No two of these the same. It's every pair differing, and it's worked out in one go where it can be:
+    /// see `distinct_of`.
+    Distinct(Vec<Id>),
 }
 
 impl Part {
@@ -689,6 +692,7 @@ impl Part {
             Part::Expect { mean, of } => Part::Expect { mean, of: to[of] },
             Part::Seen { family, what, args, site } => Part::Seen { family, what: to[what], args: args.into_iter().map(|a| to[a]).collect(), site },
             Part::SeenOneOf { what, nodes, site } => Part::SeenOneOf { what: to[what], nodes, site },
+            Part::Distinct(items) => Part::Distinct(items.into_iter().map(|a| to[a]).collect()),
             other => other,
         }
     }
@@ -697,6 +701,7 @@ impl Part {
         match self {
             Part::Seen { what, args, .. } => std::iter::once(*what).chain(args.iter().copied()).collect(),
             Part::SeenOneOf { what, .. } => vec![*what],
+            Part::Distinct(items) => items.clone(),
             Part::Lit(_) | Part::Read { .. } | Part::Has(..) | Part::Chose(..) | Part::Draw(..) | Part::OneOf(..) => vec![],
             Part::Field(a, _) | Part::Not(a) | Part::Neg(a) | Part::Defined(a) | Part::Floor(a) | Part::Ceil(a) | Part::Math(_, a) | Part::Bernoulli(a, _) | Part::Expect { of: a, .. } => vec![*a],
             Part::Bin(_, a, b) | Part::Round(a, b) | Part::Integers(a, b, _) => vec![*a, *b],
@@ -1175,14 +1180,7 @@ impl<'c, 'a> Expander<'c, 'a> {
 
     /// No two of these the same: every pair differs.
     fn distinct(&self, each: &[Id]) -> Id {
-        let mut acc = self.lit(Val::Bool(true));
-        for (i, a) in each.iter().enumerate() {
-            for b in &each[i + 1..] {
-                let differ = self.add(Part::Bin(BinOp::Ne, *a, *b));
-                acc = self.add(Part::Bin(BinOp::And, acc, differ));
-            }
-        }
-        acc
+        self.add(Part::Distinct(each.to_vec()))
     }
 
     fn fold(&self, func: &str, var: &str, group: &Group, body: &Expr, start: Option<&Expr>, scope: &Scope) -> Result<Id, Error> {
@@ -1539,6 +1537,20 @@ fn type_of(cx: &Cx, part: &Part, types: &[Type]) -> Result<Type, Error> {
         Part::Bernoulli(p, _) => {
             let p = &types[*p];
             if numberish(p) { Ok(Type::Bool) } else { failed(format!("bernoulli needs a chance, not {}", p.word())) }
+        }
+        Part::Distinct(items) => {
+            for (i, a) in items.iter().enumerate() {
+                for b in &items[i + 1..] {
+                    let (ta, tb) = (&types[*a], &types[*b]);
+                    if *ta == Type::Seen || *tb == Type::Seen {
+                        return failed("distinct can't compare something seen");
+                    }
+                    if ta.join(tb).is_none() {
+                        return failed(format!("distinct can't compare {} with {}", ta.word(), tb.word()));
+                    }
+                }
+            }
+            Ok(Type::Bool)
         }
         Part::Bin(op, a, b) => {
             let (ta, tb) = (&types[*a], &types[*b]);
@@ -2061,6 +2073,7 @@ fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
         Part::Bernoulli(p, site) => Ev::Data(bernoulli(cx, &values[*p].data(), *site)?),
         Part::Expect { mean, of } => Ev::Data(expect(cx, *mean, &values[*of])?),
         Part::Bin(op, a, b) => binary(*op, &values[*a], &values[*b])?,
+        Part::Distinct(items) => distinct_of(&items.iter().map(|i| &values[*i]).collect::<Vec<_>>())?,
         Part::OneOf(rows, site) => Ev::Data(one_of(cx, rows, *site)?),
         Part::Seen { family, what, args, site } => {
             let mut together = values[*what].data().map(|v| vec![v.clone()]);
@@ -2201,6 +2214,25 @@ fn one_of(cx: &Cx, rows: &[Entity], site: u32) -> Result<Cond<Val>, Error> {
     let options: Vec<(String, f64, bool)> = rows.iter().map(|r| (r.to_string(), 1.0, false)).collect();
     let var = Space::global().var(&draw_name(cx, site), &options);
     Ok(var.value().map(|o| Val::Ref(o.parse().expect("written as a node just above"))))
+}
+
+/// No two the same. Where each is a plain value that depends on one choice at most, as a choice's own value
+/// does, it's built in one go, which stays small where every pair differing, one pair at a time, wouldn't:
+/// see `Space::distinct`. Otherwise, and where anything could be undefined or uncertain, it's every pair
+/// differing, which says the same wherever both can.
+fn distinct_of(items: &[&Ev]) -> Result<Ev, Error> {
+    let data: Vec<Cond<Val>> = items.iter().map(|e| e.data()).collect();
+    let plain = data.iter().all(|c| c.cases().iter().all(|(_, v)| matches!(v, Val::Bool(_) | Val::Num(_) | Val::Text(_) | Val::Ref(_))));
+    if plain && let Some(yes) = Space::global().distinct(&data.iter().collect::<Vec<_>>()) {
+        return Ok(Ev::Truth { yes, undefined: Space::global().never() });
+    }
+    let mut acc = Ev::Truth { yes: Space::global().always(), undefined: Space::global().never() };
+    for (i, a) in items.iter().enumerate() {
+        for b in &items[i + 1..] {
+            acc = binary(BinOp::And, &acc, &binary(BinOp::Ne, a, b)?)?;
+        }
+    }
+    Ok(acc)
 }
 
 fn binary(op: BinOp, a: &Ev, b: &Ev) -> Result<Ev, Error> {
@@ -2496,6 +2528,7 @@ fn render(closed: &Closed) -> String {
             Part::If(c, a, b) => format!("if({}, {}, {})", out[*c], out[*a], out[*b]),
             Part::Bin(op @ (BinOp::Max | BinOp::Min), a, b) => format!("{}({}, {})", op.symbol(), out[*a], out[*b]),
             Part::Bin(op, a, b) => format!("({} {} {})", out[*a], op.symbol(), out[*b]),
+            Part::Distinct(items) => format!("distinct({})", items.iter().map(|i| out[*i].as_str()).collect::<Vec<_>>().join(", ")),
             Part::Not(a) => format!("!{}", out[*a]),
             Part::Neg(a) => format!("-{}", out[*a]),
             Part::Defined(a) => format!("defined({})", out[*a]),

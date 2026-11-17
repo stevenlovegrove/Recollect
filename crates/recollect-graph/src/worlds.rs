@@ -6,7 +6,7 @@
 //! so equal functions compare equal in constant time and a memoised cell stops propagating when
 //! its function hasn't changed. `Cond<T>` is any value that differs between worlds.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
@@ -420,9 +420,98 @@ impl Space {
         DrawGroup::gather(vars).pop()
     }
 
-    /// How many diagram nodes exist: a measure of how hard things have been.
+    /// How many diagram nodes exist: a measure of how hard things have been. Nothing is ever freed, so
+    /// this is every node made so far; `Bool::size` is how many one value uses.
     pub fn size(&self) -> usize {
         self.lock().nodes.len()
+    }
+
+    /// The worlds where no two of these are the same, built in one pass rather than as every pair
+    /// differing: going down the choices in order, what matters about the ones above is only which
+    /// values they've used, so there are at most as many nodes at each level as sets of values. Each item
+    /// can depend on one choice at most, as a choice's own value does, and the same choice can be under
+    /// several items. Nothing, if one depends on more than one: then it's for the pairs to say.
+    pub fn distinct<T: PartialEq>(&self, items: &[&Cond<T>]) -> Option<Bool> {
+        let mut m = self.lock();
+        // Each value by an index, so a set of them is a set of numbers.
+        let mut values: Vec<&T> = Vec::new();
+        fn index<'v, T: PartialEq>(values: &mut Vec<&'v T>, v: &'v T) -> usize {
+            values.iter().position(|w| *w == v).unwrap_or_else(|| {
+                values.push(v);
+                values.len() - 1
+            })
+        }
+        let mut fixed: Vec<usize> = Vec::new();
+        // For each choice, its items: the value each option makes each one.
+        let mut on: BTreeMap<u32, Vec<Vec<usize>>> = BTreeMap::new();
+        for item in items {
+            let support = m.support(item.cases.iter().map(|c| c.0));
+            match support.iter().collect::<Vec<_>>().as_slice() {
+                [] => fixed.push(index(&mut values, &item.cases.iter().find(|(g, _)| *g == TRUE)?.1)),
+                [var] => {
+                    let var = **var;
+                    let options = m.vars[var as usize].options.len();
+                    let mut per = Vec::with_capacity(options);
+                    for o in 0..options {
+                        // Depending on this choice alone, a case's guard is decided by the option.
+                        let (_, v) = item.cases.iter().find(|(g, _)| m.cofactor(*g, var, o) == TRUE)?;
+                        per.push(index(&mut values, v));
+                    }
+                    on.entry(var).or_default().push(per);
+                }
+                _ => return None,
+            }
+        }
+        let words = values.len().div_ceil(64).max(1);
+        let mut used = vec![0u64; words];
+        for v in fixed {
+            if used[v / 64] & (1 << (v % 64)) != 0 {
+                return Some(Bool { space: self.clone(), f: FALSE });
+            }
+            used[v / 64] |= 1 << (v % 64);
+        }
+        // Under each choice, each option either clashes with itself or adds these values.
+        let levels: Vec<(u32, Vec<Option<Vec<usize>>>)> = on
+            .into_iter()
+            .map(|(var, items)| {
+                let options = items[0].len();
+                let adds = (0..options)
+                    .map(|o| {
+                        let mut here: Vec<usize> = items.iter().map(|per| per[o]).collect();
+                        here.sort_unstable();
+                        let n = here.len();
+                        here.dedup();
+                        (here.len() == n).then_some(here)
+                    })
+                    .collect();
+                (var, adds)
+            })
+            .collect();
+        fn build(m: &mut Mdd, levels: &[(u32, Vec<Option<Vec<usize>>>)], level: usize, used: &[u64], memo: &mut HashMap<(usize, Vec<u64>), F>) -> F {
+            if level == levels.len() {
+                return TRUE;
+            }
+            if let Some(&f) = memo.get(&(level, used.to_vec())) {
+                return f;
+            }
+            let (var, adds) = &levels[level];
+            let kids = adds
+                .iter()
+                .map(|add| match add {
+                    Some(add) if add.iter().all(|v| used[v / 64] & (1 << (v % 64)) == 0) => {
+                        let mut next = used.to_vec();
+                        add.iter().for_each(|v| next[v / 64] |= 1 << (v % 64));
+                        build(m, levels, level + 1, &next, memo)
+                    }
+                    _ => FALSE,
+                })
+                .collect();
+            let f = m.mk(*var, kids);
+            memo.insert((level, used.to_vec()), f);
+            f
+        }
+        let f = build(&mut m, &levels, 0, &used, &mut HashMap::new());
+        Some(Bool { space: self.clone(), f })
     }
 
     fn and(&self, a: F, b: F) -> F {
@@ -685,6 +774,18 @@ impl Bool {
     /// appear in it.
     pub fn given(&self, picks: &Picks) -> Bool {
         Bool { space: self.space.clone(), f: self.space.lock().given(self.f, &picks.0, &mut HashMap::new()) }
+    }
+
+    /// How many diagram nodes this uses: how big it is to hold.
+    pub fn size(&self) -> usize {
+        let m = self.space.lock();
+        let (mut seen, mut stack) = (HashSet::new(), vec![self.f]);
+        while let Some(f) = stack.pop() {
+            if f > TRUE && seen.insert(f) {
+                stack.extend(m.nodes[f as usize].1.iter().copied());
+            }
+        }
+        seen.len()
     }
 
     /// The open choices this actually depends on.

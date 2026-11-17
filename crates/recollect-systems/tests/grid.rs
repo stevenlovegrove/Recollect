@@ -211,34 +211,30 @@ fn a_sudoku_is_a_grid_of_choices_with_nothing_written_but_how_far_it_goes() {
     g.assert_round_trips();
 }
 
-// KNOWN LIMITATION: this is what a 9×9 should be, but the worlds can't hold it yet. One cell's `fits` (three
-// `distinct`s, as pairwise `!=`, over 21 nine-way choices) alone takes about a minute and 78 million nodes,
-// and as written the run is killed for memory. Starting from the givens and adding each cell's `fits` in
-// turn doesn't help, as it's each `fits` that's too big. It needs `distinct` to be its own constraint in the
-// worlds, or choices held some other way. Run it with `cargo test --release -- --ignored` to try.
+/// A 9×9 with its givens written on their cells: about a second. Each `distinct` is built in one pass (see
+/// `Space::distinct`), and a given, a choice of one option, isn't open at all, so only the 51 open cells are.
 #[test]
-#[ignore = "too big for the worlds as they are: see the note above"]
 fn a_nine_by_nine_sudoku_with_its_givens_has_one_solution() {
+    use recollect_graph::Graph;
     let mut g = N::with(plan::install);
     sudoku(&mut g, 9, 3);
     let puzzle = ["53..7....", "6..195...", ".98....6.", "8...6...3", "4..8.3..1", "7...2...6", ".6....28.", "...419..5", "....8..79"];
-    let givens: Vec<String> = puzzle
-        .iter()
-        .enumerate()
-        .flat_map(|(r, line)| line.chars().enumerate().filter(|(_, d)| *d != '.').map(move |(c, d)| format!("Cell[{}, {}].chosen.value = {d}", r + 1, c + 1)))
-        .collect();
-    g.formula("Given", &givens.join(" && ")).add("Given", REQUIRES);
-    let started = std::time::Instant::now();
+    // Each given is its cell written with only that option.
+    for (r, line) in puzzle.iter().enumerate() {
+        for (c, d) in line.chars().enumerate().filter(|(_, d)| *d != '.') {
+            let e = Graph::row_id("Cell", &k(&[r as i64 + 1, c as i64 + 1]));
+            g.g.make_written(e);
+            g.g.set(e, Options(vec![d.to_string()]));
+        }
+    }
     let valid = truth(&g.get::<ValueCell>("Solved").unwrap().unwrap());
-    let given = truth(&g.get::<ValueCell>("Given").unwrap().unwrap());
+    assert_eq!(valid.size(), 51, "one way through the 51 open cells");
     let vars = vars_of(&g, "Cell");
-    let both = &given & &valid;
-    assert_eq!(both.count(&vars), 1);
-    let solved = both.solutions(&vars, 2);
+    assert_eq!(valid.count(&vars), 1);
+    let solved = valid.solutions(&vars, 2);
     let names: std::collections::BTreeMap<String, Key> = g.g.rows("Cell").into_iter().map(|e| (e.to_string(), g.g.row_of(e).unwrap().key)).collect();
     let first_line: String = (1..=9).map(|c| solved[0].iter().find(|(id, _)| names[*id] == k(&[1, c])).unwrap().1.clone()).collect();
     assert_eq!(first_line, "534678912");
-    eprintln!("9×9 worked out in {:?}", started.elapsed());
 }
 
 #[test]
