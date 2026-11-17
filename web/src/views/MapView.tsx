@@ -359,7 +359,7 @@ function TableCard({ data }: NodeProps<RFNode<TableData>>) {
         {onDefault && (
           <button
             className="card-table-link nodrag nopan small"
-            title={`Fold only the rows of ${name} that aren't something on their own, as it does by default: a row that's linked, read on its own, or says its own formula is a card`}
+            title={`Fold only the rows of ${name} the card can show, as it does by default: a row with notes, that's required or known, or that's a decision is a card`}
             onClick={(e) => {
               e.stopPropagation();
               onDefault();
@@ -394,7 +394,7 @@ function TableCard({ data }: NodeProps<RFNode<TableData>>) {
           {open > 0 && <span className="muted">{open} open choices</span>}
           {open > 0 && apart > 0 && <span className="muted"> · </span>}
           {apart > 0 && (
-            <span className="muted" title="Rows of this table drawn as cards of their own: ones that are something on their own, or that are one thing with rows of a table that isn't folded">
+            <span className="muted" title="Rows of this table drawn as cards of their own: ones with notes, that are required or known, or that are decisions, or that are one thing with rows of a table that isn't folded">
               {apart} more as cards
             </span>
           )}
@@ -804,44 +804,46 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
   const refit = useRef(false);
   // An option of several questions, with nothing to say but what it's an option or a part of, would be a
   // card with a line to each of them, and the lines would be most of the map. It's drawn on each instead.
-  // A table's rows are one card too, written or not, except a row that's something on its own: one that's
-  // linked, says a formula of its own, is part of a thing with rows in other tables, or is read by something
-  // outside its table that doesn't read every row. What the rows read of each other, as `prev` or a sudoku's line and box, is the table's own
-  // structure, so it's said once on the card. Forty runners, ten years or eighty-one cells are a table,
+  // A table's rows are one card too, written or not. A line to the card says which rows it's to, by their
+  // keys, and the card marks a row's own formula, so a row that's read or linked on its own loses nothing
+  // by being on it. What the rows read of each other, as `prev` or a sudoku's line and box, is the table's
+  // own structure, so it's said once on the card. Forty runners, ten years or eighty-one cells are a table,
   // where that many cards would say less.
   //
+  // A row is a card of its own only where the table's card can't show it or act on it: it has notes, it's
+  // required or known, or it's a decision. A row that's one thing with rows of other tables is that thing's
+  // card, so it's on a table's card only when all of those tables are folded. A whole table is cards where
+  // its rows link to each other, as tasks that depend on each other do, since that shape is what a map
+  // shows and a card would only count it; where it has one row; or where fewer than half its rows would
+  // fold, since a card and mostly cards beside it is the worst of both.
+  //
   // That's only how a table starts: any table can be folded into one card, or shown as a card for each
-  // row, which `cards` remembers. Folded, every row is on its card, except one that's one thing with rows of
-  // tables that aren't folded, since that card is theirs too.
+  // row, which `cards` remembers.
   const { folded, foldDefault } = useMemo(() => {
     const out = new Set<string>();
     const foldDefault = new Map<string, "all" | "some" | "none">();
     const asked = new Set(g.worlds.vars.map((v) => v.id));
-    const touched = new Set(g.edges.flatMap((e) => [e.from, e.to]));
     const byTable = new Map<string, GraphNode[]>();
     for (const n of g.nodes) if (n.row) byTable.set(n.row.table, [...(byTable.get(n.row.table) ?? []), n]);
-    // Rows read one by one from outside their table: something that reads all of a table reads the table.
-    const singled = new Set<string>();
-    for (const n of g.nodes) {
-      const read = new Map<string, string[]>();
-      for (const x of n.reads ?? []) {
-        const t = ws.byId.get(x)?.row?.table;
-        if (t && t !== n.row?.table) read.set(t, [...(read.get(t) ?? []), x]);
-      }
-      for (const [t, xs] of read) if (xs.length < (byTable.get(t)?.length ?? 0)) xs.forEach((x) => singled.add(x));
-    }
+    // A link that only names what a formula reads, `called: rate`, is a read; any other is a link.
+    const linking = g.edges.filter((e) => e.components.some((c) => c !== "label"));
+    const merged = (r: GraphNode) => (r.parts?.length ?? 0) > 0;
+    // What a row takes from its table, as every queen and every sudoku cell is a decision, is the table's,
+    // and its card says so: only what a row was given itself makes it a card.
+    const alone = (r: GraphNode) =>
+      r.components.some((c) => c.why === "given" && ["notes", "requires", "evidence", "decision"].includes(c.name)) ||
+      (r.cells.body?.source === "own" && typeof r.cells.body.value === "string" && r.cells.body.value.trim() !== "");
     for (const [table, rows] of byTable) {
-      // A row that's part of one thing with rows of other tables is drawn as that thing's card already.
-      const own = (r: GraphNode) => touched.has(r.id) || singled.has(r.id) || (r.parts?.length ?? 0) > 0 || Object.values(r.cells).some((c) => c.source === "own" && c.formula !== undefined);
-      const plain = rows.filter((r) => !own(r));
-      foldDefault.set(table, plain.length > 1 ? (plain.length === rows.length ? "all" : "some") : "none");
-      const pref = layoutPref.cards?.[table];
-      if (pref === true) continue;
-      if (pref === false) {
-        for (const r of rows) if (tablesOf(r).every((t) => layoutPref.cards?.[t] === false)) out.add(r.id);
-        continue;
-      }
-      if (plain.length > 1) plain.forEach((r) => out.add(r.id));
+      const ids = new Set(rows.map((r) => r.id));
+      const structured = linking.some((e) => e.from !== e.to && ids.has(e.from) && ids.has(e.to));
+      const loose = rows.filter((r) => !merged(r) && !alone(r)).length;
+      foldDefault.set(table, structured || rows.length < 2 || loose * 2 < rows.length ? "none" : loose === rows.length ? "all" : "some");
+    }
+    const folding = (t: string) => layoutPref.cards?.[t] === false || (layoutPref.cards?.[t] === undefined && foldDefault.get(t) !== "none");
+    for (const [table, rows] of byTable) {
+      if (!folding(table)) continue;
+      const told = layoutPref.cards?.[table] === false;
+      for (const r of rows) if (merged(r) ? tablesOf(r).every(folding) : told || !alone(r)) out.add(r.id);
     }
     if (layoutPref.fold === false) return { folded: out, foldDefault };
     const into = new Set(g.edges.map((e) => e.to));
