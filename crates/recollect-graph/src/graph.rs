@@ -1224,6 +1224,12 @@ impl Graph {
         self.reading(|s| s.read_value(e, cell))
     }
 
+    /// A worked-out cell, by its name, as the type it was worked out as, which saves going through JSON:
+    /// see `Session::read_computed_as`. Nothing if it isn't worked out, or isn't that type.
+    pub fn get_computed_as<C: Clone + 'static>(&self, e: Entity, cell: &str) -> Option<Cell<C>> {
+        self.reading(|s| s.read_computed_as(e, cell))
+    }
+
     /// Run something with what a computed cell on this entity could see, as one would, without keeping
     /// anything: to try out a formula, say.
     pub fn run<R>(&self, e: Entity, f: impl Fn(&Cx) -> R) -> R {
@@ -1611,6 +1617,18 @@ impl Session<'_> {
         }
     }
 
+    /// A worked-out cell's value as the Rust type it was worked out as, by the cell's name, without going
+    /// through JSON. Nothing if it isn't worked out, or isn't that type: then `read_value` is the way.
+    fn read_computed_as<C: Clone + 'static>(&self, e: Entity, cell: &str) -> Option<Cell<C>> {
+        let key: Key = (e, cell.to_string());
+        let c = self.g.backing_at(e, cell)?.0.computed()?.clone();
+        self.note(Dep::Cell(key.clone()));
+        if let Err(err) = self.settle(&key, &c) {
+            return Some(Err(err));
+        }
+        self.engine.borrow().memo[&key].value.downcast_ref::<Cell<C>>().cloned()
+    }
+
     fn read_value(&self, e: Entity, cell: &str) -> Cell<Value> {
         let key: Key = (e, cell.to_string());
         self.note(Dep::Cell(key.clone()));
@@ -1830,6 +1848,11 @@ impl Cx<'_> {
     /// Any cell, by its name.
     pub fn get_value(&self, e: Entity, cell: &str) -> Cell<Value> {
         self.s.read_value(e, cell)
+    }
+
+    /// A worked-out cell as the type it was worked out as: see `Graph::get_computed_as`.
+    pub fn get_computed_as<C: Clone + 'static>(&self, e: Entity, cell: &str) -> Option<Cell<C>> {
+        self.s.read_computed_as(e, cell)
     }
 
     /// The edges with this component arriving here, each with its source.

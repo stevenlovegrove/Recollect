@@ -1894,6 +1894,11 @@ fn read_cell(cx: &Cx, node: Entity, component: &str, fields: &[String]) -> Resul
         LatestStart::NAME => number_cell(cx.get::<LatestStart>(node)?.map(|c| c.0)),
         LatestFinish::NAME => number_cell(cx.get::<LatestFinish>(node)?.map(|c| c.0)),
         PlanEnd::NAME => number_cell(cx.get::<PlanEnd>(node)?.map(|c| c.0)),
+        // One of the workspace's own cells, worked out by a formula, is a value already.
+        _ if let Some(v) = cx.get_computed_as::<ValueCell>(node, component) => match v? {
+            Some(v) => Ev::Data(v.0.0),
+            None => Ev::Data(pure(Val::Undefined)),
+        },
         _ => match cx.get_value(node, component)? {
             None => Ev::Data(pure(Val::Undefined)),
             Some(v) => from_json(v).map_err(|detail| Error::Malformed { cell: (node, component.to_string()), detail })?,
@@ -2448,9 +2453,10 @@ fn free_compiler() -> Compile {
     Arc::new(|text: &str| {
         let e = expr::parse(text)?;
         let text = text.to_string();
-        Ok(Computed::json("formula", move |cx| {
+        // Kept as what it is, so what reads it doesn't go through JSON: see `Graph::get_computed_as`.
+        Ok(Computed::typed::<ValueCell>("formula", move |cx| {
             let c = work_out(cx, &e, &Type::Any).map_err(|err| in_text(err, &text))?;
-            Ok(Some(serde_json::to_value(Worldly(c)).expect("values serialise")))
+            Ok(Some(ValueCell(Worldly(c))))
         }))
     })
 }
@@ -2563,6 +2569,10 @@ fn in_text(err: Error, text: &str) -> Error {
 
 /// One of the workspace's own cells as a world value, if it holds what a formula would.
 pub fn shown_free(g: &Graph, e: Entity, cell: &str) -> Option<Cell<Shown>> {
+    // Worked out by a formula, it's a value already, with no need to go through JSON.
+    if let Some(v) = g.get_computed_as::<ValueCell>(e, cell) {
+        return Some(v.map(|v| v.map(|v| shown_val(&v.0.0))));
+    }
     let v = match g.get_value(e, cell) {
         Ok(Some(v)) => v,
         Ok(None) => return Some(Ok(None)),
