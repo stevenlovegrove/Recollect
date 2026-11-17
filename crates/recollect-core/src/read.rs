@@ -439,11 +439,11 @@ fn one(g: &Graph, said: &str) -> Result<Entity, String> {
 
 fn by_id_or_name(g: &Graph, said: &str) -> Vec<Entity> {
     if let Ok(e) = said.parse::<Entity>()
-        && g.contains(e)
+        && g.kind_of(e).is_some()
     {
         return vec![e];
     }
-    g.entities().filter(|e| name_of(g, *e).as_deref() == Some(said)).collect()
+    g.nodes().writable().filter(|e| name_of(g, *e).as_deref() == Some(said)).collect()
 }
 
 fn name_of(g: &Graph, e: Entity) -> Option<String> {
@@ -455,7 +455,7 @@ fn name_of(g: &Graph, e: Entity) -> Option<String> {
 
 /// Every node the selection picks out, in the order they were made.
 fn select(g: &Graph, s: &Select) -> Result<Vec<Entity>, String> {
-    let mut nodes: Vec<Entity> = g.entities().filter(|e| !g.is_edge(*e)).collect();
+    let mut nodes: Vec<Entity> = g.nodes().writable().collect();
     if !s.ids.is_empty() {
         let mut wanted = BTreeSet::new();
         for said in &s.ids {

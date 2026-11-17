@@ -195,7 +195,7 @@ fn a_numbered_table_goes_on_as_far_as_its_asked_and_none_of_that_is_saved() {
     assert_eq!(t.g.row_at("Year", &Key::Num(1 + recollect_graph::graph::MOST_IMPLICIT + 1)), None);
     assert_eq!(t.g.row_at("Year", &Key::Text("x".to_string())), None, "only numbers go on by themselves");
     assert_eq!(t.g.save(), saved, "none of it is written down");
-    assert!(!t.g.entities().any(|e| e == far));
+    assert!(!t.g.nodes().written().any(|e| e == far));
 
     // It's remembered, and changes reach it.
     t.g.take_ran();
@@ -354,7 +354,7 @@ fn a_long_lived_graph_with_tables_always_agrees_with_a_new_one() {
                 assert_eq!(a.is_some(), b.is_some());
                 if let (Some(a), Some(b)) = (a, b) {
                     assert_eq!(outcome(&g, a), outcome(&new, b), "{table}[{n}], with {state:?}");
-                    implicit += usize::from(!g.entities().any(|e| e == a));
+                    implicit += usize::from(!g.nodes().written().any(|e| e == a));
                 }
             }
             if edits % 10 == 0 {

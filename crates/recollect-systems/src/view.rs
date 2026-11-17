@@ -48,7 +48,7 @@ fn scopes(g: &Graph, e: Entity) -> Vec<Entity> {
 impl ViewGraph {
     pub fn of(g: &Graph) -> Self {
         ViewGraph {
-            nodes: g.entities().map(|e| (e, ViewNode { hidden: 0, external: false })).collect(),
+            nodes: g.nodes().writable().map(|e| (e, ViewNode { hidden: 0, external: false })).collect(),
             edges: g.edges().map(|(e, f, t)| ((f, t), ViewEdge { kinds: g.given(e), links: 1 })).collect(),
         }
     }

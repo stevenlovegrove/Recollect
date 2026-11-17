@@ -303,7 +303,7 @@ fn the_end_of_the_plan_is_worked_out_once() {
     let ends = ran.iter().filter(|(_, c)| c == "plan_end").count();
     assert_eq!(ends, 1, "{ran:?}");
     assert!(ran.iter().filter(|(_, c)| c == "plan_end").all(|(e, _)| *e == Entity::whole()));
-    assert!(!g.g.entities().any(|e| e == Entity::whole()), "and it isn't a node");
+    assert!(!g.g.nodes().written().any(|e| e == Entity::whole()), "and it isn't a node");
 }
 
 // ---------- the two parts check each other ----------

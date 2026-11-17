@@ -16,7 +16,7 @@ fn registry() -> Arc<Registry> {
 }
 
 fn read_everything(g: &Graph) {
-    for e in g.entities() {
+    for e in g.nodes().written() {
         g.get::<Need>(e).unwrap();
         g.get::<Done>(e).unwrap();
         g.get::<Blocked>(e).unwrap();
@@ -92,7 +92,7 @@ fn many_independent_decisions() {
     log.commit("t", "import", ops).unwrap();
     let start = Instant::now();
     read_everything(log.graph());
-    println!("{} nodes, 2^40 worlds: every cell read in {:?}", log.graph().entities().count(), start.elapsed());
+    println!("{} nodes, 2^40 worlds: every cell read in {:?}", log.graph().nodes().written().count(), start.elapsed());
 }
 
 /// The same shape as the log's measurement, with something reading the plan after each edit, as a

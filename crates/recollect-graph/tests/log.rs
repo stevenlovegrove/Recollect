@@ -168,7 +168,7 @@ fn a_refused_commit_changes_nothing_and_leaves_no_event() {
     assert_eq!(refused(&mut log, [fine.clone(), vec![choose(c.calib, c.imu)]].concat()), ["chosen_must_be_a_live_option"]);
     assert_eq!(refused(&mut log, [fine, vec![Op::Despawn { id: Entity::new() }]].concat()), ["op_failed"]);
     assert_eq!(log.graph().save(), before);
-    assert!(!log.graph().entities().any(|e| e == extra));
+    assert!(!log.graph().nodes().written().any(|e| e == extra));
 
     ok(&mut log, vec![choose(c.calib, c.cad)]);
     let rule_out = Op::Set { on: On::Edge { from: c.cad, to: c.calib }, cell: RuledOut::NAME.into(), to: Some(Stored::Value(json!({}))) };
@@ -346,10 +346,10 @@ fn external_edits_are_audited_not_lost() {
     assert_eq!((ev.author.as_str(), ev.why.as_str()), ("git pull", "external edit"));
     let seq = ev.seq;
     assert_eq!(log.state_at(seq).save(), disk, "and replay reproduces it");
-    assert!(log.state_at(seq - 1).entities().any(|e| e == c.free));
+    assert!(log.state_at(seq - 1).nodes().written().any(|e| e == c.free));
 
     log.undo(seq, "steven", "that pull was wrong").unwrap();
-    assert!(log.graph().entities().any(|e| e == c.free), "external edits can be undone too");
+    assert!(log.graph().nodes().written().any(|e| e == c.free), "external edits can be undone too");
     assert!(!log.graph().has_own(c.imu, Done::NAME), "and it's worked out again");
 
     let events = log.events().len();
@@ -462,7 +462,7 @@ fn a_new_file_and_a_removed_file_are_edits_too() {
 
     let (seq, _) = log.reconcile(&disk, "ext");
     assert_eq!(log.events()[seq.unwrap() as usize].author, "ext");
-    let ids: Vec<Entity> = log.graph().entities().collect();
+    let ids: Vec<Entity> = log.graph().nodes().written().collect();
     assert!(ids.contains(&new) && ids.contains(&b) && !ids.contains(&a), "{ids:?}");
     log.graph().get::<Done>(new).unwrap().unwrap();
     let changes = log.take_changes();
@@ -666,7 +666,7 @@ fn undoing_and_redoing_anywhere_is_the_same_as_replaying_from_nothing() {
         let head = log.last_seq().unwrap();
         let fresh = log.state_at(head);
         assert_eq!(log.graph().save(), fresh.save(), "at {head}");
-        for e in fresh.entities().chain(fresh.edges().map(|(e, _, _)| e)) {
+        for e in fresh.nodes().written().chain(fresh.edges().map(|(e, _, _)| e)) {
             assert_eq!(log.graph().components_of(e), fresh.components_of(e), "at {head}");
             assert_eq!(log.graph().cells_of(e), fresh.cells_of(e), "at {head}");
             for c in fresh.cells_of(e) {

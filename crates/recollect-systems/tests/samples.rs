@@ -50,17 +50,17 @@ fn open(name: &str) -> Opened {
     assert_eq!(problems, vec![], "{name} loads with nothing to report");
     let (log, problems) = Log::from_saved(g.save(), built.registry);
     assert_eq!(problems, vec![], "{name} opens with nothing to report");
-    let ids = log.graph().entities().filter_map(|e| Some((log.graph().get::<Name>(e).ok()??.0, e))).collect();
+    let ids = log.graph().nodes().written().filter_map(|e| Some((log.graph().get::<Name>(e).ok()??.0, e))).collect();
     Opened { log, ids }
 }
 
 /// The choices a puzzle's solutions range over, and its solutions by name.
 fn solutions(o: &Opened, limit: usize) -> (Bool, Vec<Var>, Vec<BTreeMap<String, String>>) {
     let g = o.g();
-    let puzzle = g.entities().find(|e| g.has(*e, REQUIRES)).unwrap();
+    let puzzle = g.nodes().written().find(|e| g.has(*e, REQUIRES)).unwrap();
     let valid = truth(&g.get::<ValueCell>(puzzle).unwrap().unwrap());
     let mut vars = Vec::new();
-    for e in g.entities() {
+    for e in g.nodes().writable() {
         if let Some(options) = options_of(g, e) {
             let options: Vec<&str> = options.iter().map(String::as_str).collect();
             vars.push(Space::global().uniform(&e.to_string(), &options));

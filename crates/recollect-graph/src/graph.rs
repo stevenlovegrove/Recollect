@@ -67,6 +67,45 @@ impl Entity {
     }
 }
 
+/// What a node is: see `Graph::nodes`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeKind {
+    /// Somebody wrote it, so it's saved.
+    Written,
+    /// A row of a table nobody wrote anything on: inside the table's extent, or read by a formula. It takes
+    /// everything from the table, and isn't saved.
+    Row,
+    /// Only what its cells say, such as one of a puzzle's options. Nothing can be written on it, and it
+    /// isn't saved.
+    Constant,
+}
+
+/// The nodes there are, each with its kind: see `Graph::nodes`.
+#[derive(Clone, Debug, Default)]
+pub struct Nodes(pub Vec<(Entity, NodeKind)>);
+
+impl Nodes {
+    /// Every one, of any kind.
+    pub fn all(&self) -> impl Iterator<Item = Entity> + '_ {
+        self.0.iter().map(|(e, _)| *e)
+    }
+
+    /// The ones somebody wrote, which are the ones saved.
+    pub fn written(&self) -> impl Iterator<Item = Entity> + '_ {
+        self.of(NodeKind::Written)
+    }
+
+    /// The ones of this kind.
+    pub fn of(&self, kind: NodeKind) -> impl Iterator<Item = Entity> + '_ {
+        self.0.iter().filter(move |(_, k)| *k == kind).map(|(e, _)| *e)
+    }
+
+    /// The ones that can be written on: written, or rows nobody wrote yet.
+    pub fn writable(&self) -> impl Iterator<Item = Entity> + '_ {
+        self.0.iter().filter(|(_, k)| *k != NodeKind::Constant).map(|(e, _)| *e)
+    }
+}
+
 /// What's at a key of a table: see `Graph::find_row`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FoundRow {
@@ -448,6 +487,19 @@ impl Graph {
         self
     }
 
+    /// Make a row nobody wrote a node, with the same handle and its name, so it can be written on. It
+    /// stays as if nobody wrote it until something else is: see `NodeKind::Row`. Anything that isn't a row
+    /// nobody wrote changes nothing, and returns false.
+    pub fn make_written(&mut self, e: Entity) -> bool {
+        if self.nodes.contains(&e) {
+            return false;
+        }
+        let Some(Implicit::Row(row)) = self.implicit_of(e) else { return false };
+        self.adopt(e);
+        self.set_value(e, Name::NAME, Value::String(format!("{}[{}]", row.table, row.key)));
+        true
+    }
+
     /// Remove a node, and everything it says. Its edges have to go first, because they say something
     /// about other nodes too. Removing a node with edges, or no such node, changes nothing and returns
     /// false.
@@ -763,9 +815,64 @@ impl Graph {
         })
     }
 
-    /// Every node, in the order they were made.
-    pub fn entities(&self) -> impl Iterator<Item = Entity> + '_ {
-        self.nodes.iter().copied()
+    /// Every node there is, each with what kind it is: the written ones in the order they were made, then
+    /// the rows nobody wrote by table and key, then constants. This is the only list of nodes, so whatever
+    /// goes over them says which kinds it means.
+    pub fn nodes(&self) -> Nodes {
+        let mut written = Vec::new();
+        let mut rows: Vec<(Row, Entity)> = Vec::new();
+        for e in &self.nodes {
+            match self.bare_row(*e) {
+                Some(row) => rows.push((row, *e)),
+                None => written.push((*e, NodeKind::Written)),
+            }
+        }
+        // Every row inside an extent is there, whether or not anything has read it yet.
+        for (e, cells) in &self.cells {
+            if let Some(cell) = &self.registry.extent
+                && cells.contains_key(cell)
+                && let Some(table) = self.names.of.get(e)
+            {
+                self.rows(table);
+            }
+        }
+        rows.extend(lock(&self.implicit).iter().filter_map(|(e, i)| match i {
+            Implicit::Row(r) if !self.nodes.contains(e) => Some((r.clone(), *e)),
+            _ => None,
+        }));
+        rows.sort_by(|a, b| (&a.0.table, &a.0.key).cmp(&(&b.0.table, &b.0.key)));
+        rows.dedup_by_key(|(_, e)| *e);
+        let mut out = written;
+        out.extend(rows.into_iter().map(|(_, e)| (e, NodeKind::Row)));
+        out.extend(self.constants().into_iter().map(|(e, _)| (e, NodeKind::Constant)));
+        Nodes(out)
+    }
+
+    /// What kind of node this is, if it's one.
+    pub fn kind_of(&self, e: Entity) -> Option<NodeKind> {
+        if self.nodes.contains(&e) {
+            return Some(if self.bare_row(e).is_some() { NodeKind::Row } else { NodeKind::Written });
+        }
+        match self.implicit_of(e)? {
+            Implicit::Row(_) => Some(NodeKind::Row),
+            Implicit::Constant(_) => Some(NodeKind::Constant),
+        }
+    }
+
+    /// A written node that's a row with the handle it has when nobody wrote it, and says nothing but its
+    /// name: as if nobody wrote it, so it isn't saved. Writing on a row nobody wrote makes it one of these
+    /// first, and clearing what was written makes it one again.
+    fn bare_row(&self, e: Entity) -> Option<Row> {
+        let row = self.names.rows.get(&e)?;
+        let says_only_name = self.cells.get(&e).is_none_or(|c| c.keys().all(|k| k == Name::NAME));
+        let linked = self.out.get(&e).is_some_and(|s| !s.is_empty()) || self.into.get(&e).is_some_and(|s| !s.is_empty());
+        (e == Entity::implicit(&row.table, &row.key) && says_only_name && self.given.get(&e).is_none_or(BTreeSet::is_empty) && !linked).then(|| row.clone())
+    }
+
+    /// The handle of a table's row while nobody has written it, which is the one to write it with, so it
+    /// stays the same node: a choice made on it, or where it's put, isn't lost when it's written.
+    pub fn row_id(table: &str, key: &table::Key) -> Entity {
+        Entity::implicit(table, key)
     }
 
     /// Every edge, with its ends, in the order of their sources and then their targets.
@@ -939,8 +1046,12 @@ impl Graph {
     /// components. Some of these may turn out to have nothing in them.
     fn cell_names(&self, e: Entity) -> BTreeSet<String> {
         let mut out: BTreeSet<String> = self.cells.get(&e).into_iter().flat_map(|c| c.keys().cloned()).collect();
-        if let Some(Implicit::Constant(cells)) = self.implicit_of(e) {
-            out.extend(cells.into_keys());
+        match self.implicit_of(e) {
+            Some(Implicit::Constant(cells)) => out.extend(cells.into_keys()),
+            Some(Implicit::Row(_)) if !self.nodes.contains(&e) => {
+                out.insert(Name::NAME.to_string());
+            }
+            _ => {}
         }
         for k in self.lookup(e) {
             out.extend(self.cells.get(&k).into_iter().flat_map(|c| c.keys().filter(|c| self.registry.cell_inheritable(c)).cloned()));
@@ -964,6 +1075,13 @@ impl Graph {
     fn backing_at(&self, e: Entity, cell: &str) -> Option<(Backing, Entity)> {
         if !self.exists(e) {
             return None;
+        }
+        // A row nobody wrote is called by its table and key, as it would be if it were written.
+        if cell == Name::NAME
+            && !self.nodes.contains(&e)
+            && let Some(Implicit::Row(r)) = self.implicit_of(e)
+        {
+            return Some((Backing::Value(Value::String(format!("{}[{}]", r.table, r.key))), Entity::whole()));
         }
         let owner = self.registry.owner(cell);
         if let Some(o) = owner
@@ -1368,6 +1486,23 @@ impl Graph {
         rest.sort();
         numbered.extend(rest);
         numbered
+    }
+
+    /// Whether a node is a row inside its table's extent, so it's there whether or not anything reads it.
+    pub fn in_extent(&self, e: Entity) -> bool {
+        let Some(row) = self.row_of(e) else { return false };
+        let Some(extent) = self.extent(&row.table) else { return false };
+        let written = self.names.tables.get(&row.table).into_iter().flatten().filter(|(_, s)| !s.is_empty()).map(|(k, _)| k);
+        table::Extent::contains(&extent.resolve(written), &row.key)
+    }
+
+    /// Every table: those with a row written, and those that say how far they go.
+    pub fn tables(&self) -> Vec<String> {
+        let mut out: BTreeSet<String> = self.names.tables.iter().filter(|(_, rows)| rows.values().any(|s| !s.is_empty())).map(|(t, _)| t.clone()).collect();
+        if let Some(cell) = &self.registry.extent {
+            out.extend(self.cells.iter().filter(|(_, c)| c.contains_key(cell)).filter_map(|(e, _)| self.names.of.get(e).cloned()));
+        }
+        out.into_iter().collect()
     }
 
     /// The table whose rows are around this node: its own, if it's a table, or the one it's a row of.

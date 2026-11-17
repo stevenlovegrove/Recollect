@@ -17,6 +17,6 @@ fn main() {
         let mut log = Log::new(built.registry);
         log.commit("sample", s.about, ops_of(s)).unwrap_or_else(|e| panic!("{}: {e:?}", s.name));
         log.graph().save_dir(&dir).unwrap();
-        println!("{}: {} nodes", s.name, log.graph().entities().count());
+        println!("{}: {} nodes", s.name, log.graph().nodes().written().count());
     }
 }

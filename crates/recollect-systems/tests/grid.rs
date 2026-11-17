@@ -59,7 +59,7 @@ fn a_grid_goes_on_by_itself_from_what_is_written() {
     assert_eq!(at(&g, "P", k(&[10, 5]), "c"), Val::Num(252.0));
     assert_eq!(at(&g, "P", k(&[3, 4]), "c"), Val::Num(0.0), "past the end of a line of the triangle");
     let saved = g.g.save();
-    assert_eq!(saved.nodes.len(), g.g.entities().count(), "and none of those is written down");
+    assert_eq!(saved.nodes.len(), g.g.nodes().written().count(), "and none of those is written down");
 
     // `row` is which row this is, a part for each way across, and `row[1]` is one part of it.
     g.formula_on("P", "which", "row");
@@ -176,7 +176,7 @@ fn a_sudoku_is_a_grid_of_choices_with_nothing_written_but_how_far_it_goes() {
     let mut g = N::with(plan::install);
     sudoku(&mut g, 4, 2);
     assert_eq!(g.g.rows("Cell").len(), 16);
-    assert_eq!(g.g.entities().count(), 2, "only the table and the clue are written");
+    assert_eq!(g.g.nodes().written().count(), 2, "only the table and the clue are written");
     let valid = truth(&g.get::<ValueCell>("Solved").unwrap().unwrap());
     let vars = vars_of(&g, "Cell");
     assert_eq!(valid.count(&vars), 288);
@@ -239,4 +239,35 @@ fn a_nine_by_nine_sudoku_with_its_givens_has_one_solution() {
     let first_line: String = (1..=9).map(|c| solved[0].iter().find(|(id, _)| names[*id] == k(&[1, c])).unwrap().1.clone()).collect();
     assert_eq!(first_line, "534678912");
     eprintln!("9×9 worked out in {:?}", started.elapsed());
+}
+
+#[test]
+fn every_row_inside_an_extent_is_listed_and_writing_one_keeps_it_the_same_node() {
+    use recollect_graph::{Graph, Name, NodeKind};
+    let mut g = N::with(plan::install);
+    sudoku(&mut g, 4, 2);
+    // Nothing has read a cell yet, and all sixteen are there, each called by where it is.
+    let listed = g.g.nodes();
+    let rows: Vec<_> = listed.of(NodeKind::Row).collect();
+    assert_eq!(rows.len(), 16);
+    assert_eq!(listed.written().count(), 2, "the table and the clue");
+    assert_eq!(g.g.get::<Name>(rows[0]).unwrap().unwrap().0, "Cell[1, 1]");
+    assert_eq!(rows[0], Graph::row_id("Cell", &k(&[1, 1])));
+    assert!(g.g.in_extent(rows[0]));
+
+    // Writing on one makes it a node with the handle it already had, and only then is it saved.
+    let cell = Graph::row_id("Cell", &k(&[2, 3]));
+    assert!(g.g.make_written(cell));
+    assert_eq!(g.g.kind_of(cell), Some(NodeKind::Row), "saying only its name, it's still as if nobody wrote it");
+    assert_eq!(g.g.save().nodes.len(), 2);
+    g.g.set(cell, Options(vec!["1".to_string()]));
+    assert_eq!(g.g.kind_of(cell), Some(NodeKind::Written));
+    assert!(g.g.save().nodes.iter().any(|n| n.id == cell));
+    assert_eq!(g.g.rows("Cell").len(), 16, "it's still the one row");
+    assert_eq!(g.g.nodes().of(NodeKind::Row).count(), 15);
+    // Taking away what was written makes it as if nobody wrote it again.
+    g.g.clear(cell, OPTIONS);
+    assert_eq!(g.g.kind_of(cell), Some(NodeKind::Row));
+    assert_eq!(g.g.save().nodes.len(), 2);
+    g.assert_round_trips();
 }

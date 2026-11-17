@@ -87,7 +87,7 @@ fn refusal(e: CommitError, g: &Graph, ops: &[Op]) -> Error {
 /// it knows which node is meant and can still refer to it. A node the refused change would have named
 /// is named as it would have been.
 fn violations(v: &[recollect_graph::Violation], g: &Graph, ops: &[Op]) -> String {
-    let mut names: BTreeMap<String, String> = g.entities().filter_map(|e| match g.get_value(e, Name::NAME) {
+    let mut names: BTreeMap<String, String> = g.nodes().all().filter_map(|e| match g.get_value(e, Name::NAME) {
         Ok(Some(Value::String(n))) => Some((e.to_string(), n)),
         _ => None,
     }).collect();
@@ -229,7 +229,7 @@ impl Workspace {
         let (log, problems) = Log::from_saved(graph_of(&parsed, &homes), built.registry.clone());
         let mut ws = Workspace { id: id.to_string(), location: location.to_string(), sample, config, built, log, known: files, parsed, homes, pending: Writes::default() };
         // A node only an edge mentions gets a file.
-        let homeless: BTreeSet<Entity> = ws.log.graph().entities().filter(|e| !ws.homes.contains_key(e)).collect();
+        let homeless: BTreeSet<Entity> = ws.log.graph().nodes().written().filter(|e| !ws.homes.contains_key(e)).collect();
         for node in ws.log.graph().save().nodes.into_iter().filter(|n| homeless.contains(&n.id)) {
             ws.put_node(node);
         }

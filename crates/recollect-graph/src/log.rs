@@ -605,16 +605,16 @@ fn check_values(g: &Graph, targets: &BTreeSet<Target>) -> Vec<Violation> {
 }
 
 fn all_targets(g: &Graph) -> BTreeSet<Target> {
-    let nodes = g.entities().map(Target::Node);
+    let nodes = g.nodes().written().map(Target::Node).collect::<Vec<_>>();
     let edges = g.edges().map(|(_, f, t)| Target::Edge(f, t));
-    nodes.chain(edges).collect()
+    nodes.into_iter().chain(edges).collect()
 }
 
 /// Every check of this severity, on everything with its component. They're memoised, so this only
 /// reruns the ones an edit reached.
 fn check_rules(g: &Graph, severity: Severity) -> Vec<Violation> {
     let mut out = Vec::new();
-    let entities: Vec<(Entity, Target)> = g.entities().map(|e| (e, Target::Node(e))).chain(g.edges().map(|(e, f, t)| (e, Target::Edge(f, t)))).collect();
+    let entities: Vec<(Entity, Target)> = g.nodes().written().map(|e| (e, Target::Node(e))).collect::<Vec<_>>().into_iter().chain(g.edges().map(|(e, f, t)| (e, Target::Edge(f, t)))).collect();
     for (component, check) in g.registry().checks().filter(|(_, c)| c.severity == severity) {
         let cell = check.cell();
         for (e, target) in entities.iter().filter(|(e, _)| g.has(*e, component)) {

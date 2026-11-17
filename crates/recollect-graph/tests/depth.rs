@@ -19,7 +19,7 @@ fn log_of(systems: &[&str], ops: Vec<Op>) -> Log {
 /// Every cell of every entity, as JSON or the error it gives.
 fn everything(g: &Graph) -> Vec<(Entity, String, Result<Option<Value>, Error>)> {
     let mut out = Vec::new();
-    for e in g.entities().chain(g.edges().map(|(e, _, _)| e)) {
+    for e in g.nodes().written().chain(g.edges().map(|(e, _, _)| e)) {
         for c in g.cells_of(e) {
             out.push((e, c.clone(), g.get_value(e, &c)));
         }

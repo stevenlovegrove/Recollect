@@ -17,7 +17,7 @@ fn registry() -> Arc<Registry> {
 }
 
 fn read_dates(g: &Graph) {
-    for e in g.entities() {
+    for e in g.nodes().written() {
         for c in ["start", "finish", "slack"] {
             g.get_value(e, c).unwrap();
         }

@@ -681,7 +681,8 @@ pub fn work(g: &Graph, world: &BTreeMap<String, String>) -> Result<Vec<WorkItem>
     let picks = picks(g, world);
     let found = pinned(g, world).given(&picks);
     let mut out = Vec::new();
-    for e in g.entities() {
+    // A row nobody wrote of a table of work is work too.
+    for e in g.nodes().writable() {
         let Some(actionable) = g.get::<Actionable>(e)? else { continue };
         let actionable = actionable.0.given(&picks).among(&found);
         let need = g.get::<Need>(e)?.map_or(Space::global().never(), |n| n.0).given(&picks).among(&found);

@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use recollect_graph::chance::{Rand, Reader, Share, Term};
 use recollect_graph::worlds::{Bool, DrawGroup, Picks, Var};
-use recollect_graph::{Backed, CellDef, CellType, ComponentDef, Entity, Error, Event, Graph, Log, On, Op, Origin, Shown, Source, Stored, Violation};
+use recollect_graph::{Backed, CellDef, CellType, ComponentDef, Entity, Error, Event, Graph, Log, NodeKind, On, Op, Origin, Shown, Source, Stored, Violation};
 use recollect_systems::formulas::{CHOICE, Called, EVIDENCE, FOUND, Found, LABEL, VALUE, ValueCell, draws_found, is_chance, known_draws, narrows, shown_free, worlds_left};
 use recollect_systems::expr::Val;
 use recollect_systems::plan::{self, Matrix, WorkItem};
@@ -813,7 +813,7 @@ fn node_view(g: &Graph, e: Entity, name: String, cells: BTreeMap<String, CellVie
     reads.sort();
     reads.dedup();
     let components = g.components_of(e).iter().map(|(c, o)| has_view(c, o)).collect();
-    NodeView { id: e, name, components, cells, row, parts: g.parts_of(e), reads, unwritten: !g.contains(e) }
+    NodeView { id: e, name, components, cells, row, parts: g.parts_of(e), reads, unwritten: g.kind_of(e) != Some(NodeKind::Written) }
 }
 
 /// Something open, as the worlds see it: where it lands on each of its options.
@@ -1105,7 +1105,7 @@ pub fn unresolved(g: &Graph) -> Vec<CheckView> {
     // A cell of the workspace's own written once, whose name is a letter or two from one used more: a typo,
     // like `rol` for `role`.
     let mut uses: BTreeMap<String, Vec<Entity>> = BTreeMap::new();
-    for e in g.entities().chain(g.edges().map(|(e, _, _)| e)) {
+    for e in g.nodes().written().chain(g.edges().map(|(e, _, _)| e)) {
         for c in g.written(e).into_keys().filter(|c| all.cell_def(c).is_none()) {
             uses.entry(c).or_default().push(e);
         }
@@ -1123,7 +1123,7 @@ pub fn unresolved(g: &Graph) -> Vec<CheckView> {
 
     // Two nodes with one name, which a reader can't tell apart by it.
     let mut named: BTreeMap<String, Vec<Entity>> = BTreeMap::new();
-    for e in g.entities() {
+    for e in g.nodes().written() {
         if let Ok(Some(Value::String(n))) = g.get_value(e, recollect_graph::Name::NAME)
             && !n.is_empty()
         {
@@ -1207,9 +1207,13 @@ fn view_at(o: &Workspace, world: &World, at: Option<u128>, w: Option<&Where>) ->
         let cells = cells(g, e, &lens, &labels, &mut vars);
         node_view(g, e, name, cells)
     };
-    let nodes: Vec<NodeView> = g.entities().filter(|e| !is_lens(g, *e)).map(|e| node(e, recollect_systems::label_of(g, e))).collect();
-    // Only what something written reads: a row nobody wrote that reads another doesn't bring that one too.
-    let mut unwritten: Vec<(recollect_graph::table::Row, Entity)> = nodes.iter().flat_map(|n| n.reads.iter().copied()).filter(|e| !g.contains(*e)).filter_map(|e| Some((g.row_of(e)?, e))).collect();
+    let nodes: Vec<NodeView> = g.nodes().written().filter(|e| !is_lens(g, *e)).map(|e| node(e, recollect_systems::label_of(g, e))).collect();
+    // Rows nobody wrote: every one inside an extent, and what something written reads. A row nobody wrote
+    // that reads another doesn't bring that one too, or `Year[100]` would bring a hundred.
+    let read: std::collections::BTreeSet<Entity> = nodes.iter().flat_map(|n| n.reads.iter().copied()).collect();
+    let mut unwritten: Vec<(recollect_graph::table::Row, Entity)> =
+        // Listed only now: working out what's written is what asks for the rows it reads.
+        g.nodes().of(NodeKind::Row).filter(|e| read.contains(e) || g.in_extent(*e)).filter_map(|e| Some((g.row_of(e)?, e))).collect();
     unwritten.sort_by(|a, b| (&a.0.table, &a.0.key).cmp(&(&b.0.table, &b.0.key)));
     unwritten.dedup_by_key(|(_, e)| *e);
     let unwritten = unwritten
@@ -1287,11 +1291,12 @@ pub struct Swept {
 pub fn sweep(o: &Workspace, set: &CellRef, values: &[f64], read: &[CellRef], world: &World) -> Result<Vec<Swept>, String> {
     let (looked, _) = looked_at(o.log.graph(), world);
     let g: &Graph = looked.as_ref().unwrap_or_else(|| o.log.graph());
-    if !g.entities().any(|e| e == set.node) {
+    if !g.kind_of(set.node).is_some_and(|k| k != NodeKind::Constant) {
         return Err(format!("there's no node {}", set.node));
     }
     let labels = Labels::gather(g);
     let mut copy = g.fork();
+    copy.make_written(set.node);
     let mut vars = BTreeMap::new();
     Ok(values
         .iter()
@@ -1326,7 +1331,7 @@ pub fn rows(o: &Workspace, table: &str, from: i64, to: i64, world: &World) -> Ve
         .filter_map(|n| {
             let e = g.row_at(table, &recollect_graph::table::Key::Num(n))?;
             let cells = cells(g, e, &lens, &labels, &mut vars);
-            Some(RowCells { key: n, id: e, written: g.contains(e), cells })
+            Some(RowCells { key: n, id: e, written: g.kind_of(e) == Some(NodeKind::Written), cells })
         })
         .collect()
 }
@@ -1524,7 +1529,7 @@ pub fn overview(o: &Workspace, full: bool, also: &[String]) -> Overview {
 fn vocabulary(g: &Graph) -> Vocabulary {
     let all = recollect_systems::everything();
     let mut cells: BTreeMap<String, (bool, bool, usize, Value)> = BTreeMap::new();
-    for e in g.entities().chain(g.edges().map(|(e, _, _)| e)) {
+    for e in g.nodes().written().chain(g.edges().map(|(e, _, _)| e)) {
         let edge = g.is_edge(e);
         for (c, b) in g.written(e) {
             if all.cell_def(&c).is_some() {
@@ -1545,20 +1550,16 @@ fn vocabulary(g: &Graph) -> Vocabulary {
         .map(|(name, (nodes, edges, used, example))| OwnCell { name, on: if nodes && edges { "both" } else if edges { "edges" } else { "nodes" }, used, example: short(example) })
         .collect();
     let kinds = g
-        .entities()
+        .nodes()
+        .written()
         .filter(|e| !g.is_edge(*e))
         .filter_map(|k| {
             let instances = g.sources_of(k, recollect_systems::formulas::IS_A).len();
             (instances > 0).then(|| KindView { id: k, name: recollect_systems::label_of(g, k), instances, gives: g.written(k).into_keys().filter(|c| c != recollect_graph::Name::NAME).collect() })
         })
         .collect();
-    let mut tables: BTreeMap<String, usize> = BTreeMap::new();
-    for e in g.entities() {
-        if let Some(row) = g.row_of(e) {
-            *tables.entry(row.table.clone()).or_default() += 1;
-        }
-    }
-    Vocabulary { cells, kinds, relations: relations(g), tables: tables.into_iter().map(|(name, rows)| TableBrief { name, rows }).collect() }
+    let tables = g.tables().into_iter().map(|name| TableBrief { rows: g.rows(&name).len(), name }).collect();
+    Vocabulary { cells, kinds, relations: relations(g), tables }
 }
 
 /// An example short enough to glance at.

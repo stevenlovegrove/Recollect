@@ -118,7 +118,7 @@ fn a_name_is_not_an_identity() {
 fn handles_sort_in_creation_order_and_round_trip() {
     let mut g = Graph::new();
     let made: Vec<Entity> = (0..10_000).map(|_| g.spawn()).collect();
-    let listed: Vec<Entity> = g.entities().collect();
+    let listed: Vec<Entity> = g.nodes().written().collect();
     assert_eq!(listed, made, "creation order is the order, so results are repeatable within a run");
 
     let text = made[0].to_string();

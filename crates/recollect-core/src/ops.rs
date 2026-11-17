@@ -27,7 +27,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use recollect_graph::{Backed, CellType, Entity, Graph, Name, Op};
+use recollect_graph::{Backed, CellType, Entity, Graph, Name, NodeKind, Op};
 use recollect_systems::formulas::{Called, IS_A, LABEL};
 use recollect_systems::notes::{Body, EdgeKind, NOTES, RELATES};
 use recollect_systems::structure::ALTERNATIVE;
@@ -79,13 +79,26 @@ impl Resolver<'_> {
         }
     }
 
-    fn nodes_in(&self, op: &mut Map<String, Value>) -> Result<(), String> {
+    fn nodes_in(&mut self, op: &mut Map<String, Value>, out: &mut Vec<Value>) -> Result<(), String> {
         for field in ["id", "from", "to"] {
             if let Some(v) = op.get_mut(field) {
                 self.node(v)?;
+                self.bring(v, out);
             }
         }
         Ok(())
+    }
+
+    /// A row nobody wrote is made a node, with the handle it already has and its name, before anything is
+    /// written on it, so it's the same node after as before.
+    fn bring(&mut self, id: &Value, out: &mut Vec<Value>) {
+        let Some(e) = id.as_str().and_then(|s| s.parse::<Entity>().ok()) else { return };
+        if self.g.contains(e) || self.g.kind_of(e) != Some(NodeKind::Row) || !self.spawned.insert(e.to_string()) {
+            return;
+        }
+        let name = self.g.get_value(e, Name::NAME).ok().flatten().unwrap_or(Value::Null);
+        out.push(json!({ "op": "spawn", "id": id }));
+        out.push(json!({ "op": "set", "id": id, "cell": Name::NAME, "value": name }));
     }
 
     fn entity(v: &Value) -> Result<Entity, String> {
@@ -152,7 +165,7 @@ impl Resolver<'_> {
 
     /// What a formula in `cell` on `id` calls which nodes. These replace what's there, so a name the
     /// formula no longer uses doesn't stay, unless another formula on the node still does.
-    fn labels(&self, id: &Value, cell: &str, labels: Value, out: &mut Vec<Value>) -> Result<(), String> {
+    fn labels(&mut self, id: &Value, cell: &str, labels: Value, out: &mut Vec<Value>) -> Result<(), String> {
         let Value::Object(labels) = labels else { return Err("labels are {name: node}".to_string()) };
         if let Ok(known) = Self::entity(id)
             && self.g.contains(known)
@@ -169,6 +182,7 @@ impl Resolver<'_> {
             let nodes = if let Value::Array(many) = nodes { many } else { vec![nodes] };
             for mut to in nodes {
                 self.node(&mut to)?;
+                self.bring(&to, out);
                 out.push(json!({ "op": "link", "from": id, "to": to, "component": LABEL }));
                 out.push(json!({ "op": "set", "from": id, "to": to, "cell": Called::NAME, "value": name }));
             }
@@ -226,7 +240,7 @@ impl Resolver<'_> {
                 }
             }
             "delete_node" => {
-                self.nodes_in(&mut op)?;
+                self.nodes_in(&mut op, out)?;
                 let id = Self::entity(op.get("id").ok_or("delete_node needs an id")?)?;
                 for (edge, from, to) in self.g.edges().filter(|(_, f, t)| *f == id || *t == id) {
                     for c in self.g.given(edge) {
@@ -236,7 +250,7 @@ impl Resolver<'_> {
                 out.push(json!({ "op": "despawn", "id": id }));
             }
             "set" => {
-                self.nodes_in(&mut op)?;
+                self.nodes_in(&mut op, out)?;
                 let cell = op.remove("cell").and_then(|c| c.as_str().map(String::from)).ok_or("set needs a cell")?;
                 let mut what = Map::new();
                 for field in ["value", "formula", "labels"] {
@@ -248,7 +262,7 @@ impl Resolver<'_> {
                 self.set(op, &cell, what, out)?;
             }
             "link" => {
-                self.nodes_in(&mut op)?;
+                self.nodes_in(&mut op, out)?;
                 let (from, to) = (op.get("from").cloned().ok_or("link needs a from")?, op.get("to").cloned().ok_or("link needs a to")?);
                 // A link of a kind the workspace defines is a `relates` edge naming that relation.
                 let kind = op.remove("kind");
@@ -278,7 +292,7 @@ impl Resolver<'_> {
                 }
             }
             "remove" => {
-                self.nodes_in(&mut op)?;
+                self.nodes_in(&mut op, out)?;
                 let id = op.get("id").cloned().ok_or("remove needs an id")?;
                 let component = op.get("component").and_then(Value::as_str).ok_or("remove needs a component")?.to_string();
                 // What it said in that component's cells goes with it, so nothing is left without its component.
@@ -291,13 +305,13 @@ impl Resolver<'_> {
                 out.push(json!({ "op": "remove", "id": id, "component": component }));
             }
             "add" => {
-                self.nodes_in(&mut op)?;
+                self.nodes_in(&mut op, out)?;
                 let id = op.get("id").cloned().ok_or("add needs an id")?;
                 let component = op.get("component").and_then(Value::as_str).ok_or("add needs a component")?.to_string();
                 self.add(&id, &component, out);
             }
             _ => {
-                self.nodes_in(&mut op)?;
+                self.nodes_in(&mut op, out)?;
                 out.push(Value::Object(op));
             }
         }
@@ -544,7 +558,7 @@ fn key_text(v: &Value) -> String {
 
 pub fn resolve_ops(ops: Vec<Value>, g: &Graph) -> Result<Resolved, String> {
     let mut names: BTreeMap<String, Vec<Entity>> = BTreeMap::new();
-    for e in g.entities() {
+    for e in g.nodes().writable() {
         if let Ok(Some(n)) = g.get::<Name>(e) {
             names.entry(n.0).or_default().push(e);
         }

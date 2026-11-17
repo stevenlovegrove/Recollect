@@ -491,10 +491,10 @@ fn solve_from_files_in_this_process() {
 
     // Everything needed comes from the graph: which node is the puzzle, what the choices are, and
     // what they're called.
-    let puzzle = g.entities().find(|e| g.has(*e, REQUIRES)).expect("a puzzle");
+    let puzzle = g.nodes().written().find(|e| g.has(*e, REQUIRES)).expect("a puzzle");
     let mut vars = Vec::new();
     let mut names = BTreeMap::new();
-    for e in g.entities() {
+    for e in g.nodes().writable() {
         if let Some(Options(options)) = g.get::<Options>(e).unwrap() {
             let options: Vec<&str> = options.iter().map(String::as_str).collect();
             vars.push(Space::global().uniform(&e.to_string(), &options));

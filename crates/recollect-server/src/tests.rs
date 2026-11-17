@@ -1092,7 +1092,7 @@ async fn rows_nobody_wrote_can_be_looked_at() {
     assert_eq!(node(&v, "Year[5]")["reads"], json!([year4]));
     assert!(v["unwritten"][0]["reads"].is_null(), "and a row nobody wrote doesn't bring the one before it too");
     let cells: Vec<&String> = v["unwritten"][0]["cells"].as_object().unwrap().keys().collect();
-    assert_eq!(cells, vec!["balance"], "its cells are its table's, not every node's");
+    assert_eq!(cells, vec!["balance", "name"], "its cells are its table's, and its name, as a written row's are, not every node's");
 
     // A formula reading a cell the table doesn't say is refused, naming the row it's on.
     let why = refused(&c, json!([{ "op": "add_node", "id": "new:x", "name": "Far", "cells": { "value": { "formula": "Year[40].colour" } } }])).await;

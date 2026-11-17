@@ -81,7 +81,7 @@ pub enum LoadProblem {
 
 impl Graph {
     pub fn save(&self) -> SavedGraph {
-        self.save_only(self.entities())
+        self.save_only(self.nodes().written())
     }
 
     /// The written form of these nodes.

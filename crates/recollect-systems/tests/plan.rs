@@ -219,7 +219,7 @@ impl G {
 
     /// What's safe to start now, in every world.
     fn safe(&self) -> Vec<String> {
-        self.g().entities().filter(|e| self.g().get::<Actionable>(*e).unwrap().is_some_and(|a| a.0.is_always())).map(|e| self.name_of(e)).collect()
+        self.g().nodes().written().filter(|e| self.g().get::<Actionable>(*e).unwrap().is_some_and(|a| a.0.is_always())).map(|e| self.name_of(e)).collect()
     }
 
     fn pressure(&self, decision: &str) -> Pressure {
@@ -827,12 +827,12 @@ fn what_if_and_commit_share_one_code_path() {
     assert_eq!(g.log.events().len(), events, "and logs nothing");
 
     // What a confirm step would show is a comparison of two derivations.
-    let safe = |h: &Graph| -> BTreeSet<String> { h.entities().filter(|e| h.get::<Actionable>(*e).unwrap().is_some_and(|a| a.0.is_always())).map(|e| g.name_of(e)).collect() };
+    let safe = |h: &Graph| -> BTreeSet<String> { h.nodes().written().filter(|e| h.get::<Actionable>(*e).unwrap().is_some_and(|a| a.0.is_always())).map(|e| g.name_of(e)).collect() };
     let became_safe: Vec<String> = safe(&if_cad).difference(&safe(g.g())).cloned().collect();
     assert_eq!(became_safe, vec!["export", "static"]);
 
     // A preview agrees exactly with really doing it.
-    let (imu, ids): (Entity, Vec<Entity>) = (g.id("imu"), g.g().entities().collect());
+    let (imu, ids): (Entity, Vec<Entity>) = (g.id("imu"), g.g().nodes().written().collect());
     let preview: Vec<_> = ids.iter().map(|e| if_cad.get::<Actionable>(*e).unwrap()).collect();
     g.choose("calib", "cad");
     assert_eq!(ids.iter().map(|e| g.g().get::<Actionable>(*e).unwrap()).collect::<Vec<_>>(), preview);
@@ -855,13 +855,13 @@ fn the_reads_say_what_each_value_came_from() {
 #[test]
 fn an_edit_reruns_only_what_it_reaches() {
     let mut g = calibration();
-    for e in g.g().entities().collect::<Vec<_>>() {
+    for e in g.g().nodes().written().collect::<Vec<_>>() {
         g.g().get::<Actionable>(e).unwrap();
     }
     g.g().take_ran();
     g.done("detector");
-    let actionable: Vec<Option<Actionable>> = g.g().entities().map(|e| g.g().get::<Actionable>(e).unwrap()).collect();
-    assert_eq!(actionable.len(), g.g().entities().count());
+    let actionable: Vec<Option<Actionable>> = g.g().nodes().written().map(|e| g.g().get::<Actionable>(e).unwrap()).collect();
+    assert_eq!(actionable.len(), g.g().nodes().written().count());
     let ran: Vec<String> = g.g().take_ran().into_iter().map(|(e, c)| format!("{c}({})", g.name_of(e))).collect();
     assert!(!ran.iter().any(|r| r.starts_with("need") || r.starts_with("choice") || r.contains("export") || r.contains("static")), "{ran:?}");
     assert!(ran.contains(&"actionable(detector)".to_string()), "{ran:?}");
@@ -1112,7 +1112,7 @@ fn scope_follows_the_structure() {
 #[test]
 fn deciding_moves_nothing() {
     let mut g = estimated();
-    let all = |g: &G| g.g().entities().map(|e| g.g().get::<Scope>(e).unwrap()).collect::<Vec<_>>();
+    let all = |g: &G| g.g().nodes().written().map(|e| g.g().get::<Scope>(e).unwrap()).collect::<Vec<_>>();
     let before = all(&g);
     g.choose("calib", "cad");
     assert_eq!(all(&g), before, "the layout of the graph doesn't jump when you decide");

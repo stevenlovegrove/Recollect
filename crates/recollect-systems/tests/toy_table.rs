@@ -129,7 +129,7 @@ fn a_formula_can_address_any_row_and_a_numbered_table_goes_on_by_itself() {
     g.formula("Far", "Year[100].balance");
     assert!((amount(&g, "Far") - 1000.0 * 1.05f64.powi(100)).abs() < 1e-6);
     let saved = g.g.save();
-    assert_eq!(saved.nodes.len(), g.g.entities().count(), "and none of those years is written down");
+    assert_eq!(saved.nodes.len(), g.g.nodes().written().count(), "and none of those years is written down");
     g.take_ran();
     amount(&g, "Far");
     assert!(g.ran().is_empty(), "they're remembered");

@@ -57,8 +57,8 @@ impl N {
         self.g.save_dir(dir.path()).unwrap();
         let (loaded, problems) = Graph::load_dir(dir.path(), self.registry.clone()).unwrap();
         assert_eq!(problems, vec![], "nothing should need attention");
-        assert_eq!(self.g.entities().collect::<Vec<_>>(), loaded.entities().collect::<Vec<_>>());
-        for e in self.g.entities() {
+        assert_eq!(self.g.nodes().written().collect::<Vec<_>>(), loaded.nodes().written().collect::<Vec<_>>());
+        for e in self.g.nodes().written() {
             assert_eq!(self.g.components_of(e), loaded.components_of(e), "{}", self.name_of(e));
             assert_eq!(self.g.cells_of(e), loaded.cells_of(e), "{}", self.name_of(e));
             for c in self.g.cells_of(e) {
