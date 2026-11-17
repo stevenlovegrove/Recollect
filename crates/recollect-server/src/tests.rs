@@ -1544,9 +1544,15 @@ async fn a_grid_from_the_table_op_has_its_rows_before_any_are_written() {
     let dir = tempfile::tempdir().unwrap();
     c.post("/api/workspaces/new", json!({ "path": dir.path().join("grid"), "name": "Grid" })).await;
     c.post("/api/call/apply", json!({ "ops": [
-        { "op": "table", "name": "Pair", "extent": "1..2, 1..2", "columns": { "options": ["1", "2"] }, "rows": [{ "key": [2, 1], "note": "a corner" }] },
+        { "op": "table", "name": "Pair", "extent": "1..2, 1..2", "rows": [{ "key": [2, 1], "note": "a corner" }], "columns": {
+            "options": ["1", "2"],
+            "fits": { "formula": "distinct(Pair[row[0], *].chosen)" },
+        } },
     ] })).await;
     let v = c.view(json!({})).await;
+    // On the table itself, which isn't a row, what's worked out from where a row is has nothing to be about.
+    assert!(cell(&v, "Pair", "fits")["error"].is_null(), "{}", cell(&v, "Pair", "fits"));
+    assert!(cell(&v, "Pair[2, 1]", "fits")["error"].is_null(), "{}", cell(&v, "Pair[2, 1]", "fits"));
     let names = |v: &Value| v["unwritten"].as_array().unwrap().iter().map(|n| n["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
     assert_eq!(names(&v), vec!["Pair[1, 1]", "Pair[1, 2]", "Pair[2, 2]"], "every row inside the extent that nobody wrote");
     assert_eq!(node(&v, "Pair[2, 1]")["row"]["key"], json!([2, 1]));

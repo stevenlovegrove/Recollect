@@ -739,6 +739,8 @@ struct Expander<'c, 'a> {
     steps: StdCell<usize>,
     /// How many draws have been written so far.
     draws: StdCell<u32>,
+    /// Whether a key needed `row` on a node that isn't a row: see `expand_all`.
+    off_row: StdCell<bool>,
 }
 
 impl<'c, 'a> Expander<'c, 'a> {
@@ -751,7 +753,7 @@ impl<'c, 'a> Expander<'c, 'a> {
                 labels.entry(name).or_default().push(to);
             }
         }
-        Ok(Expander { cx, labels, parts: RefCell::new(Vec::new()), steps: StdCell::new(0), draws: StdCell::new(0) })
+        Ok(Expander { cx, labels, parts: RefCell::new(Vec::new()), steps: StdCell::new(0), draws: StdCell::new(0), off_row: StdCell::new(false) })
     }
 
     fn add(&self, p: Part) -> Id {
@@ -802,9 +804,14 @@ impl<'c, 'a> Expander<'c, 'a> {
         })
     }
 
-    /// The whole formula, with anything nothing ended up using left out.
+    /// The whole formula, with anything nothing ended up using left out. A formula whose keys are worked
+    /// out from `row`, read on a node that isn't a row, such as the table it's written on, is undefined
+    /// there, as `row` and `prev` are: there's no row for it to be about.
     fn expand_all(self, e: &Expr) -> Result<Closed, Error> {
-        let root = self.expand(e, &Scope::default())?;
+        let root = match self.expand(e, &Scope::default()) {
+            Err(_) if self.off_row.get() => return Ok(Closed(vec![Part::Lit(Val::Undefined)])),
+            r => r?,
+        };
         let parts = self.parts.into_inner();
         let mut used = vec![false; parts.len()];
         used[root] = true;
@@ -1120,7 +1127,10 @@ impl<'c, 'a> Expander<'c, 'a> {
             Expr::Lit(Val::Text(t)) => Key::Text(t.clone()),
             Expr::Path(p) if p.len() == 1 && p[0] == "row" => match self.cx.row_key() {
                 Some(k) => k,
-                None => return failed("row is only something on a row of a table"),
+                None => {
+                    self.off_row.set(true);
+                    return failed("row is only something on a row of a table");
+                }
             },
             // The key of a row being gone over, as `Left[p.row]` in `count(p in Arrived.rows: …)`.
             Expr::Path(p) if p.len() == 2 && p[1] == "row" && matches!(scope.vars.get(&p[0]), Some(Binding::Node(_))) => {

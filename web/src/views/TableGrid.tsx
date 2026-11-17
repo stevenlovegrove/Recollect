@@ -6,11 +6,26 @@ import { LinePlot, bandOf, numberOf } from "./SweepChart";
 import { label } from "../theme";
 import { UNWRITTEN } from "./MapView";
 
+type KeyPart = number | string;
+
+/** Numbers before text, numbers in order, and a grid's keys part by part. */
+function byKey(x: KeyPart | KeyPart[], y: KeyPart | KeyPart[]): number {
+  if (Array.isArray(x) && Array.isArray(y)) {
+    for (let i = 0; i < Math.min(x.length, y.length); i++) {
+      const d = byKey(x[i], y[i]);
+      if (d) return d;
+    }
+    return x.length - y.length;
+  }
+  if (Array.isArray(x) !== Array.isArray(y)) return Number(Array.isArray(x)) - Number(Array.isArray(y));
+  if (typeof x === "number" && typeof y === "number") return x - y;
+  if (typeof x === "number" || typeof y === "number") return Number(typeof x !== "number") - Number(typeof y !== "number");
+  return 0;
+}
+
 /** Numbered rows in order, then the rest as they were made. */
 function byRow(a: GraphNode, b: GraphNode): number {
-  const [x, y] = [a.row!.key, b.row!.key];
-  if (typeof x === "number" && typeof y === "number") return x - y;
-  return Number(typeof x !== "number") - Number(typeof y !== "number");
+  return byKey(a.row!.key, b.row!.key);
 }
 
 /** The tables in a workspace: every name that a node's name makes a row of. */
@@ -26,7 +41,12 @@ export function tablesIn(nodes: GraphNode[]): string[] {
 export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table: string }) {
   const g = ws.view!;
   const head = g.nodes.find((n) => n.name === table && !n.row);
-  const rows = useMemo(() => g.nodes.filter((n) => n.row?.table === table).sort(byRow), [g.nodes, table]);
+  // A table that says how far it goes has every row inside it, written or not, and the view carries them all.
+  const extent = head?.cells.extent?.value;
+  const rows = useMemo(
+    () => [...g.nodes, ...(extent !== undefined ? g.unwritten : [])].filter((n) => n.row?.table === table).sort(byRow),
+    [g.nodes, g.unwritten, table, extent],
+  );
   // The table and every kind above it: what's said there is this table's to show.
   const lineage = useMemo(() => {
     const seen = new Set<string>();
@@ -49,7 +69,7 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
     const choices = [head, ...rows].some((n) => n?.cells.options);
     return [...(choices ? ["value", "options"] : []), ...[...cs].sort()];
   }, [head, rows, lineage, ws]);
-  const numbered = rows.length > 0 && rows.every((r) => typeof r.row!.key === "number");
+  const numbered = extent === undefined && rows.length > 0 && rows.every((r) => typeof r.row!.key === "number");
   // A numbered table goes on past its last written row, as far as it's asked: those rows are worked out
   // from the table, and nothing about them is saved.
   const first = numbered ? (rows[0].row!.key as number) : 0;
@@ -65,7 +85,7 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
     : rows.map((r) => {
         // A row of a grid is shown by its parts, as it's named.
         const key = r.row!.key;
-        return { node: r, key: Array.isArray(key) ? key.join(", ") : key, unwritten: false };
+        return { node: r, key: Array.isArray(key) ? key.join(", ") : key, unwritten: !!r.unwritten };
       });
 
   return (
@@ -92,9 +112,16 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
               ))}
             </tr>
           )}
-          {shown.map(({ node: r, key, unwritten }) => (
-            <tr key={r.id} className={`${r.id === selected ? "selected" : ""} ${unwritten ? "implicit-row" : ""}`} onClick={() => !unwritten && onSelect(r.id)}>
-              <td className="sheet-name" title={unwritten ? `Nobody wrote ${r.name}. It's worked out from ${table}, and isn't saved: add it to say something of its own.` : r.name}>
+          {shown.map(({ node: r, key, unwritten }) => {
+            // A row nobody wrote that the view carries can be written on, and keeps its handle when it is.
+            // One that's only worked out for this range isn't one the workspace knows yet.
+            const known = ws.byId.has(r.id);
+            return (
+            <tr key={r.id} className={`${r.id === selected ? "selected" : ""} ${unwritten ? "implicit-row" : ""}`} onClick={() => known && onSelect(r.id)}>
+              <td
+                className="sheet-name"
+                title={unwritten ? `Nobody wrote ${r.name}. It's worked out from ${table}, and isn't saved${known ? " until something is written on it" : ": add it to say something of its own"}.` : r.name}
+              >
                 {unwritten && <span className="unwritten-mark">{UNWRITTEN} </span>}
                 {String(key)}
               </td>
@@ -104,12 +131,13 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
                 const taken = cell && cell.source !== "own";
                 return (
                   <td key={c} className={`sheet-cell ${taken ? "taken" : ""} ${cell?.error ? "err" : ""} ${ws.recentCells.has(`${r.id}|${c}`) ? "ran" : ""}`} title={taken && cell.kind ? `From ${ws.byId.get(cell.kind)?.name ?? "elsewhere"}` : undefined}>
-                    <TableCell ws={ws} node={r} c={c} cell={cell} readOnly={unwritten} />
+                    <TableCell ws={ws} node={r} c={c} cell={cell} readOnly={unwritten && !known} />
                   </td>
                 );
               })}
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
       {numbered && (

@@ -25,7 +25,7 @@ const DIFFERS: Record<Differ, (c: Cell | undefined) => boolean> = {
  */
 export function TableView(props: ViewProps & { /** A table asked for from elsewhere; `n` changes each time one is. */ focus?: { name: string; n: number } | null }) {
   const g = props.ws.view!;
-  const tables = useMemo(() => tablesIn(g.nodes), [g.nodes]);
+  const tables = useMemo(() => tablesIn([...g.nodes, ...g.unwritten]), [g.nodes, g.unwritten]);
   const [showing, setShowing] = useRemembered(`recollect.table-rows:${g.workspace.id}`);
   useEffect(() => {
     if (props.focus) setShowing(`table:${props.focus.name}`);

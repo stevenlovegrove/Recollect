@@ -189,6 +189,7 @@ impl App {
 
     /// One that doesn't watch the files, for tests: starting a watch asks the system, which on macOS
     /// takes a while and waits on every other watch being started, so many tests at once wait on each other.
+    #[cfg(test)]
     pub fn without_watching(home: PathBuf) -> Arc<App> {
         let (events, _) = broadcast::channel(64);
         Arc::new(App { home, current: Mutex::new(None), events, watching: false })
