@@ -116,10 +116,12 @@ function TableButton({ table, onShow }: { table: string; onShow: (name: string) 
   );
 }
 
-function Card({ data }: NodeProps<RFNode<CardData>>) {
-  const { node, direction, selected, recent, dim, entering, leaving, linking, out, kinds, options, holds } = data;
-  // The options say how each is believed and what it could land on, so those lines would say it twice.
-  const lines = options.length ? data.lines.filter((l) => l.name !== "belief" && l.name !== "chosen") : data.lines;
+/**
+ * Something true or false is only a value until it's required: then it's a principle, and only the worlds
+ * where it holds count. Or it's known, and only the worlds where it's true count. This says which, and
+ * changes it.
+ */
+function TruthToggle({ ws, node }: { ws: Workspace; node: GraphNode }) {
   const required = node.components.some((c) => c.name === "requires");
   const known = node.components.some((c) => c.name === "evidence");
   const value = node.cells.value;
@@ -129,15 +131,35 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
   const seen = !!seenOf(value?.value) || (value?.shown?.kind === "cond" && value.shown.cases.some((c) => seenOf(c.value)));
   const truth = !node.unwritten && (required || known || value?.shown?.kind === "bool" || chancy || seen);
   // Demanded of a choice, where it depends on one that's someone's to make. Otherwise it can only be known.
-  const yours = (value?.vars ?? []).some((id) => data.ws.view!.worlds.vars.some((v) => v.id === id && !v.uncertain));
+  const yours = (value?.vars ?? []).some((id) => ws.view!.worlds.vars.some((v) => v.id === id && !v.uncertain));
   const mark = known ? "evidence" : required || yours ? "requires" : "evidence";
   const marked = required || known;
-  // The option a decision leans towards for now: marked lightly, since leaning decides nothing.
-  const leaned = data.ws.view!.worlds.vars.some((v) => v.leaning === node.id);
   const says =
     mark === "requires"
       ? { on: "required ✓", off: "require", done: "Required", undone: "No longer required", title: marked ? "Required: only the choices that make this true, as surely as it says, count. Click to make it only a value again" : "Only a value. Click to require it of your choices, so only the ones that make it true count" }
       : { on: "known ✓", off: "known?", done: "Known", undone: "No longer known", title: marked ? "Known: only the worlds and draws where it's true count, or, for something seen, each counts as much as it makes that likely. Click to make it only a value again" : "Only a value. Click to say it's known: so only the worlds where it's true count, or, for something seen, each counts as much as it makes that likely" };
+  if (!truth) return null;
+  return (
+    <button
+      className={`card-require nodrag nopan ${marked ? "on" : ""}`}
+      title={says.title}
+      aria-pressed={marked}
+      onClick={(e) => {
+        e.stopPropagation();
+        ws.apply([{ op: marked ? "remove" : "add", id: node.id, component: mark }], marked ? says.undone : says.done).catch((err) => alert(String(err)));
+      }}
+    >
+      {marked ? says.on : says.off}
+    </button>
+  );
+}
+
+function Card({ data }: NodeProps<RFNode<CardData>>) {
+  const { node, direction, selected, recent, dim, entering, leaving, linking, out, kinds, options, holds } = data;
+  // The options say how each is believed and what it could land on, so those lines would say it twice.
+  const lines = options.length ? data.lines.filter((l) => l.name !== "belief" && l.name !== "chosen") : data.lines;
+  // The option a decision leans towards for now: marked lightly, since leaning decides nothing.
+  const leaned = data.ws.view!.worlds.vars.some((v) => v.leaning === node.id);
   return (
     <div
       className={["card", node.unwritten && "unwritten", isDropped(node) && "dead", out && "out", selected && "selected", recent && "recent", dim && "dim", entering && "entering", leaving && "leaving", linking && "linking", leaned && "leaned"].filter(Boolean).join(" ")}
@@ -180,20 +202,7 @@ function Card({ data }: NodeProps<RFNode<CardData>>) {
           </button>
         )}
         {data.table && data.onShowTable && <TableButton table={data.table} onShow={data.onShowTable} />}
-        {/* Something true or false is only a value until it's required: then it's a principle, and only the worlds where it holds count. */}
-        {truth && (
-          <button
-            className={`card-require nodrag nopan ${marked ? "on" : ""}`}
-            title={says.title}
-            aria-pressed={marked}
-            onClick={(e) => {
-              e.stopPropagation();
-              data.ws.apply([{ op: marked ? "remove" : "add", id: node.id, component: mark }], marked ? says.undone : says.done).catch((err) => alert(String(err)));
-            }}
-          >
-            {marked ? says.on : says.off}
-          </button>
-        )}
+        <TruthToggle ws={data.ws} node={node} />
       </div>
       <div className="card-title" title={node.unwritten ? `${node.name}: nobody wrote this row. It's worked out from its table, and isn't saved.` : node.name}>
         {node.unwritten && <span className="unwritten-mark">{UNWRITTEN} </span>}
@@ -254,6 +263,8 @@ type TableSays = {
   within: string | null;
   /** How many of its rows are cards of their own instead. */
   apart: number;
+  /** What the table's own node says besides its rules, as its own card would, such as its value. */
+  says: SummaryLine[];
 };
 
 type TableInfo = TableSays & {
@@ -284,6 +295,9 @@ type TableData = TableSays & {
   onDefault?: () => void;
   /** The table's own node, to select from the card. */
   head: string | null;
+  /** That node itself, for its badges and whether it's required or known, with the workspace to change it. */
+  headNode: GraphNode | null;
+  ws: Workspace;
   /** The row that's selected, if one of these is, or the table's own node. */
   selected: string | null;
 };
@@ -333,18 +347,19 @@ function tableLines(rows: { row: GraphNode; values: string[] }[], columns: strin
 
 function tableHeight(t: { lines: TableLine[] } & TableSays) {
   const lines = t.lines.length;
-  const says = t.rules.length + (t.within ? 1 : 0) + (t.extent || t.open || t.apart ? 1 : 0);
+  const says = t.says.length + t.rules.length + (t.within ? 1 : 0) + (t.extent || t.open || t.apart ? 1 : 0);
   return 46 + 19 * says + 19 * (Math.min(lines, MOST_LINES) + 1) + (lines > MOST_LINES ? 19 : 0);
 }
 
 /** A table whose rows aren't cards: what they are, and what they say, in as few lines as it takes. */
 function TableCard({ data }: NodeProps<RFNode<TableData>>) {
-  const { name, direction, count, columns, lines, groupBy, onGroup, onPick, selected, onShowTable, rules, extent, open, within, apart, head, onDefault } = data;
+  const { name, direction, count, columns, lines, groupBy, onGroup, onPick, selected, onShowTable, rules, extent, open, within, apart, head, headNode, ws, says, onDefault } = data;
   return (
-    <div className={`card table-card ${head && selected === head ? "selected" : ""}`} style={{ width: TABLE_W }}>
+    <div className={`card table-card ${head && selected === head ? "selected" : ""}`} style={{ width: TABLE_W, ...(headNode ? { borderLeftColor: nodeColor(headNode) } : {}) }}>
       <Handle type="source" position={direction === "down" ? Position.Top : Position.Left} />
       <div className="card-top">
         <span className="cbadge" title="A table: each line is the rows that say the same thing">table</span>
+        {headNode && <CompBadges ws={ws} n={headNode} quiet />}
         <span className="muted small">{count} rows</span>
         <button
           className="card-table-link nodrag nopan small"
@@ -369,6 +384,7 @@ function TableCard({ data }: NodeProps<RFNode<TableData>>) {
           </button>
         )}
         {onShowTable && <TableButton table={name} onShow={onShowTable} />}
+        {headNode && <TruthToggle ws={ws} node={headNode} />}
       </div>
       {head ? (
         <button
@@ -384,6 +400,11 @@ function TableCard({ data }: NodeProps<RFNode<TableData>>) {
       ) : (
         <div className="card-title">{name}</div>
       )}
+      {says.map((l) => (
+        <div key={l.name} className={`card-foot ${l.trivial ? "trivial" : ""}`}>
+          <span className="card-foot-k" title={`${l.about ? `${l.about}. ` : ""}${labelOf(l.name)}: ${l.text.length > 400 ? `${l.text.slice(0, 400)}…` : l.text}`}>{labelOf(l.name)}</span> <span className="card-foot-v"><Brackets text={l.text} /></span>
+        </div>
+      ))}
       {(extent || open > 0 || apart > 0) && (
         <div className="card-foot">
           {extent && (
@@ -903,11 +924,9 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
     const out: TableInfo[] = [];
     for (const [name, rows] of byTable) {
       rows.sort((a, b) => keyOrder(a.row!.key, b.row!.key));
-      // The table's own node is this card too, unless it says something besides what its rows are, as a table
-      // that's also evidence about its rows does: then it's a card of its own.
-      const node = g.nodes.find((n) => !n.row && !n.unwritten && n.name === name);
-      const aboutRows = (c: string) => !ws.cellInfo(c) || ["name", "extent", "options", "placed", "placed_rows", "body"].includes(c);
-      const head = node && Object.entries(node.cells).every(([c, cell]) => cell.source !== "own" || aboutRows(c)) ? node : undefined;
+      // The table's own node is this card too. What it says besides what its rows take, as a table that's
+      // also a rule over its rows, `distinct(r in rows: r.chosen)`, is said here, since it's about them.
+      const head = g.nodes.find((n) => !n.row && !n.unwritten && n.name === name);
       // A system's cells a row says itself that are about the row: its options, or its value typed in, as a
       // sudoku's given is.
       const ownSystem = (c: string) => c === "options" || c === "value";
@@ -961,6 +980,8 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
         open: rows.filter((r) => open.has(r.id)).length,
         within: within || null,
         apart,
+        // Its rules and its extent are said above, so only the rest of what its own card would say.
+        says: head ? summaryOf(ws, head).filter((l) => l.name !== "cells" && l.name !== "extent" && !rules.some((r) => r.name === l.name)) : [],
       });
     }
     return out;
@@ -1695,6 +1716,9 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
                 onCards: () => setFold([table.name], false),
                 onDefault: layoutPref.cards?.[table.name] !== undefined && foldDefault.get(table.name) === "some" ? () => unsetFold(table.name) : undefined,
                 head: table.head,
+                headNode: table.head ? (ws.byId.get(table.head) ?? null) : null,
+                ws,
+                says: table.says,
                 rules: table.rules,
                 extent: table.extent,
                 open: table.open,
