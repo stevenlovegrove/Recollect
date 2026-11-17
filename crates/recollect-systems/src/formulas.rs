@@ -15,13 +15,14 @@ use std::cell::{Cell as StdCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-use recollect_graph::table::Key;
+use recollect_graph::graph::FoundRow;
+use recollect_graph::table::{Extent, Key, MOST_IN_EXTENT};
 use recollect_graph::chance::{self, Given, Known, Num, Rand, Reader, Share, Std, Term};
 use recollect_graph::worlds::{Bool, Cond, Picks, Space, Var, Worldly};
 use recollect_graph::{Advice, Backed, Cell, CellType, Compile, Computed, Cx, Entity, Error, Graph, Registry, Severity, Shown, cell};
 use serde_json::{Value, json};
 
-use crate::expr::{self, BinOp, CORE, Estimate, Expr, Type, Val};
+use crate::expr::{self, BinOp, CORE, Estimate, Expr, Group, KeyPart, Type, Val};
 use crate::plan::Done;
 use crate::structure::{Dropped, Need};
 use crate::schedule::{Finish, LatestFinish, LatestStart, PlanEnd, Start};
@@ -37,6 +38,7 @@ pub const VALUE: &str = "value";
 pub const CHOICE: &str = "choice";
 pub const OPTIONS: &str = "options";
 pub const AT: &str = "at";
+pub const EXTENT: &str = "extent";
 pub const REQUIRES: &str = "requires";
 pub const EVIDENCE: &str = "evidence";
 /// What a view has found out by pinning, on a copy of the graph it looks through. Never saved.
@@ -521,6 +523,16 @@ pub struct At {
     pub col: u32,
 }
 
+/// How far a table goes, as `1..9, 1..9`: see `recollect_graph::table::Extent`. Inside it every row is
+/// there, written or not, and outside it there's nothing.
+#[cell("extent")]
+pub struct TableExtent(pub String);
+
+fn valid_extent(v: &Value) -> Result<(), String> {
+    let Some(text) = v.as_str() else { return Err(format!("how far a table goes is text, such as \"1..9, 1..9\", not {v}")) };
+    Extent::parse(text).map(drop)
+}
+
 /// On a label edge: the name a formula on its source uses for its target. Several edges with one name
 /// make a group.
 #[cell]
@@ -567,6 +579,15 @@ pub struct MacroBody {
     pub params: Vec<String>,
     pub body: Expr,
     pub uses: BTreeMap<String, MacroBody>,
+}
+
+/// A row's key as a value: a number, text, or for a grid's, a list with a part for each way across.
+fn key_val(k: Key) -> Val {
+    match k {
+        Key::Num(n) => Val::Num(n as f64),
+        Key::Text(t) => Val::Text(t),
+        Key::Tuple(parts) => Val::List(parts.into_iter().map(key_val).collect()),
+    }
 }
 
 /// What type a node's value is. A type doesn't depend on a world, or on any value that isn't typed
@@ -773,11 +794,7 @@ impl<'c, 'a> Expander<'c, 'a> {
         if let [only] = path
             && only == "row"
         {
-            return self.lit(match self.cx.row_key_of(node) {
-                Some(Key::Num(n)) => Val::Num(n as f64),
-                Some(Key::Text(t)) => Val::Text(t),
-                None => Val::Undefined,
-            });
+            return self.lit(self.cx.row_key_of(node).map_or(Val::Undefined, key_val));
         }
         self.add(match path {
             [] => Part::Read { node, component: ValueCell::NAME.to_string(), fields: vec![] },
@@ -810,6 +827,45 @@ impl<'c, 'a> Expander<'c, 'a> {
 
     fn group(&self, path: &[String], scope: &Scope) -> Result<Vec<Entity>, Error> {
         Ok(self.members(path, scope)?.into_iter().map(|(n, _)| n).collect())
+    }
+
+    /// The rows of a slice, as `Cell[2, *]` or `Cell[1..3, 4..6]`, in order. A `*` is every value that
+    /// way across: what the table's extent says, or what its rows say. What's outside the table isn't in it.
+    fn slice(&self, table: &str, key: &[KeyPart], scope: &Scope) -> Result<Vec<Entity>, Error> {
+        if scope.is_macro() {
+            return failed(format!("a macro can only use its parameters, not {table}[…]"));
+        }
+        let n = key.len();
+        let keys: Vec<Key> = self.cx.rows_of(table).into_iter().filter_map(|r| self.cx.row_key_of(r)).filter(|k| k.arity() == n).collect();
+        let mut axes: Vec<Vec<Key>> = Vec::with_capacity(n);
+        for (i, part) in key.iter().enumerate() {
+            axes.push(match part {
+                KeyPart::One(e) => vec![self.key(e, scope)?],
+                KeyPart::Range(a, b) => {
+                    let (a, b) = (self.number_key(a, scope)?, self.number_key(b, scope)?);
+                    if b.saturating_sub(a) >= MOST_IN_EXTENT as i64 {
+                        return failed(format!("{a}..{b} is more than {MOST_IN_EXTENT} rows"));
+                    }
+                    (a..=b).map(Key::Num).collect()
+                }
+                KeyPart::All => keys.iter().map(|k| k.parts()[i].clone()).collect::<std::collections::BTreeSet<Key>>().into_iter().collect(),
+            });
+        }
+        let mut out = Vec::new();
+        for k in Extent::keys(&axes) {
+            if let FoundRow::Row(e) = self.cx.find_row(table, &k) {
+                out.push(e);
+            }
+        }
+        Ok(out)
+    }
+
+    /// A key that has to be a whole number, as the ends of a range are.
+    fn number_key(&self, e: &Expr, scope: &Scope) -> Result<i64, Error> {
+        match self.key(e, scope)? {
+            Key::Num(n) => Ok(n),
+            k => failed(format!("{k} isn't a whole number, so it can't be the end of a range")),
+        }
     }
 
     /// A group's nodes, each with the edge it was reached by, if it was reached along one.
@@ -912,6 +968,12 @@ impl<'c, 'a> Expander<'c, 'a> {
 
     /// What an argument to a function is: a node or group if it reads as one, or a value.
     fn binding(&self, e: &Expr, scope: &Scope) -> Result<Binding, Error> {
+        if let Expr::Row { table, key, path } = e
+            && e.is_slice()
+            && path.is_empty()
+        {
+            return Ok(Binding::Group(self.slice(table, key, scope)?));
+        }
         if let Expr::Path(path) = e {
             let root = path[0].as_str();
             if crate::expr::goes_along(path) {
@@ -970,12 +1032,22 @@ impl<'c, 'a> Expander<'c, 'a> {
                 if scope.is_macro() {
                     return failed(format!("a macro can only use its parameters, not {table}[…]"));
                 }
-                let key = self.key(key, scope)?;
-                match self.cx.row_at(table, &key) {
-                    Some(n) => Ok(self.read(n, path)),
-                    None => failed(format!("there's no row {table}[{key}]")),
+                if e.is_slice() {
+                    return failed(format!("{table}[…] with a * or a range in it is a group of rows, so it needs something like count({table}[…]) or distinct({table}[…].chosen)"));
+                }
+                let parts: Vec<Key> = key.iter().map(|p| match p {
+                    KeyPart::One(e) => self.key(e, scope),
+                    _ => unreachable!("not a slice"),
+                }).collect::<Result<_, _>>()?;
+                let key = Key::of(parts);
+                match self.cx.find_row(table, &key) {
+                    FoundRow::Row(n) => Ok(self.read(n, path)),
+                    // Outside a table there's nothing, by definition, as there's nothing before its first row.
+                    FoundRow::Outside => Ok(self.lit(Val::Undefined)),
+                    FoundRow::NoSuch => failed(format!("there's no row {table}[{key}]")),
                 }
             }
+            Expr::Index { .. } => Ok(self.lit(key_val(self.key(e, scope)?))),
             Expr::Fold { func, var, group, body, start } => self.fold(func, var, group, body, start.as_deref(), scope),
             Expr::Call(name, args) => self.call(name, args, scope),
             Expr::Seen { what, family, args } => self.seen(what, family, args, scope),
@@ -1022,11 +1094,7 @@ impl<'c, 'a> Expander<'c, 'a> {
                 })
             }
             "row" if !rest.is_empty() => failed("row is which row this is, so it has no cells: prev.cost reads the row before"),
-            "row" => Ok(self.lit(match self.cx.row_key() {
-                Some(Key::Num(n)) => Val::Num(n as f64),
-                Some(Key::Text(t)) => Val::Text(t),
-                None => Val::Undefined,
-            })),
+            "row" => Ok(self.lit(self.cx.row_key().map_or(Val::Undefined, key_val))),
             "in" | "out" | "with" | "rows" => failed(format!("{}.… is a group of nodes, so it needs something like sum({}.…)", root, root)),
             _ => match self.labels.get(root).map(Vec::as_slice) {
                 None if rest.first().is_some_and(|r| r == "rows") => failed(format!("{root}.rows is a group of rows, so it needs something like count({root}.rows)")),
@@ -1044,6 +1112,7 @@ impl<'c, 'a> Expander<'c, 'a> {
             match self.key(e, scope)? {
                 Key::Num(n) => Ok(n),
                 Key::Text(t) => failed(format!("{t} isn't a number, so it can't be added to")),
+                Key::Tuple(_) => failed("row is the whole key, with a part for each way across, so it needs one part, as row[0], to be added to"),
             }
         };
         Ok(match e {
@@ -1063,6 +1132,25 @@ impl<'c, 'a> Expander<'c, 'a> {
             }
             Expr::Path(p) if p.len() == 1 => Key::Text(p[0].clone()),
             Expr::Neg(a) => Key::Num(-number(a)?),
+            // `row[0]`: one part of a key, counting from 0.
+            Expr::Index { of, at } => {
+                let whole = self.key(of, scope)?;
+                let i = number(at)?;
+                let parts = whole.parts();
+                match usize::try_from(i).ok().and_then(|i| parts.get(i)) {
+                    Some(p) => (*p).clone(),
+                    None => return failed(format!("[{whole}] has {} part{}, counting from 0, so there's no part {i}", parts.len(), if parts.len() == 1 { "" } else { "s" })),
+                }
+            }
+            // `floor(row[0] / 3)`: which block of three a row is in, as a sudoku's boxes are.
+            Expr::Call(f, args) if f == "floor" && matches!(args.as_slice(), [Expr::Bin(BinOp::Div, _, _)]) => {
+                let [Expr::Bin(_, a, b)] = args.as_slice() else { unreachable!("matched above") };
+                let (a, b) = (number(a)?, number(b)?);
+                if b == 0 {
+                    return failed("a row's key can't be divided by 0");
+                }
+                Key::Num(a.div_euclid(b))
+            }
             Expr::Bin(op @ (BinOp::Add | BinOp::Sub | BinOp::Mul), a, b) => {
                 let (a, b) = (number(a)?, number(b)?);
                 Key::Num(match op {
@@ -1071,7 +1159,7 @@ impl<'c, 'a> Expander<'c, 'a> {
                     _ => a * b,
                 })
             }
-            _ => return failed("a row's key is a number, a name, or worked out from row, such as Year[3], Car[Hatchback], Year[row - 1] or Left[p.row]"),
+            _ => return failed("a row's key is a number, a name, or worked out from row, such as Year[3], Car[Hatchback], Year[row - 1], Left[p.row] or Cell[row[0], row[1] + 1]"),
         })
     }
 
@@ -1087,8 +1175,11 @@ impl<'c, 'a> Expander<'c, 'a> {
         acc
     }
 
-    fn fold(&self, func: &str, var: &str, group: &[String], body: &Expr, start: Option<&Expr>, scope: &Scope) -> Result<Id, Error> {
-        let members = self.members(group, scope)?;
+    fn fold(&self, func: &str, var: &str, group: &Group, body: &Expr, start: Option<&Expr>, scope: &Scope) -> Result<Id, Error> {
+        let members = match group {
+            Group::Path(path) => self.members(path, scope)?,
+            Group::Slice { table, key } => self.slice(table, key, scope)?.into_iter().map(|n| (n, None)).collect(),
+        };
         let nodes: Vec<Entity> = members.iter().map(|(n, _)| *n).collect();
         let via: HashMap<Entity, Entity> = members.iter().filter_map(|(n, e)| Some((*n, (*e)?))).collect();
         let copy = |n: Entity| {
@@ -2574,6 +2665,22 @@ pub fn install(reg: &mut Registry) {
     reg.component(AT, "Where a choice goes on a board.").requires(OPTIONS);
     reg.cell::<At>(AT, "Where a choice goes on a board.").initial(json!({ "row": 0, "col": 0 }));
 
+    // A table's own, not its rows': it says which rows there are.
+    reg.component(EXTENT, "How far a table goes: inside it, every row is there whether or not it's written, and outside it there's nothing.").per_entity();
+    reg.cell::<TableExtent>(EXTENT, "A part for each way across, as 1..9, 1..9: a range, either end of which can be * for as far as the rows written go; a list, as [Red, Green]; or * for whatever the rows written say.").validate(valid_extent).initial(json!("0..*"));
+    reg.extent_cell(EXTENT);
+    reg.check(EXTENT, "row_outside_extent", Severity::Invariant, |cx| {
+        let Some(recollect_graph::Name(table)) = cx.own::<recollect_graph::Name>()? else { return Ok(vec![]) };
+        let Some(axes) = cx.extent_axes(&table) else { return Ok(vec![]) };
+        Ok(cx
+            .rows()
+            .into_iter()
+            .filter_map(|r| cx.row_key_of(r))
+            .filter(|k| !Extent::contains(&axes, k))
+            .map(|k| format!("{table}[{k}] is written outside how far the table says it goes"))
+            .collect())
+    });
+
     reg.component(REQUIRES, "Demanded of your choices: only the ways they could go that make this node's value true, as surely as it says, count.").icon("✦").requires(VALUE);
     reg.cell::<AtLeast>(REQUIRES, "How surely it has to be met, from 0 to 1, where what it depends on is a matter of chance. 1 is always.").validate(a_chance).initial(json!(1.0));
     // A demand is met or it isn't, so what's seen, which is how likely, isn't one.
@@ -2673,6 +2780,14 @@ balance: 1000}]}, with `is_a` for a table that's a kind of another, `components`
 every row an option of a decision. `csv: \"<the file's text>\"` in place of `rows` reads them from a CSV whose first line names the \
 columns, numbered from 1 unless `key` names the column of keys. `one_of(Runners.rows)` is one row, each as likely (any group of nodes \
 will do), as a short list, so `pick.value.t5k` and `pick.value.t10k` are the same row's and move together. See docs/data.md.\n\
+\n\
+A key can have several parts, `Cell[2, 3]`, which makes a grid: `row` is then a list and `row[0]` its first part, so \
+`Cell[row[0], row[1] + 1]` is the cell to the right and `floor((row[0] - 1) / 3)` which block of three a row is in. Outside a table, before \
+its lowest row or outside its extent, a row is undefined, so `or(P[row[0] - 1, row[1]].c, 0)`. Give a table an `extent` such as \
+\"1..9, 1..9\" (a range, either end of which can be `*` for as far as rows are written, a list as [Red, Green], or `*` for whatever is \
+written that way) and every row inside it is there without being written, and `rows` is all of them: a sudoku is a table with `options` \
+and an extent, a `fits` column such as `distinct(Cell[row[0], *].chosen) && distinct(Cell[*, row[1]].chosen)`, and a `requires` node \
+`all(Cell.rows.fits)`. `Cell[2, *]`, `Cell[*, 3]` and `Cell[1..3, 4..6]` are slices, groups of rows to go over. See docs/expressions.md.\n\
 \n\
 A node with `requires` and a true-or-false value is a demand on choices: only the ways they could go that make it true count. Where it \
 depends on chance, its `at_least` cell says how surely, from 0 to 1. A node with `evidence` is something known to be true: it rules out \

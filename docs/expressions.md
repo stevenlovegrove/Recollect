@@ -233,10 +233,13 @@ sum      := term (("+" | "-") term)*
 term     := unary (("*" | "/") unary)*
 unary    := "-" unary | power
 power    := atom ("^" unary)?
-atom     := number | string | "true" | "false" | "undefined" | path | row | call | "(" expr ")"
+atom     := number | string | "true" | "false" | "undefined" | path | row | index | call | "(" expr ")"
 path     := name ("." name)*          (a step may be in* or out*, as kind.in*.is_a)
-row      := name "[" expr "]" ("." name)*
-call     := name "(" (name "in" path ":" expr ("," expr)? | expr ("," expr)*)? ")"
+row      := name "[" part ("," part)* "]" ("." name)*
+part     := expr | "*" | expr ".." expr   (a * or a range makes it a slice, which is a group)
+index    := ("row" | name "." "row") "[" expr "]"
+call     := name "(" (name "in" group ":" expr ("," expr)? | expr ("," expr)*)? ")"
+group    := path | name "[" part ("," part)* "]"
 ```
 
 | Form | Means |
@@ -247,8 +250,10 @@ call     := name "(" (name "in" path ":" expr ("," expr)? | expr ("," expr)*)? "
 | `from.need`, `to.need` | On an edge, a cell on its source or target |
 | `o.via.weight` | In a fold over edges, a cell on the edge `o` was reached along |
 | `prev.balance`, `next.left`, `prev.prev.f` | A cell on the row before or after this one in its table: see [Tables](#tables) |
-| `row` | Which row this is: its number, or its key |
-| `Year[100].balance`, `Year[row - 1]`, `Car[Hatchback].price` | A cell on a row of a table, by its key |
+| `row` | Which row this is: its number, or its key, or in a grid a list with a part for each way across |
+| `row[0]`, `p.row[1]` | One part of which row this is, in a grid, counting from 0 |
+| `Year[100].balance`, `Year[row - 1]`, `Car[Hatchback].price`, `Cell[row[0], row[1] + 1].chosen` | A cell on a row of a table, by its key |
+| `Cell[2, *]`, `Cell[*, row[1]]`, `Cell[1..3, 4..6]` | A slice of a grid, which is a group of its rows: see [Grids](#grids) |
 | `rows` | The group of rows in this node's table |
 | `in.part_of`, `out.depends_on` | The group of nodes at the other end of edges with that component |
 | `with.task` | The group of nodes with that component |
@@ -410,6 +415,28 @@ Queen[1] … Queen[8]
 Each row is a choice of column, and `q.row` is a row's key, so the table's formula says no two queens share a column or a diagonal. The puzzles are written this way. The zebra puzzle has a table for each kind of thing, such as `Pet[Zebra]` and `Drink[Water]`, whose rows choose a house, and each clue is a formula naming the rows it's about, with nothing to label: `Nationality[English].chosen = Colour[Red].chosen`, or `abs(Smoke[Kools].chosen.value - Pet[Horse].chosen.value) = 1` for "next to". The sudoku's cells are a table too, and each row, column and box is a clue such as `distinct(Cell[A1].chosen, Cell[A2].chosen, Cell[A3].chosen, Cell[A4].chosen)`.
 
 A formula anywhere can go over a table's rows by its name, as `count(v in Arrived.rows: v < 9.5)`, and find a row by the key of one it's going over, as `Left[v.row]`.
+
+### Grids
+
+A key can have more than one part: `Cell[2, 3]` is a row of the table `Cell` with the key 2, 3, which makes the table a grid. The parts are split at the commas, and each is a number or a name, so `Score[Reds, 4]` is fine. A name with a comma in its brackets was text before grids, and is a grid's row now.
+
+- **`row` is a list,** a part for each way across, and `row[0]` is the first part. Those parts are numbers or names, so `Cell[row[0], row[1] + 1]` is the cell to the right, and `floor((row[0] - 1) / 3)` says which block of three a row is in. A key's arithmetic is `+`, `-`, `*` and `floor(a / b)`, all on whole numbers, since a key has to be known without looking at any world.
+- **A numbered grid goes on by itself,** each way across, from the lowest number written that way to 100,000 past the highest, as a numbered table does. So Pascal's triangle is `P[0, 0]` with a 1 in it and one formula on `P`: `or(P[row[0] - 1, row[1] - 1].c, 0) + or(P[row[0] - 1, row[1]].c, 0)`. `prev` and `next` are for tables with one part to a key; a grid's neighbours are addressed by where they are.
+- **Outside a table there's nothing, by definition.** Before the lowest number written, as before a table's first row, a row is undefined, so `or(…, 0)` says what it is there: `Year[-1].balance` is undefined. (It used to be an error. A key is worked out before any world is, so `if` can't keep a formula from reading there, and an error would leave no way to say what the edge is.) A key nothing could be is still an error: a name nobody wrote, the wrong number of parts, or further than a table goes on by itself.
+- **A table can say how far it goes,** in its `extent`: text with a part for each way across, as `1..9, 1..9`. Each part is a range, either end of which can be `*` for as far as the rows written go that way (`1..*`); a list, as `[Red, Green, Blue]`; or `*`, for whatever the rows written say that way. A name, which can't be counted along, only ever has rows nobody wrote where its part of the extent is a list or `*`. Inside the extent, every row is there whether or not it's written, and `rows` is all of them, in order. Outside it, there's nothing. `*, 1..10` on `Score` gives every team written anywhere all ten rounds, so a row for each team fills the grid. An extent is only ever text, never a formula, and it's the table's own, not its rows'. A row written outside its table's extent can still be read by its name, and the check `row_outside_extent` says it's there.
+- **A slice is a group.** `Cell[2, *]` is every row with 2 for its first part, `Cell[*, 3]` every row with 3 for its second, and `Cell[1..3, 4..6]` a block: `*` is every value that way across, from the extent if there is one, or from the rows. So `distinct(Cell[row[0], *].chosen)` is "different from the rest of its line", and `sum(t in Score[Reds, *]: t.points)` a team's total. What's outside the table isn't in a slice.
+
+A sudoku is a table of choices with nothing written but how far it goes. `Cell` has `options` 1 to 9 and `extent` `1..9, 1..9`, so its 81 rows are each a choice nobody wrote, and one formula on the table says what every cell has to be:
+
+```
+Cell:    options = [1, …, 9]      extent = 1..9, 1..9
+         fits = distinct(Cell[row[0], *].chosen) && distinct(Cell[*, row[1]].chosen)
+                && distinct(Cell[floor((row[0] - 1) / 3) * 3 + 1 .. floor((row[0] - 1) / 3) * 3 + 3,
+                                 floor((row[1] - 1) / 3) * 3 + 1 .. floor((row[1] - 1) / 3) * 3 + 3].chosen)
+Solved:  requires   value = all(Cell.rows.fits)
+```
+
+A given is a clue naming a cell by where it is, as `Cell[1, 1].chosen.value = 5`. `tests/grid.rs` checks a 4×4 one has its 288 grids. **A 9×9 can be written the same way but can't be worked out yet:** one cell's `distinct`s, as pairwise `!=` over nine-way choices, already come to tens of millions of nodes in the worlds, and the whole runs out of memory. That test is there but ignored until `distinct` is a constraint of its own in the worlds.
 
 The engine keeps an index of names, so finding a table's rows or a row's neighbour doesn't mean reading every name. Renaming a node, linking a table to a kind, or removing a row reaches everything that could take a cell from somewhere else as a result. `tests/tables.rs` checks this against a newly built graph through random renames, kinds and edits, and `tests/toy_table.rs` in the systems checks the formulas.
 

@@ -143,12 +143,16 @@ fn a_formula_can_address_any_row_and_a_numbered_table_goes_on_by_itself() {
     g.formula("Price", "Car[Hatchback].price + Car[\"Hatchback\"].price");
     assert_eq!(amount(&g, "Price"), 36000.0);
 
-    // What a table doesn't say, a row nobody wrote can't have, and before the first row there's nothing.
-    for (text, says) in [("Year[100].colour", "colour"), ("Year[-1].balance", "no row Year[-1]"), ("Car[Estate].price", "no row Car[Estate]"), ("Year[Rate].balance", "no row Year[Rate]")] {
+    // What a table doesn't say, a row nobody wrote can't have, and a row nothing could be is an error.
+    for (text, says) in [("Year[100].colour", "colour"), ("Car[Estate].price", "no row Car[Estate]"), ("Year[Rate].balance", "no row Year[Rate]"), ("Year[1000000].balance", "no row Year[1000000]")] {
         g.formula("Bad", text);
         let err = format!("{:?}", g.get::<ValueCell>("Bad"));
         assert!(err.contains(says), "{text}: {err}");
     }
+    // Before the first row there's nothing, as there's nothing before it for prev: it's undefined, so a
+    // formula can say what it is there, which keys can't, as they're worked out before any world is.
+    g.formula("Before", "or(Year[-1].balance, 7)");
+    assert_eq!(amount(&g, "Before"), 7.0);
     g.assert_round_trips();
 }
 

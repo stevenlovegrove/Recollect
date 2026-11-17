@@ -315,6 +315,8 @@ pub struct Registry {
     /// The cell on an edge naming its kind, `{ref: node}`, if edges can have one: the edge takes the cells
     /// it doesn't say from that node, and can be followed by that node's name.
     pub(crate) edge_kind: Option<String>,
+    /// The cell on a table that says how far it goes, if tables can say: see `table::Extent`.
+    pub(crate) extent: Option<String>,
     advice: Vec<AdviceFn>,
     build: String,
     current: String,
@@ -467,6 +469,13 @@ impl Registry {
     /// Edges take what they don't say from the node this cell of theirs names, as a node does from its kind.
     pub fn edge_kind_cell(&mut self, cell: &str) -> &mut Self {
         self.edge_kind = Some(cell.to_string());
+        self
+    }
+
+    /// Tables say how far they go in this cell, as text such as `1..9, 1..9`: see `table::Extent`. It's
+    /// about which rows there are, so it's only ever a value, never a formula.
+    pub fn extent_cell(&mut self, cell: &str) -> &mut Self {
+        self.extent = Some(cell.to_string());
         self
     }
 

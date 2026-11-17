@@ -62,7 +62,11 @@ export function TableGrid({ ws, table, selected, onSelect }: ViewProps & { table
   // Every row from the first to as far as asked, written or not, in order.
   const shown: { node: GraphNode; key: string | number; unwritten: boolean }[] = numbered
     ? (run ?? []).map((r) => ({ node: written.get(r.id) ?? { id: r.id, name: `${table}[${r.key}]`, components: [], cells: r.cells, unwritten: true }, key: r.key, unwritten: !r.written }))
-    : rows.map((r) => ({ node: r, key: r.row!.key, unwritten: false }));
+    : rows.map((r) => {
+        // A row of a grid is shown by its parts, as it's named.
+        const key = r.row!.key;
+        return { node: r, key: Array.isArray(key) ? key.join(", ") : key, unwritten: false };
+      });
 
   return (
     <>

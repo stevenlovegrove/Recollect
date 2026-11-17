@@ -774,13 +774,19 @@ fn cells(g: &Graph, e: Entity, lens: &Lens, labels: &Labels, vars: &mut BTreeMap
     g.cells_of(e).into_iter().filter(|c| !internal(g, c)).filter_map(|c| cell_view(g, e, &c, lens, labels, vars).map(|v| (c, v))).collect()
 }
 
+/// A row's key: a number, text, or for a row of a grid, a list with a part for each way across.
+fn key_json(k: &recollect_graph::table::Key) -> Value {
+    match k {
+        recollect_graph::table::Key::Num(n) => json!(n),
+        recollect_graph::table::Key::Text(t) => json!(t),
+        recollect_graph::table::Key::Tuple(parts) => Value::Array(parts.iter().map(key_json).collect()),
+    }
+}
+
 fn node_view(g: &Graph, e: Entity, name: String, cells: BTreeMap<String, CellView>) -> NodeView {
     let row = g.row_of(e).map(|r| RowView {
         table: r.table.clone(),
-        key: match &r.key {
-            recollect_graph::table::Key::Num(n) => json!(n),
-            recollect_graph::table::Key::Text(t) => json!(t),
-        },
+        key: key_json(&r.key),
     });
     // What its cells read last time they ran, which they just did. A row reached through a reference,
     // as car.chosen.price reaches Car[Hatchback], isn't read by where it is: what it read the reference

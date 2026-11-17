@@ -57,14 +57,26 @@ impl Entity {
     }
 
     /// A row nobody wrote: see `Graph::row_at`.
-    fn implicit(table: &str, n: i64) -> Self {
-        hashed(&format!("{table}[{n}]"))
+    fn implicit(table: &str, key: &table::Key) -> Self {
+        hashed(&format!("{table}[{key}]"))
     }
 
     /// A node nobody wrote that's only what these cells say: see `Graph::constant`.
     fn constant(cells: &BTreeMap<String, Value>) -> Self {
         hashed(&format!("constant {}", serde_json::to_string(cells).expect("values serialise")))
     }
+}
+
+/// What's at a key of a table: see `Graph::find_row`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FoundRow {
+    Row(Entity),
+    /// Outside the table, where by definition there's nothing: before its lowest row, or outside the
+    /// extent it says.
+    Outside,
+    /// Nothing could be this row: there's no such table, nobody wrote a row with that key and it can't
+    /// go on to it by itself, or it's further than a table goes on by itself.
+    NoSuch,
 }
 
 /// A node nobody wrote, which only exists to be read: see `Graph::row_at` and `Graph::constant`.
@@ -590,7 +602,8 @@ impl Graph {
                 g.names.set(e, name);
             }
         });
-        if cell == Name::NAME {
+        // How far a table goes is about which rows there are, as names are.
+        if cell == Name::NAME || self.registry.extent.as_deref() == Some(cell) {
             self.touch(Dep::Names);
         }
         // An edge that changes kind leaves the edges of one kind and joins another's.
@@ -1248,31 +1261,107 @@ impl Graph {
     /// the table doesn't say is an error. Such a row only exists to be read, so it's never saved, and it's
     /// the same handle each time, so what's worked out on it stays in the memos.
     pub fn row_at(&self, table: &str, key: &table::Key) -> Option<Entity> {
-        let rows = self.names.tables.get(table)?;
-        if let Some(e) = rows.get(key).and_then(|s| s.first()) {
-            return Some(*e);
+        match self.find_row(table, key) {
+            FoundRow::Row(e) => Some(e),
+            FoundRow::Outside | FoundRow::NoSuch => None,
         }
-        let table::Key::Num(n) = key else { return None };
-        let numbers = rows.iter().filter(|(_, s)| !s.is_empty()).filter_map(|(k, _)| if let table::Key::Num(m) = k { Some(*m) } else { None });
-        let (first, last) = numbers.fold((i64::MAX, i64::MIN), |(lo, hi), m| (lo.min(m), hi.max(m)));
-        if *n < first || *n > last.saturating_add(MOST_IMPLICIT) {
-            return None;
+    }
+
+    /// The row of a table with this key, as `row_at`, or why there isn't one: it's outside the table,
+    /// where by definition there's nothing, or nothing could be that row.
+    ///
+    /// A table that says its extent has every row inside it, and none outside. Otherwise, a table whose
+    /// rows are numbered, as `Year[3]` or `Cell[2, 3]` are, goes on by itself each way across, from the
+    /// lowest number written that way to `MOST_IMPLICIT` past the highest. Before the lowest there's
+    /// nothing, as there's nothing before a table's first row; past that far, it's a row nothing could be.
+    pub fn find_row(&self, table: &str, key: &table::Key) -> FoundRow {
+        let written = self.names.tables.get(table);
+        let keys = || written.into_iter().flatten().filter(|(_, s)| !s.is_empty()).map(|(k, _)| k);
+        if let Some(e) = written.and_then(|rows| rows.get(key)).and_then(|s| s.first()) {
+            return FoundRow::Row(*e);
         }
-        let e = Entity::implicit(table, *n);
+        if let Some(extent) = self.extent(table) {
+            let axes = extent.resolve(keys());
+            return if table::Extent::contains(&axes, key) { FoundRow::Row(self.implicit_row(table, key)) } else { FoundRow::Outside };
+        }
+        if !key.is_numbered() {
+            return FoundRow::NoSuch;
+        }
+        let n = key.arity();
+        let mut bounds: Option<Vec<(i64, i64)>> = None;
+        for k in keys().filter(|k| k.arity() == n && k.is_numbered()) {
+            let b = bounds.get_or_insert_with(|| vec![(i64::MAX, i64::MIN); n]);
+            for (i, p) in k.parts().into_iter().enumerate() {
+                let table::Key::Num(m) = p else { unreachable!("numbered") };
+                b[i] = (b[i].0.min(*m), b[i].1.max(*m));
+            }
+        }
+        let Some(bounds) = bounds else { return FoundRow::NoSuch };
+        let parts = key.parts();
+        let at = |i: usize| if let table::Key::Num(m) = parts[i] { *m } else { unreachable!("numbered") };
+        if (0..n).any(|i| at(i) > bounds[i].1.saturating_add(MOST_IMPLICIT)) {
+            return FoundRow::NoSuch;
+        }
+        if (0..n).any(|i| at(i) < bounds[i].0) {
+            return FoundRow::Outside;
+        }
+        FoundRow::Row(self.implicit_row(table, key))
+    }
+
+    /// The row nobody wrote with this key: the same handle each time.
+    fn implicit_row(&self, table: &str, key: &table::Key) -> Entity {
+        let e = Entity::implicit(table, key);
         if let std::collections::hash_map::Entry::Vacant(slot) = lock(&self.implicit).entry(e) {
             slot.insert(Implicit::Row(Row { table: table.to_string(), key: key.clone() }));
             lock(&self.components).remove(&e);
         }
-        Some(e)
+        e
     }
 
-    /// A table's rows: those with numbers in order, then the rest in the order they were made.
+    /// How far a table goes, if it says: the cell the registry names for it, on the node named for the
+    /// table. See `table::Extent`.
+    pub fn extent(&self, table: &str) -> Option<table::Extent> {
+        let cell = self.registry.extent.as_ref()?;
+        self.names.named.get(table)?.iter().find_map(|t| match self.cells.get(t)?.get(cell)? {
+            Backing::Value(Value::String(s)) => table::Extent::parse(s).ok(),
+            _ => None,
+        })
+    }
+
+    /// The rows written outside the extent their table says, which nothing reads by where it is.
+    pub fn rows_outside(&self) -> Vec<Entity> {
+        let mut out = Vec::new();
+        for (table, rows) in &self.names.tables {
+            let Some(extent) = self.extent(table) else { continue };
+            let axes = extent.resolve(rows.iter().filter(|(_, s)| !s.is_empty()).map(|(k, _)| k));
+            out.extend(rows.iter().filter(|(k, _)| !table::Extent::contains(&axes, k)).flat_map(|(_, s)| s.iter().copied()));
+        }
+        out.sort();
+        out
+    }
+
+    /// A table's rows: those with numbers in order, then the rest in the order they were made. A table
+    /// that says its extent has every row inside it, in order, written or not, and then any written outside.
     pub fn rows(&self, table: &str) -> Vec<Entity> {
-        let Some(rows) = self.names.tables.get(table) else { return Vec::new() };
+        let written = self.names.tables.get(table);
+        if let Some(extent) = self.extent(table) {
+            let keys = || written.into_iter().flatten().filter(|(_, s)| !s.is_empty()).map(|(k, _)| k);
+            let axes = extent.resolve(keys());
+            let mut out = Vec::new();
+            for key in table::Extent::keys(&axes) {
+                match written.and_then(|rows| rows.get(&key)).filter(|s| !s.is_empty()) {
+                    Some(nodes) => out.extend(nodes.iter().copied()),
+                    None => out.push(self.implicit_row(table, &key)),
+                }
+            }
+            out.extend(keys().filter(|k| !table::Extent::contains(&axes, k)).flat_map(|k| written.into_iter().flat_map(move |rows| rows[k].iter().copied())));
+            return out;
+        }
+        let Some(rows) = written else { return Vec::new() };
         let (mut numbered, mut rest) = (Vec::new(), Vec::new());
         for (key, nodes) in rows {
             match key {
-                table::Key::Num(_) => numbered.extend(nodes.iter().copied()),
+                table::Key::Num(_) | table::Key::Tuple(_) => numbered.extend(nodes.iter().copied()),
                 table::Key::Text(_) => rest.extend(nodes.iter().copied()),
             }
         }
@@ -1643,6 +1732,20 @@ impl Cx<'_> {
     pub fn row_at(&self, table: &str, key: &table::Key) -> Option<Entity> {
         self.s.note(Dep::Names);
         self.s.g.row_at(table, key)
+    }
+
+    /// The row of a table with this key, or why there isn't one: see `Graph::find_row`.
+    pub fn find_row(&self, table: &str, key: &table::Key) -> FoundRow {
+        self.s.note(Dep::Names);
+        self.s.g.find_row(table, key)
+    }
+
+    /// How far a table goes, if it says, and what each way across it comes to: see `table::Extent`.
+    pub fn extent_axes(&self, table: &str) -> Option<Vec<Vec<table::Key>>> {
+        self.s.note(Dep::Names);
+        let extent = self.s.g.extent(table)?;
+        let written = self.s.g.names.tables.get(table);
+        Some(extent.resolve(written.into_iter().flatten().filter(|(_, s)| !s.is_empty()).map(|(k, _)| k)))
     }
 
     /// A node that's only what these cells say: see `Graph::constant`. Nothing about it can change, so

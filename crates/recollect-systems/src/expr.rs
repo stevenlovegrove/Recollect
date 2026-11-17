@@ -218,17 +218,46 @@ pub enum Expr {
     Lit(Val),
     /// `rate`, `rate.finish`, `self.need`, `whole.plan_end`.
     Path(Vec<String>),
-    /// `Year[3].balance`: a row of a table, by its key, and a cell on it. See `table`.
-    Row { table: String, key: Box<Expr>, path: Vec<String> },
+    /// `Year[3].balance` or `Cell[2, 3].chosen`: a row of a table, by its key, and a cell on it. See
+    /// `table`. A key with a `*` or a range in it is a slice, which is a group of rows.
+    Row { table: String, key: Vec<KeyPart>, path: Vec<String> },
+    /// `row[0]`: one part of which row this is, in a table whose key has more than one.
+    Index { of: Box<Expr>, at: Box<Expr> },
     Call(String, Vec<Expr>),
     /// `what ~ family(args…)`: `what` was seen, drawn from that distribution. See `docs/inference.md`.
     Seen { what: Box<Expr>, family: String, args: Vec<Expr> },
-    /// `sum(x in group: body)`. A group is `in.kind`, `out.kind`, `with.component`, or a name.
-    /// `start` is what `max` and `min` begin from.
-    Fold { func: String, var: String, group: Vec<String>, body: Box<Expr>, start: Option<Box<Expr>> },
+    /// `sum(x in group: body)`. A group is `in.kind`, `out.kind`, `with.component`, a name, or a slice
+    /// of a table. `start` is what `max` and `min` begin from.
+    Fold { func: String, var: String, group: Group, body: Box<Expr>, start: Option<Box<Expr>> },
     Not(Box<Expr>),
     Neg(Box<Expr>),
     Bin(BinOp, Box<Expr>, Box<Expr>),
+}
+
+/// One part of a row's key, between the commas of `Cell[2, *]`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum KeyPart {
+    One(Expr),
+    /// `*`: every row this way across.
+    All,
+    /// `1..3`: the rows from one to the other, both included.
+    Range(Expr, Expr),
+}
+
+/// What a fold goes over.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Group {
+    /// `in.part_of`, `line`, `rows`, `Arrived.rows`, `hub.out.relates`.
+    Path(Vec<String>),
+    /// `Cell[2, *]`: the rows of a table whose keys match.
+    Slice { table: String, key: Vec<KeyPart> },
+}
+
+impl Expr {
+    /// Whether this is a slice of a table, `Cell[2, *]`, which is a group of rows rather than one.
+    pub fn is_slice(&self) -> bool {
+        matches!(self, Expr::Row { key, .. } if key.iter().any(|p| !matches!(p, KeyPart::One(_))))
+    }
 }
 
 /// What's evaluated as itself, rather than being expanded into something else.
@@ -290,7 +319,7 @@ enum Tok {
     Sym(&'static str),
 }
 
-const SYMBOLS: &[&str] = &["&&", "||", "!=", "<=", ">=", "(", ")", "[", "]", ",", ".", ":", "+", "-", "*", "/", "^", "=", "<", ">", "!", "~"];
+const SYMBOLS: &[&str] = &["&&", "||", "!=", "<=", ">=", "..", "(", ")", "[", "]", ",", ".", ":", "+", "-", "*", "/", "^", "=", "<", ">", "!", "~"];
 
 fn tokens(text: &str) -> Result<Vec<(Tok, usize)>, String> {
     let chars: Vec<char> = text.chars().collect();
@@ -514,20 +543,54 @@ impl Parser {
                 "false" => Ok(Expr::Lit(Val::Bool(false))),
                 "undefined" => Ok(Expr::Lit(Val::Undefined)),
                 _ if self.eat("(") => self.call(n),
+                "row" if self.eat("[") => self.index(Expr::Path(vec![n])),
                 _ if self.eat("[") => {
-                    self.deeper()?;
-                    let key = self.or()?;
-                    self.depth -= 1;
-                    self.expect("]")?;
+                    let key = self.key_parts()?;
                     let mut path = Vec::new();
                     while self.eat(".") {
                         path.push(self.name()?);
                     }
-                    Ok(Expr::Row { table: n, key: Box::new(key), path })
+                    Ok(Expr::Row { table: n, key, path })
                 }
-                _ => Ok(Expr::Path(self.path_from(n)?)),
+                _ => {
+                    let path = self.path_from(n)?;
+                    // `p.row[0]`: a part of the key of a row being gone over.
+                    if path.last().is_some_and(|l| l == "row") && self.eat("[") {
+                        return self.index(Expr::Path(path));
+                    }
+                    Ok(Expr::Path(path))
+                }
             },
         }
+    }
+
+    /// What's in the brackets of `Cell[2, *]`, after the `[`, up to and including the `]`.
+    fn key_parts(&mut self) -> Result<Vec<KeyPart>, String> {
+        self.deeper()?;
+        let mut parts = Vec::new();
+        loop {
+            if self.eat("*") {
+                parts.push(KeyPart::All);
+            } else {
+                let e = self.or()?;
+                parts.push(if self.eat("..") { KeyPart::Range(e, self.or()?) } else { KeyPart::One(e) });
+            }
+            if self.eat("]") {
+                break;
+            }
+            self.expect(",")?;
+        }
+        self.depth -= 1;
+        Ok(parts)
+    }
+
+    /// `row[0]`, after the `[`.
+    fn index(&mut self, of: Expr) -> Result<Expr, String> {
+        self.deeper()?;
+        let at = self.or()?;
+        self.depth -= 1;
+        self.expect("]")?;
+        Ok(Expr::Index { of: Box::new(of), at: Box::new(at) })
     }
 
     fn call(&mut self, func: String) -> Result<Expr, String> {
@@ -541,7 +604,7 @@ impl Parser {
                 return Err(format!("{func} doesn't go over a group"));
             }
             let first = self.name()?;
-            let group = self.path_from(first)?;
+            let group = if self.eat("[") { Group::Slice { table: first, key: self.key_parts()? } } else { Group::Path(self.path_from(first)?) };
             self.expect(":")?;
             let body = self.or()?;
             let start = if self.eat(",") { Some(Box::new(self.or()?)) } else { None };
@@ -560,7 +623,7 @@ impl Parser {
             }
         }
         // `max(a, b)` is two numbers, and only a group spelled out as one can be gone over.
-        let of_group = matches!(args.first(), Some(Expr::Path(p)) if matches!(p[0].as_str(), "in" | "out" | "with" | "rows") || p.get(1).is_some_and(|r| r == "rows") || goes_along(p));
+        let of_group = matches!(args.first(), Some(Expr::Path(p)) if matches!(p[0].as_str(), "in" | "out" | "with" | "rows") || p.get(1).is_some_and(|r| r == "rows") || goes_along(p)) || args.first().is_some_and(Expr::is_slice);
         // `distinct(a, b, c)` is the values given, and `distinct(group)` goes over the group.
         let many = func == "distinct" && args.len() != 1;
         if FOLDS.contains(&func.as_str()) && (!NEEDS_START.contains(&func.as_str()) || of_group) && !many {
@@ -589,6 +652,15 @@ fn check_start(func: &str, given: bool) -> Result<(), String> {
 fn short_fold(func: String, mut args: Vec<Expr>) -> Result<Expr, String> {
     let start = if args.len() == 2 { args.pop().map(Box::new) } else { None };
     check_start(&func, start.is_some())?;
+    let var = "it".to_string();
+    // `distinct(Cell[2, *].chosen)` is short for `distinct(it in Cell[2, *]: it.chosen)`.
+    if args.len() == 1 && args[0].is_slice() {
+        let Some(Expr::Row { table, key, path }) = args.pop() else { unreachable!("a slice") };
+        let mut read = vec![var.clone()];
+        read.extend(path.iter().cloned());
+        let body = if func == "count" && path.is_empty() { Expr::Lit(Val::Bool(true)) } else { Expr::Path(read) };
+        return Ok(Expr::Fold { func, var, group: Group::Slice { table, key }, body: Box::new(body), start });
+    }
     let (1, Some(Expr::Path(path))) = (args.len(), args.pop()) else {
         return Err(format!("{func} takes one group, such as {func}(line) or {func}(x in line: x)"));
     };
@@ -603,11 +675,10 @@ fn short_fold(func: String, mut args: Vec<Expr>) -> Result<Expr, String> {
         }
         whole += 2;
     }
-    let var = "it".to_string();
     let mut read = vec![var.clone()];
     read.extend_from_slice(&path[whole..]);
     let body = if func == "count" && path.len() == whole { Expr::Lit(Val::Bool(true)) } else { Expr::Path(read) };
-    Ok(Expr::Fold { func, var, group: path[..whole].to_vec(), body: Box::new(body), start })
+    Ok(Expr::Fold { func, var, group: Group::Path(path[..whole].to_vec()), body: Box::new(body), start })
 }
 
 pub fn parse(text: &str) -> Result<Expr, String> {

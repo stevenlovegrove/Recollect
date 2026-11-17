@@ -142,7 +142,8 @@ export interface GraphNode {
   components: Has[];
   cells: Record<string, Cell>;
   /** Which row of which table its name makes it: `Year[3]` is row 3 of Year. */
-  row?: { table: string; key: number | string };
+  // A row of a grid has a part for each way across.
+  row?: { table: string; key: number | string | (number | string)[] };
   /** The rows of related tables with the same key: with this one, they're one thing. */
   parts?: string[];
   /** The rows its cells read by where they are, as `prev` or `Year[3]` do, rather than through an edge. */
