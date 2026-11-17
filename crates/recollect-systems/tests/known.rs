@@ -188,7 +188,11 @@ fn how_a_requirement_was_judged_is_said() {
     assert!(!advice.iter().any(|a| a.rule == "requirement_too_close_to_call"), "a law says how likely exactly, so there's nothing to be close: {advice:?}");
 
     // Read from draws, and within what those could be out by of how sure it has to be, it says so.
-    let (a, b, both) = (Entity::new(), Entity::new(), Entity::new());
+    // A draw's numbers are seeded from its name, which is its node's handle, so a fresh handle each run
+    // would be a different set of draws each run: an exact 0.5 then lands more than 3 standard errors out
+    // about one time in 300, and it isn't close. These handles are fixed so the draws are the same every run.
+    let id = |text: &str| text.parse::<Entity>().expect("a handle");
+    let (a, b, both) = (id("01900000-0000-7000-8000-00000000000a"), id("01900000-0000-7000-8000-00000000000b"), id("01900000-0000-7000-8000-0000000000ab"));
     let mut ops: Vec<Op> = [a, b, both].into_iter().flat_map(|id| [Op::Spawn { id }, Op::add(id, VALUE)]).collect();
     ops.extend([Op::set_formula(a, ValueCell::NAME, "normal(0, 1)"), Op::set_formula(b, ValueCell::NAME, "normal(0, 1)"), Op::set_formula(both, ValueCell::NAME, "a * b < 0")]);
     ops.extend(label(both, a, "a"));
