@@ -1841,6 +1841,12 @@ impl Cx<'_> {
         self.s.g.backing_at(self.id, cell).map(|(b, _)| (&b).into())
     }
 
+    /// What this entity says in this cell itself, if anything: not what it takes from a kind, or a default.
+    pub fn own_written(&self, cell: &str) -> Option<Backed> {
+        self.s.note(Dep::Backing((self.id, cell.to_string())));
+        self.s.g.cells.get(&self.id)?.get(cell).map(Backed::from)
+    }
+
     /// Whether this entity has a value written in this cell itself.
     pub fn own_is_stored(&self, cell: &str) -> bool {
         self.is_stored(self.id, cell)

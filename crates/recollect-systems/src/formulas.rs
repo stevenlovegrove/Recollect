@@ -514,7 +514,30 @@ impl Chosen {
 /// A plain list of what a choice can land on, such as a puzzle's colours. Each is a node nobody wrote,
 /// whose name and value are the option, and which every choice with that option shares.
 #[cell("options")]
-pub struct Options(pub Vec<String>);
+pub struct Options(#[serde(deserialize_with = "option_texts")] pub Vec<String>);
+
+/// Options as they're written: text, or numbers, which needn't be quoted, as `[1, 2, 3]`. Each is an
+/// option by its text, and a number's is how it reads, so `5` and `"5"` are the same option.
+fn option_texts<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Vec<String>, D::Error> {
+    use serde::de::Error as _;
+    let items = <Vec<Value> as serde::Deserialize>::deserialize(de)?;
+    items
+        .into_iter()
+        .map(|v| match v {
+            Value::String(s) => Ok(s),
+            Value::Number(n) => Ok(number_text(&n)),
+            other => Err(D::Error::custom(format!("an option is text or a number, not {other}"))),
+        })
+        .collect()
+}
+
+/// A number as an option reads: a whole number without a point.
+fn number_text(n: &serde_json::Number) -> String {
+    match n.as_f64() {
+        Some(f) if f.fract() == 0.0 && f.abs() < 1e15 => format!("{}", f as i64),
+        _ => n.to_string(),
+    }
+}
 
 /// Where a choice goes on a board, if the puzzle has one.
 #[cell("at")]
@@ -2609,10 +2632,29 @@ fn options_chosen(cx: &Cx) -> Cell<Chosen> {
         return Ok(Some(Chosen(Worldly::plain(Val::Undefined))));
     }
     let is_numeric = numeric(&options);
+    // A choice's value is what it lands on, as `self.chosen.value` says, so its value typed in settles it,
+    // on the option that's that value, as a sudoku's given is: it isn't open at all. A formula there is only
+    // a value, often that very one, since which worlds there are can't depend on what a formula works out.
+    if let Some(Backed::Value(v)) = cx.own_written(ValueCell::NAME) {
+        let Some(o) = option_valued(&options, &v) else {
+            return failed(format!("its value, {v}, isn't one of its options: {}", options.join(", ")));
+        };
+        return Ok(Some(Chosen(Worldly::plain(Val::Ref(cx.constant(option_cells(o, is_numeric)))))));
+    }
     let nodes: HashMap<&str, Entity> = options.iter().map(|o| (o.as_str(), cx.constant(option_cells(o, is_numeric)))).collect();
     let names: Vec<&str> = options.iter().map(String::as_str).collect();
     let var = Space::global().uniform(&cx.id().to_string(), &names);
     Ok(Some(Chosen(Worldly(var.value().map(|o| Val::Ref(nodes[o.as_str()]))))))
+}
+
+/// The option a value is, as typed in: `5` or `"5"` for the option 5, and text for the option it names.
+fn option_valued<'o>(options: &'o [String], v: &Value) -> Option<&'o String> {
+    let same_number = |o: &String, n: f64| o.parse::<f64>().is_ok_and(|x| x == n);
+    match v {
+        Value::Number(n) => options.iter().find(|o| n.as_f64().is_some_and(|n| same_number(o, n))),
+        Value::String(s) => options.iter().find(|o| *o == s).or_else(|| s.parse::<f64>().ok().and_then(|n| options.iter().find(|o| same_number(o, n)))),
+        _ => None,
+    }
 }
 
 /// How sure is a number above 0 and at most 1.
@@ -2634,6 +2676,10 @@ pub(crate) fn one_node(v: &Value) -> Result<(), String> {
 /// The options a node chooses between, if it's a choice: it has options, said or taken from its kind or
 /// table, and it isn't a table, whose options are what its rows choose from.
 pub fn options_of(g: &Graph, e: Entity) -> Option<Vec<String>> {
+    // Settled by its value typed in, it isn't open: see `options_chosen`.
+    if g.stored(e, ValueCell::NAME).is_some() {
+        return None;
+    }
     let Options(options) = g.get::<Options>(e).ok()??;
     let table = g.row_of(e).is_none() && g.table_here(e).is_some_and(|t| !g.rows(&t).is_empty());
     (!table).then_some(options)

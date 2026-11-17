@@ -855,7 +855,10 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
       const node = g.nodes.find((n) => !n.row && !n.unwritten && n.name === name);
       const aboutRows = (c: string) => !ws.cellInfo(c) || ["name", "extent", "options", "placed", "placed_rows", "body"].includes(c);
       const head = node && Object.entries(node.cells).every(([c, cell]) => cell.source !== "own" || aboutRows(c)) ? node : undefined;
-      const said = [...new Set(rows.flatMap((r) => Object.keys(r.cells).filter((c) => !ws.cellInfo(c) || (c === "options" && r.cells[c]?.source === "own"))))].sort();
+      // A system's cells a row says itself that are about the row: its options, or its value typed in, as a
+      // sudoku's given is.
+      const ownSystem = (c: string) => c === "options" || c === "value";
+      const said = [...new Set(rows.flatMap((r) => Object.keys(r.cells).filter((c) => !ws.cellInfo(c) || (ownSystem(c) && r.cells[c]?.source === "own"))))].sort();
       // A formula the table says for its rows is a rule, said once, rather than what it comes to in each,
       // and so is one every row takes from somewhere. Where a row says its own instead, as the first year's
       // balance does, that's in a column, and a row that follows the rule leaves it blank.
@@ -866,7 +869,7 @@ function MapInner({ ws, selected, onSelect, active, onContext, onShowTable }: Ma
       const wholes = (r: GraphNode) => g.edges.filter((e) => e.from === r.id && e.components.includes("part_of")).map((e) => nameOf(e.to));
       const parts = rows.some((r) => wholes(r).length > 0);
       const columns = [...own, ...(parts ? ["part_of"] : [])];
-      const shows = (row: GraphNode, c: string) => !!row.cells[c] && ((c !== "options" && !rule(c)) || row.cells[c].source === "own");
+      const shows = (row: GraphNode, c: string) => !!row.cells[c] && ((!ownSystem(c) && !rule(c)) || row.cells[c].source === "own");
       const values = rows.map((row) => ({ row, values: [...own.map((c) => (shows(row, c) ? cellText(row.cells[c], nameOf) : "")), ...(parts ? [wholes(row).join(", ")] : [])] }));
       const groupBy = columns.includes(layoutPref.groupBy?.[name] ?? "") ? layoutPref.groupBy![name] : null;
       // What the rows read of each other: the row before or after, as `prev` and `next` do, or others.

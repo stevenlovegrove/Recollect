@@ -284,7 +284,8 @@ function placeOf(ws: ViewProps["ws"], id: string): Place | undefined {
 
 /**
  * Choices placed on a board, each showing what's still possible where it is. A cell of the same grid that's
- * given, a choice of one option, isn't open, so it isn't one of the choices: it's shown where it is, fixed.
+ * given, with its value typed in or only one option, isn't open, so it isn't one of the choices: it's shown
+ * where it is, fixed.
  */
 function Board({ ws }: { ws: ViewProps["ws"] }) {
   const g = ws.view!;
@@ -294,8 +295,11 @@ function Board({ ws }: { ws: ViewProps["ws"] }) {
   const givens = [...g.nodes, ...g.unwritten]
     .filter((n) => !open.has(n.id) && n.row && tables.has(n.row.table) && placeOf(ws, n.id)?.byKey)
     .flatMap((n) => {
+      // Its value typed in settles it, and so does having only one option.
       const options = n.cells.options?.value;
-      return Array.isArray(options) && options.length === 1 ? [{ id: n.id, name: n.name, value: String(options[0]) }] : [];
+      const typed = n.cells.value?.source === "own" ? n.cells.value.value : undefined;
+      const given = typed !== undefined ? typed : Array.isArray(options) && options.length === 1 ? options[0] : undefined;
+      return given !== undefined ? [{ id: n.id, name: n.name, value: String(given) }] : [];
     });
   // A grid's keys start where its extent does, as 1: its first row and column are the board's.
   const keyed = [...w.vars.map((v) => placeOf(ws, v.id)!), ...givens.map((x) => placeOf(ws, x.id)!)].filter((p) => p.byKey);

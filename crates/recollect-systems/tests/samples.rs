@@ -206,10 +206,11 @@ fn the_puzzles_have_their_known_answers() {
     assert_eq!(valid.count(&vars), 288);
     // Only the 51 cells that aren't given are open, and the givens leave one grid.
     let (valid, vars, solved) = solutions(&open("sudoku-9"), 2);
-    assert_eq!((vars.iter().filter(|v| v.options().len() > 1).count(), valid.count(&vars)), (51, 1));
-    // A given is a choice of one option here, so a solution names it too.
+    assert_eq!((vars.len(), valid.count(&vars)), (51, 1));
+    // A given is its cell's value typed in, which settles it, so it isn't in a solution: the first line is
+    // 534678912, and 5, 3 and 7 are given, so the rest of it is what's worked out.
     let first: String = (1..=9).map(|c| solved[0].get(&format!("Cell[1, {c}]")).cloned().unwrap_or_default()).collect();
-    assert_eq!(first, "534678912");
+    assert_eq!(first, "468912");
 
     let (valid, vars, solved) = solutions(&open("knights-and-knaves"), 10);
     assert_eq!(valid.count(&vars), 1);

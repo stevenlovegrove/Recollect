@@ -9,7 +9,7 @@ use recollect_graph::{Log, Op};
 use recollect_graph::table::Key;
 use recollect_graph::worlds::{Cond, Space, Var, Worldly};
 use recollect_systems::expr::Val;
-use recollect_systems::formulas::{OPTIONS, Options, REQUIRES, TableExtent, ValueCell, options_of, truth};
+use recollect_systems::formulas::{OPTIONS, Options, REQUIRES, TableExtent, VALUE, ValueCell, options_of, truth};
 use recollect_systems::plan;
 use serde_json::{Value, json};
 use support::N;
@@ -144,14 +144,14 @@ fn an_extent_says_which_rows_there_are_and_a_star_is_what_is_written() {
     g.assert_round_trips();
 }
 
-/// The choices a grid's solutions range over: one for each of its rows.
+/// The choices a grid's solutions range over: one for each of its rows that's open.
 fn vars_of(g: &N, table: &str) -> Vec<Var> {
     g.g.rows(table)
         .into_iter()
-        .map(|e| {
-            let options = options_of(&g.g, e).expect("each row is a choice");
+        .filter_map(|e| {
+            let options = options_of(&g.g, e)?;
             let options: Vec<&str> = options.iter().map(String::as_str).collect();
-            Space::global().uniform(&e.to_string(), &options)
+            Some(Space::global().uniform(&e.to_string(), &options))
         })
         .collect()
 }
@@ -219,12 +219,12 @@ fn a_nine_by_nine_sudoku_with_its_givens_has_one_solution() {
     let mut g = N::with(plan::install);
     sudoku(&mut g, 9, 3);
     let puzzle = ["53..7....", "6..195...", ".98....6.", "8...6...3", "4..8.3..1", "7...2...6", ".6....28.", "...419..5", "....8..79"];
-    // Each given is its cell written with only that option.
+    // Each given is its cell's value, typed in, which settles it.
     for (r, line) in puzzle.iter().enumerate() {
         for (c, d) in line.chars().enumerate().filter(|(_, d)| *d != '.') {
             let e = Graph::row_id("Cell", &k(&[r as i64 + 1, c as i64 + 1]));
             g.g.make_written(e);
-            g.g.set(e, Options(vec![d.to_string()]));
+            g.g.add(e, VALUE).set(e, ValueCell::num(f64::from(d.to_digit(10).unwrap())));
         }
     }
     let valid = truth(&g.get::<ValueCell>("Solved").unwrap().unwrap());
@@ -233,7 +233,10 @@ fn a_nine_by_nine_sudoku_with_its_givens_has_one_solution() {
     assert_eq!(valid.count(&vars), 1);
     let solved = valid.solutions(&vars, 2);
     let names: std::collections::BTreeMap<String, Key> = g.g.rows("Cell").into_iter().map(|e| (e.to_string(), g.g.row_of(e).unwrap().key)).collect();
-    let first_line: String = (1..=9).map(|c| solved[0].iter().find(|(id, _)| names[*id] == k(&[1, c])).unwrap().1.clone()).collect();
+    // A given isn't a choice, so it isn't in a solution: the line is what's given and what's worked out.
+    let first_line: String = (1..=9)
+        .map(|c| solved[0].iter().find(|(id, _)| names[*id] == k(&[1, c])).map_or_else(|| puzzle[0].chars().nth(c as usize - 1).unwrap().to_string(), |(_, v)| v.clone()))
+        .collect();
     assert_eq!(first_line, "534678912");
 }
 
@@ -317,7 +320,56 @@ fn a_given_written_as_a_cell_with_one_option_is_the_same_as_a_clue_that_requires
     let valid = truth(&written.get::<ValueCell>("Solved").unwrap().unwrap());
     let by_cells = solved_by_place(&written, "Cell", &valid);
 
+    // As values: a given is its cell's value typed in, which settles the choice on that option.
+    let mut valued = N::with(plan::install);
+    sudoku(&mut valued, 4, 2);
+    for (r, c, d) in givens {
+        let e = Graph::row_id("Cell", &k(&[r, c]));
+        assert!(valued.g.make_written(e));
+        valued.g.add(e, VALUE).set(e, ValueCell::num(d.parse().unwrap()));
+    }
+    let valid = truth(&valued.get::<ValueCell>("Solved").unwrap().unwrap());
+    let by_values = solved_by_place(&valued, "Cell", &valid);
+
     assert!(!by_clues.is_empty() && by_clues.len() < 288, "{}", by_clues.len());
     assert_eq!(by_cells, by_clues);
+    // A settled cell isn't one of the choices, so it isn't in a solution: each says the rest the same way.
+    let open = |s: &std::collections::BTreeSet<Vec<(String, String)>>| -> std::collections::BTreeSet<Vec<(String, String)>> {
+        let given: Vec<String> = givens.iter().map(|(r, c, _)| format!("{r}, {c}")).collect();
+        s.iter().map(|s| s.iter().filter(|(at, _)| !given.contains(at)).cloned().collect()).collect()
+    };
+    assert_eq!(by_values, open(&by_clues));
     written.assert_round_trips();
+    valued.assert_round_trips();
+}
+
+#[test]
+fn a_choice_s_value_typed_in_settles_it_and_options_needn_t_be_quoted() {
+    let mut g = N::with(plan::install);
+    // Numbers needn't be quoted, and are the same options as quoted.
+    g.add("Colour", OPTIONS);
+    put(&mut g, "Colour", "options", json!([1, 2, "3", 4.0]));
+    assert_eq!(g.get::<Options>("Colour"), Ok(Some(Options(vec!["1".into(), "2".into(), "3".into(), "4".into()]))));
+    assert_eq!(options_of(&g.g, g.id("Colour")).map(|o| o.len()), Some(4));
+
+    // Its value typed in settles it: 3 or "3" is the option 3, and it isn't open.
+    g.value("Colour", ValueCell::num(3.0));
+    assert_eq!(options_of(&g.g, g.id("Colour")), None);
+    let chosen = cell_at(&g, g.id("Colour"), "chosen");
+    assert_eq!(chosen.cases().len(), 1, "one way, in every world");
+    g.formula("Three", "colour.chosen.value = 3").input("Three", "Colour", "colour");
+    assert_eq!(value(&g, "Three"), Ok(Val::Bool(true)));
+    put(&mut g, "Colour", "value", json!("3"));
+    assert_eq!(value(&g, "Three"), Ok(Val::Bool(true)));
+
+    // A value that isn't an option says so.
+    g.value("Colour", ValueCell::num(7.0));
+    let err = format!("{:?}", g.g.get_value(g.id("Colour"), "chosen"));
+    assert!(err.contains("isn't one of its options: 1, 2, 3, 4"), "{err}");
+    // A formula there is only a value, and the choice is open again: which worlds there are can't depend on
+    // a formula, and a choice's value worked out from where it lands, `self.chosen.value`, is common.
+    g.formula("Colour", "self.chosen.value * 10");
+    assert_eq!(options_of(&g.g, g.id("Colour")).map(|o| o.len()), Some(4));
+    assert_eq!(cell_at(&g, g.id("Colour"), "chosen").cases().len(), 4, "open: one case for each option");
+    g.assert_round_trips();
 }

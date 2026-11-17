@@ -1,7 +1,6 @@
 id: 01a1e8a0-ca6d-77ba-950b-d46d82fefee8
 components:
-- options
+- value
 cells:
   name: Cell[8, 4]
-  options:
-  - '4'
+  value: 4

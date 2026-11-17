@@ -124,7 +124,7 @@ A commit also checks what it touched against the definitions: a component nothin
 |---|---|---|---|
 | `value` | node | `value` (per entity): typed in, or a formula; internal `value_type` | |
 | `choice` | node | `chosen` (per entity): the node it lands on in each world, read through as `x.chosen.cell`. Writing one in settles it. Filled in by what requires it | |
-| `options` | node | `options`: a plain list, each a constant with that name and value. Fills in `chosen`, landing on each equally | `choice` |
+| `options` | node | `options`: a plain list, each a constant with that name and value, written as text or numbers, which needn't be quoted: `[1, 2, 3]`. Fills in `chosen`, landing on each equally, unless the node's own `value` is typed in: then it lands on the option that's that value, in every world, so it isn't open | `choice` |
 | `at` | node | `at`: where a choice goes on a board | `options` |
 | `requires` | node | `at_least`: how surely it has to be met, which is always unless it says. Demanded of your choices: only the ways they could go that make `value` true that surely count | `value` |
 | `evidence` | node | none. Known to be true: only the worlds, and the draws, where `value` is true count. It never restricts a choice of yours | `value` |

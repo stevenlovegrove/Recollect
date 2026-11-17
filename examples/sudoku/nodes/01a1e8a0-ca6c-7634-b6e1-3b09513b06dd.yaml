@@ -8,9 +8,9 @@ cells:
   extent: 1..4, 1..4
   name: Cell
   options:
-  - '1'
-  - '2'
-  - '3'
-  - '4'
+  - 1
+  - 2
+  - 3
+  - 4
 formulas:
   fits: distinct(Cell[row[0], *].chosen) && distinct(Cell[*, row[1]].chosen) && distinct(Cell[floor((row[0] - 1) / 2) * 2 + 1 .. floor((row[0] - 1) / 2) * 2 + 1 + 1, floor((row[1] - 1) / 2) * 2 + 1 .. floor((row[1] - 1) / 2) * 2 + 1 + 1].chosen)

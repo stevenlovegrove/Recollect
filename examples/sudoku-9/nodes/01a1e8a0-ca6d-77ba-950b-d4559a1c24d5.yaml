@@ -5,8 +5,8 @@ cells:
   drawing: |
     // A sudoku board. The boxes are this puzzle's own business, so they're drawn here, and not worked
     // out by the app. A cell goes where its key says, as Cell[2, 3] does, and a board of n × n has boxes of
-    // √n × √n, as a 4×4 has 2×2 and a 9×9 has 3×3. A given, a cell with one option, isn't a choice, so it's
-    // drawn where it is, fixed.
+    // √n × √n, as a 4×4 has 2×2 and a 9×9 has 3×3. A given, a cell whose value is typed in, isn't a
+    // choice, so it's drawn where it is, fixed. So is a cell with only one option.
 
     const size = 52;
 
@@ -25,8 +25,10 @@ cells:
       const table = byId.get(placed[0]?.id)?.row?.table;
       const givens = world.nodes.flatMap((n) => {
         const options = n.cells.options?.value;
+        const typed = n.cells.value?.source === "own" ? n.cells.value.value : undefined;
+        const given = typed !== undefined ? typed : Array.isArray(options) && options.length === 1 ? options[0] : undefined;
         const at = placeOf(n);
-        return !open.has(n.id) && n.row?.table === table && at && Array.isArray(options) && options.length === 1 ? [{ at, value: String(options[0]) }] : [];
+        return !open.has(n.id) && n.row?.table === table && at && given !== undefined ? [{ at, value: String(given) }] : [];
       });
       const all = [...placed.map((c) => placeOf(byId.get(c.id)!)!), ...givens.map((g) => g.at)];
       const rows = Math.max(...all.map((p) => p.row)) + 1;
