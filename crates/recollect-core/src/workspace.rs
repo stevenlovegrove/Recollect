@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use recollect_graph::{CellType, CommitError, Entity, Graph, Log, Name, Op, SavedGraph, SavedNode, Stored, is_node_path, node_of_path, node_text, parse_node, path_of};
-use recollect_systems::samples::{FORMAT, SAMPLES, config_text, ops_of};
+use recollect_systems::samples::{FORMAT, sample};
 use recollect_systems::{Built, build, needed};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -142,13 +142,7 @@ pub fn new_files(name: &str) -> Result<Files, Error> {
 
 /// The files of a fresh working copy of a sample, or nothing if there's no such sample.
 pub fn sample_files(name: &str) -> Option<Files> {
-    let s = SAMPLES.iter().find(|s| s.name == name)?;
-    let systems: Vec<String> = s.systems.iter().map(|n| n.to_string()).collect();
-    let built = build(&systems).expect("a sample's systems exist");
-    let mut log = Log::new(built.registry);
-    log.commit("sample", s.about, ops_of(s)).expect("a sample commits");
-    let mut files = log.graph().save().to_files();
-    files.insert(CONFIG.to_string(), config_text(s));
+    let mut files: Files = sample(name)?.files.iter().map(|(path, text)| (path.to_string(), text.to_string())).collect();
     files.insert(SAMPLE_MARKER.to_string(), FORMAT.to_string());
     Some(files)
 }

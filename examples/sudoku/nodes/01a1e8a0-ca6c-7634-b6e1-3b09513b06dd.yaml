@@ -1,0 +1,16 @@
+id: 01a1e8a0-ca6c-7634-b6e1-3b09513b06dd
+components:
+- extent
+- notes
+- options
+cells:
+  body: 'Every cell''s fits: no other cell in its line, its column or its box has the same number.'
+  extent: 1..4, 1..4
+  name: Cell
+  options:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+formulas:
+  fits: distinct(Cell[row[0], *].chosen) && distinct(Cell[*, row[1]].chosen) && distinct(Cell[floor((row[0] - 1) / 2) * 2 + 1 .. floor((row[0] - 1) / 2) * 2 + 1 + 1, floor((row[1] - 1) / 2) * 2 + 1 .. floor((row[1] - 1) / 2) * 2 + 1 + 1].chosen)

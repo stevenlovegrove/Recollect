@@ -90,13 +90,13 @@ crates/
   recollect-core          A workspace: its files, views, and every call through one `dispatch`. No I/O
   recollect-wasm          recollect-core for the browser
   recollect-server        The `recollect` binary: workspaces on disk, REST, WebSocket events, MCP
-examples/                 The sample workspaces, written by recollect-systems' write_samples
+examples/                 The sample workspaces, as files, built into recollect-systems
 web/                      Vite, React, React Flow and ELK. `src/engine` runs the engine in a worker, with its stores
 ```
 
 ## The samples
 
-The example problems are real workspaces in `examples/`, offered when nothing's open and under the workspace menu. Opening one makes a working copy, kept in the browser or, with `recollect serve`, in `~/.recollect/samples`, so the originals never change, and it can be started again. `tests/samples.rs` checks what's committed still means what it should: an invoice that totals 96, a budget over £200 exactly when `Stay=Hotel`, 92 queens, 288 grids, the Japanese owning the zebra, two dice totalling seven one time in six, and savings whose log is exactly a bell curve.
+The example problems are real workspaces in `examples/`, offered when nothing's open and under the workspace menu. Opening one makes a working copy, kept in the browser or, with `recollect serve`, in `~/.recollect/samples`, so the originals never change, and it can be started again. They're only ever files: `examples/samples.toml` lists them in order, with what kind of thing each is, each one's `recollect.toml` says its title and what it's about, and `recollect-systems`' `build.rs` builds every file in with `include_str!`, so the server and the wasm in a browser have them all with nothing to read from disk. A working copy says which version of the samples it came from, a hash of all their files, so one from before a sample changed is made again. `tests/samples.rs` checks what's built in is exactly what's in `examples/`, and that it still means what it should: an invoice that totals 96, a budget over £200 exactly when `Stay=Hotel`, 92 queens, 288 grids, the Japanese owning the zebra, two dice totalling seven one time in six, and savings whose log is exactly a bell curve.
 
 ## What was dropped from the first version
 

@@ -129,9 +129,10 @@ function worldFor(ws: ViewProps["ws"]) {
     constrained: g.worlds.constrained,
     solutions: g.worlds.solutions,
     picks: g.worlds.picks,
-    nodes: g.nodes.map((n) => {
+    // Rows nobody wrote too, such as a grid's cells, and which row of which table each node is.
+    nodes: [...g.nodes, ...g.unwritten].map((n) => {
       const { drawing: _, ...cells } = n.cells;
-      return { id: n.id, name: n.name, cells };
+      return { id: n.id, name: n.name, row: n.row, cells };
     }),
     edges: g.edges,
   };

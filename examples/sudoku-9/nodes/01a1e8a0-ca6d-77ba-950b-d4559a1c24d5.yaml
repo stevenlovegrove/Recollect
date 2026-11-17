@@ -1,0 +1,69 @@
+id: 01a1e8a0-ca6d-77ba-950b-d4559a1c24d5
+components:
+- drawing
+cells:
+  drawing: |
+    // A sudoku board. The boxes are this puzzle's own business, so they're drawn here, and not worked
+    // out by the app. A cell goes where its key says, as Cell[2, 3] does, and a board of n × n has boxes of
+    // √n × √n, as a 4×4 has 2×2 and a 9×9 has 3×3. A given, a cell with one option, isn't a choice, so it's
+    // drawn where it is, fixed.
+
+    const size = 52;
+
+    type Place = { row: number; col: number };
+
+    function placeOf(n: { row?: { key: unknown }; cells: Record<string, { value?: unknown }> }): Place | undefined {
+      const key = n.row?.key;
+      if (Array.isArray(key) && key.length === 2 && typeof key[0] === "number" && typeof key[1] === "number") return { row: key[0] - 1, col: key[1] - 1 };
+      return n.cells.at?.value as Place | undefined;
+    }
+
+    export function draw(world: World): string {
+      const byId = new Map(world.nodes.map((n) => [n.id, n]));
+      const open = new Set(world.choices.map((c) => c.id));
+      const placed = world.choices.filter((c) => byId.get(c.id) && placeOf(byId.get(c.id)!));
+      const table = byId.get(placed[0]?.id)?.row?.table;
+      const givens = world.nodes.flatMap((n) => {
+        const options = n.cells.options?.value;
+        const at = placeOf(n);
+        return !open.has(n.id) && n.row?.table === table && at && Array.isArray(options) && options.length === 1 ? [{ at, value: String(options[0]) }] : [];
+      });
+      const all = [...placed.map((c) => placeOf(byId.get(c.id)!)!), ...givens.map((g) => g.at)];
+      const rows = Math.max(...all.map((p) => p.row)) + 1;
+      const cols = Math.max(...all.map((p) => p.col)) + 1;
+      const box = { rows: Math.round(Math.sqrt(rows)), cols: Math.round(Math.sqrt(cols)) };
+
+      const big = (x: number, y: number, text: string, colour: string, pin = "") =>
+        `<text ${pin} x="${x + size / 2}" y="${y + size / 2 + 9}" text-anchor="middle" font-size="26" fill="${colour}"${pin ? ' style="cursor:pointer"' : ""}>${text}</text>`;
+
+      const cells = placed.map((c) => {
+        const { row, col } = placeOf(byId.get(c.id)!)!;
+        const [x, y] = [col * size, row * size];
+        const left = c.options.filter((o) => o.possible);
+        const pinned = c.options.find((o) => o.picked);
+        const only = pinned ?? (left.length === 1 ? left[0] : undefined);
+        if (only) return big(x, y, only.name, pinned ? "var(--accent)" : "var(--muted)", `data-pin-choice="${c.id}" data-pin-option="${only.id}"`);
+        // Each option keeps its place, so what's been ruled out leaves a gap.
+        const across = Math.ceil(Math.sqrt(c.options.length));
+        return c.options
+          .filter((o) => o.possible)
+          .map((o) => {
+            const i = c.options.indexOf(o);
+            const [ox, oy] = [x + ((i % across) + 0.5) * (size / across), y + (Math.floor(i / across) + 0.5) * (size / across)];
+            return `<text data-pin-choice="${c.id}" data-pin-option="${o.id}" x="${ox}" y="${oy + 4}" text-anchor="middle" font-size="11" fill="var(--muted)" style="cursor:pointer">${o.name}</text>`;
+          })
+          .join("");
+      });
+      const fixed = givens.map((g) => big(g.at.col * size, g.at.row * size, g.value, "var(--text)"));
+
+      const lines: string[] = [];
+      for (let r = 0; r <= rows; r++) lines.push(line(0, r * size, cols * size, r * size, r % box.rows === 0));
+      for (let c = 0; c <= cols; c++) lines.push(line(c * size, 0, c * size, rows * size, c % box.cols === 0));
+
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 ${cols * size + 4} ${rows * size + 4}" width="${cols * size + 4}">${lines.join("")}${fixed.join("")}${cells.join("")}</svg>`;
+    }
+
+    function line(x1: number, y1: number, x2: number, y2: number, heavy: boolean): string {
+      return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${heavy ? "var(--text)" : "var(--border)"}" stroke-width="${heavy ? 3 : 1}" />`;
+    }
+  name: Board with its boxes

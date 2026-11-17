@@ -7,10 +7,9 @@ Within a phase, each step is one or a few small commits.
 ## Ground rules
 
 - **No backward compatibility.** When a name, a file shape or a tool changes, it changes everywhere in
-  the same commit. The examples are written by `samples.rs`, so a change to them is a change there,
-  followed by deleting `examples/*` and running
-  `cargo run -p recollect-systems --example write_samples -- examples`. The diff of `examples/` is then
-  the review of what the change did to real workspaces.
+  the same commit. The examples are files in `examples/`, built into `recollect-systems`, so a change
+  to them is a change to those files, and the diff of `examples/` is the review of what the change did
+  to real workspaces.
 - **One read path.** `dispatch.rs` is what both the server's `/api/call/{method}` and the wasm worker
   call, so anything the app reads goes through it. MCP's `read` and the app's `view` share one engine
   function in a new `recollect-core/src/read.rs`.

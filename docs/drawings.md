@@ -25,14 +25,14 @@ type World = {
   constrained: boolean;  // Whether anything rules worlds out.
   solutions: Record<string, string>[]; // The worlds in play, if there's a requirement. The first 300.
   picks: Record<string, string>;       // What's pinned.
-  nodes: { id: string; name: string; cells: Record<string, Cell> }[]; // Every node, with what the app shows of its cells.
+  nodes: { id: string; name: string; row?: { table: string; key: Key }; cells: Record<string, Cell> }[]; // Every node, rows nobody wrote too, with what the app shows of its cells.
   edges: { id: string; from: string; to: string; components: string[]; cells: Record<string, Cell> }[];
 };
 ```
 
 A `Cell` has the `value` it holds, a `formula` if one backs it, and where it comes from (`source` is `own`, `kind` or `default`). An option's `weight` is a cell of its `alternative` edge.
 
-A choice's `id` is its node's, so `world.nodes.find((n) => n.id === choice.id)?.cells.at?.value` is where it goes on a board. Types are stripped, not checked, so `World` doesn't have to be declared.
+A `Key` is a number, text, or for a row of a grid such as `Cell[2, 3]`, a list with a part for each way across. A choice's `id` is its node's, so `world.nodes.find((n) => n.id === choice.id)` says which row it is, and so where it goes on a board, or its `cells.at?.value` does. The sudoku samples' drawing places each cell by its key, and draws a given, a cell with one option, which isn't a choice, where it is. Types are stripped, not checked, so `World` doesn't have to be declared.
 
 ## What it can do
 

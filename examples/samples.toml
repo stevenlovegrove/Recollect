@@ -1,0 +1,150 @@
+# The sample workspaces, in the order the app lists them, and what kind of thing each is. Each one's
+# title, what it's about and its systems are in its own recollect.toml.
+
+[[sample]]
+name = "handbook"
+group = "plan"
+
+[[sample]]
+name = "critical-path"
+group = "plan"
+
+[[sample]]
+name = "launch"
+group = "plan"
+
+[[sample]]
+name = "garden-room"
+group = "design"
+
+[[sample]]
+name = "bus"
+group = "chance"
+
+[[sample]]
+name = "bottles"
+group = "chance"
+
+[[sample]]
+name = "sales"
+group = "chance"
+
+[[sample]]
+name = "connection"
+group = "chance"
+
+[[sample]]
+name = "painting"
+group = "chance"
+
+[[sample]]
+name = "drawbridge"
+group = "chance"
+
+[[sample]]
+name = "tea"
+group = "chance"
+
+[[sample]]
+name = "which-die"
+group = "chance"
+
+[[sample]]
+name = "savings"
+group = "chance"
+
+[[sample]]
+name = "runners"
+group = "chance"
+
+[[sample]]
+name = "supplier"
+group = "sheet"
+
+[[sample]]
+name = "shelf"
+group = "chance"
+
+[[sample]]
+name = "invoice"
+group = "sheet"
+
+[[sample]]
+name = "trip-budget"
+group = "sheet"
+
+[[sample]]
+name = "choosing-a-car"
+group = "sheet"
+
+[[sample]]
+name = "compound-interest"
+group = "sheet"
+
+[[sample]]
+name = "fibonacci"
+group = "sheet"
+
+[[sample]]
+name = "australia"
+group = "puzzle"
+
+[[sample]]
+name = "eight-queens"
+group = "puzzle"
+
+[[sample]]
+name = "sudoku"
+group = "puzzle"
+
+[[sample]]
+name = "sudoku-9"
+group = "puzzle"
+
+[[sample]]
+name = "knights-and-knaves"
+group = "puzzle"
+
+[[sample]]
+name = "case-file"
+group = "reasoning"
+
+[[sample]]
+name = "two-dice"
+group = "chance"
+
+[[sample]]
+name = "monty-hall"
+group = "reasoning"
+
+[[sample]]
+name = "medical-test"
+group = "reasoning"
+
+[[sample]]
+name = "bertrands-box"
+group = "reasoning"
+
+[[sample]]
+name = "two-children"
+group = "reasoning"
+
+[[sample]]
+name = "socks"
+group = "reasoning"
+
+[[sample]]
+name = "free-will"
+group = "philosophy"
+
+[[sample]]
+name = "trolley"
+group = "philosophy"
+
+[[sample]]
+name = "reason-or-experience"
+group = "philosophy"
+
+[[sample]]
+name = "zebra"
+group = "puzzle"

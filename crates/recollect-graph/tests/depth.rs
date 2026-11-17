@@ -6,7 +6,7 @@ use std::sync::Arc;
 use recollect_graph::{Entity, Error, Graph, Log, Op, Registry, set_depth_limit};
 use recollect_systems::plan::{self, TASK};
 use recollect_systems::structure::PART_OF;
-use recollect_systems::samples::{SAMPLES, ops_of};
+use recollect_systems::samples::SAMPLES;
 use serde_json::{Value, json};
 
 fn log_of(systems: &[&str], ops: Vec<Op>) -> Log {
@@ -51,13 +51,16 @@ fn number(g: &Graph, e: Entity) -> Value {
 
 #[test]
 fn worked_out_in_stretches_is_the_same_as_in_one_go() {
-    // Every sample, whole: the same ops, so the same handles, worked out both ways.
+    // Every sample, whole: the same files, so the same handles, worked out both ways.
+    let opened = |s: &recollect_systems::samples::Sample| {
+        let names: Vec<String> = s.systems.iter().map(|n| n.to_string()).collect();
+        Log::from_saved(s.saved(), recollect_systems::build(&names).unwrap().registry).0
+    };
     for s in SAMPLES {
-        let ops = ops_of(s);
         set_depth_limit(usize::MAX);
-        let whole = everything(log_of(s.systems, ops.clone()).graph());
+        let whole = everything(opened(s).graph());
         set_depth_limit(5);
-        let stretched = everything(log_of(s.systems, ops).graph());
+        let stretched = everything(opened(s).graph());
         assert_eq!(whole, stretched, "{}", s.name);
     }
 

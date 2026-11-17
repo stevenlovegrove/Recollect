@@ -65,4 +65,4 @@ UI development against the server: `RECOLLECT_BACKEND=http://127.0.0.1:7878 npm 
 | `crates/recollect-wasm` | `recollect-core` for the browser. |
 | `crates/recollect-server` | The `recollect` binary: workspaces on disk, REST and WebSocket events, MCP, and watching files. |
 | `web/` | React, React Flow and ELK. `web/src/engine` runs the engine in a worker, and keeps workspaces in the browser or in folders. |
-| `examples/` | The sample workspaces. To write them again, delete them and run `cargo run -p recollect-systems --example write_samples -- examples`. |
+| `examples/` | The sample workspaces, as files: the only place they're written. `examples/samples.toml` lists them in the order the app shows them, and `recollect-systems` builds every file in, so the server and the browser have them with nothing to read. To change one, open it, change it in the app or by hand, and copy its files back; to add one, add its folder and list it. |

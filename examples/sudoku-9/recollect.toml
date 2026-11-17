@@ -1,0 +1,3 @@
+name = "9×9 sudoku"
+about = "The same grid, nine across, with its givens written on their cells: each is a cell whose only option is its number, so it isn't open at all. The clues leave exactly one grid, worked out in about a second."
+systems = []

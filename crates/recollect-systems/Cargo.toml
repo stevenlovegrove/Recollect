@@ -11,5 +11,9 @@ recollect-graph = { path = "../recollect-graph" }
 serde.workspace = true
 serde_json.workspace = true
 
+[build-dependencies]
+serde.workspace = true
+toml.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true

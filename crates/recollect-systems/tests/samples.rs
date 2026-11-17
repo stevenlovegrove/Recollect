@@ -10,7 +10,7 @@ use recollect_systems::expr::Val;
 use recollect_systems::formulas::{REQUIRES, ValueCell, options_of, truth};
 use recollect_systems::plan::{self, Pressure};
 use recollect_systems::structure::Need;
-use recollect_systems::samples::{SAMPLES, ops_of};
+use recollect_systems::samples::SAMPLES;
 use recollect_systems::schedule::{Finish, Slack};
 use serde_json::Value;
 
@@ -75,14 +75,15 @@ fn solutions(o: &Opened, limit: usize) -> (Bool, Vec<Var>, Vec<BTreeMap<String, 
 fn every_sample_says_the_systems_it_uses_and_no_others() {
     let mut wrong = Vec::new();
     for s in SAMPLES {
-        let ops = ops_of(s);
+        let saved = s.saved();
         let mut components = Vec::new();
         let mut cells = Vec::new();
-        for op in &ops {
-            match op {
-                recollect_graph::Op::Add { component, .. } | recollect_graph::Op::Link { component, .. } => components.push(component.as_str()),
-                recollect_graph::Op::Set { cell, to: Some(_), .. } => cells.push(cell.as_str()),
-                _ => {}
+        for n in &saved.nodes {
+            components.extend(n.components.iter().map(String::as_str));
+            cells.extend(n.cells.keys().chain(n.formulas.keys()).map(String::as_str));
+            for l in &n.links {
+                components.extend(l.components.iter().map(String::as_str));
+                cells.extend(l.cells.keys().chain(l.formulas.keys()).map(String::as_str));
             }
         }
         let needed = recollect_systems::needed(components, cells);
@@ -94,25 +95,24 @@ fn every_sample_says_the_systems_it_uses_and_no_others() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// What the app has of each sample is exactly its files, which are a workspace and nothing else, and open
+/// with nothing wrong.
 #[test]
-fn every_sample_is_there_and_is_what_its_generator_makes() {
+fn every_sample_is_its_files_and_opens_with_nothing_wrong() {
     for s in SAMPLES {
+        let dir = root().join(s.name);
+        let mut on_disk = BTreeMap::new();
+        for entry in std::fs::read_dir(dir.join("nodes")).unwrap() {
+            let path = entry.unwrap().path();
+            on_disk.insert(format!("nodes/{}", path.file_name().unwrap().to_string_lossy()), std::fs::read_to_string(&path).unwrap());
+        }
+        on_disk.insert("recollect.toml".to_string(), std::fs::read_to_string(dir.join("recollect.toml")).unwrap());
+        let embedded: BTreeMap<String, String> = s.files.iter().map(|(p, t)| (p.to_string(), t.to_string())).collect();
+        assert_eq!(embedded, on_disk, "{}: what's built in is what's in examples/", s.name);
+        let top = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(top, ["nodes".to_string(), "recollect.toml".to_string()].into(), "{}: only the files a workspace has", s.name);
         let o = open(s.name);
-        // Handles are minted fresh each time, so compare what's made of them.
-        let names: Vec<String> = s.systems.iter().map(|n| n.to_string()).collect();
-        let mut fresh = Log::new(recollect_systems::build(&names).unwrap().registry);
-        fresh.commit("t", "", ops_of(s)).unwrap();
-        let shape = |g: &Graph| {
-            let mut out: Vec<(Option<String>, Vec<String>, usize)> = g.save().nodes.into_iter().map(|n| (g.get::<Name>(n.id).ok().flatten().map(|n| n.0), n.components, n.links.len())).collect();
-            out.sort();
-            out
-        };
-        assert_eq!(shape(o.g()), shape(fresh.graph()), "{}", s.name);
-        let files = std::fs::read_dir(root().join(s.name)).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(files, ["nodes".to_string(), "recollect.toml".to_string()].into(), "{}: only the files a workspace has", s.name);
         assert!(o.log.violations().is_empty(), "{}: {:?}", s.name, o.log.violations());
-        let text = std::fs::read_to_string(root().join(s.name).join("recollect.toml")).unwrap();
-        assert_eq!(text, recollect_systems::samples::config_text(s), "{}", s.name);
     }
     let dirs = std::fs::read_dir(root()).unwrap().filter(|e| e.as_ref().unwrap().path().is_dir()).count();
     assert_eq!(dirs, SAMPLES.len(), "and nothing else is");
@@ -204,6 +204,12 @@ fn the_puzzles_have_their_known_answers() {
     assert_eq!(valid.count(&vars), 92);
     let (valid, vars, _) = solutions(&open("sudoku"), 1);
     assert_eq!(valid.count(&vars), 288);
+    // Only the 51 cells that aren't given are open, and the givens leave one grid.
+    let (valid, vars, solved) = solutions(&open("sudoku-9"), 2);
+    assert_eq!((vars.iter().filter(|v| v.options().len() > 1).count(), valid.count(&vars)), (51, 1));
+    // A given is a choice of one option here, so a solution names it too.
+    let first: String = (1..=9).map(|c| solved[0].get(&format!("Cell[1, {c}]")).cloned().unwrap_or_default()).collect();
+    assert_eq!(first, "534678912");
 
     let (valid, vars, solved) = solutions(&open("knights-and-knaves"), 10);
     assert_eq!(valid.count(&vars), 1);

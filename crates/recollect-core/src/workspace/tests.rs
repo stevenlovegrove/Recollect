@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::dispatch;
+use recollect_systems::samples::SAMPLES;
 
 fn open(files: Files) -> Workspace {
     let (ws, problems) = Workspace::load("test", "a test", None, files).unwrap();
