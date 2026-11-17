@@ -438,7 +438,7 @@ Cell:    options = [1, …, 9]      extent = 1..9, 1..9
 Solved:  requires   value = all(Cell.rows.fits)
 ```
 
-A given is a clue naming a cell by where it is, as `Cell[1, 1].chosen.value = 5`. `tests/grid.rs` checks a 4×4 one has its 288 grids. **A 9×9 can be written the same way but can't be worked out yet:** one cell's `distinct`s, as pairwise `!=` over nine-way choices, already come to tens of millions of nodes in the worlds, and the whole runs out of memory. That test is there but ignored until `distinct` is a constraint of its own in the worlds.
+A given is best written on its cell: `Cell[1, 1]` with `options` of just `[5]`. A choice with one option isn't open at all, so it costs nothing to work out, where a clue, a `requires` node saying `Cell[1, 1].chosen.value = 5`, is the same set of grids reached by ruling out the rest. `tests/grid.rs` checks a 4×4 one has its 288 grids, and that givens written either way leave the same grids. **A 9×9 can be written the same way but can't be worked out yet:** one cell's `distinct`s, as pairwise `!=` over nine-way choices, already come to tens of millions of nodes in the worlds, and the whole runs out of memory. That test is there but ignored until `distinct` is a constraint of its own in the worlds.
 
 The engine keeps an index of names, so finding a table's rows or a row's neighbour doesn't mean reading every name. Renaming a node, linking a table to a kind, or removing a row reaches everything that could take a cell from somewhere else as a result. `tests/tables.rs` checks this against a newly built graph through random renames, kinds and edits, and `tests/toy_table.rs` in the systems checks the formulas.
 

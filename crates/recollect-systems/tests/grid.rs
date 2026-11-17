@@ -288,3 +288,40 @@ fn a_table_takes_how_far_it_goes_from_its_kind_unless_it_says() {
     assert_eq!(g.g.extent("Small[1, 1]"), None, "a row isn't a table, though it takes its table's cells");
     g.assert_round_trips();
 }
+
+/// A puzzle's solutions, each as what every cell of `table` is, by where it is.
+fn solved_by_place(g: &N, table: &str, valid: &recollect_graph::worlds::Bool) -> std::collections::BTreeSet<Vec<(String, String)>> {
+    let vars = vars_of(g, table);
+    let place: std::collections::BTreeMap<String, String> = g.g.rows(table).into_iter().map(|e| (e.to_string(), g.g.row_of(e).unwrap().key.to_string())).collect();
+    valid.solutions(&vars, 10_000).into_iter().map(|s| s.into_iter().map(|(id, v)| (place[&id].clone(), v)).collect()).collect()
+}
+
+#[test]
+fn a_given_written_as_a_cell_with_one_option_is_the_same_as_a_clue_that_requires_it() {
+    use recollect_graph::Graph;
+    let givens = [(1, 1, "3"), (2, 3, "1"), (4, 4, "2")];
+
+    // As clues: every cell is open, and a clue rules out the grids where a given isn't what it says.
+    let mut clued = N::with(plan::install);
+    sudoku(&mut clued, 4, 2);
+    let said: Vec<String> = givens.iter().map(|(r, c, d)| format!("Cell[{r}, {c}].chosen.value = {d}")).collect();
+    clued.formula("Given", &said.join(" && ")).add("Given", REQUIRES);
+    let valid = &truth(&clued.get::<ValueCell>("Solved").unwrap().unwrap()) & &truth(&clued.get::<ValueCell>("Given").unwrap().unwrap());
+    let by_clues = solved_by_place(&clued, "Cell", &valid);
+
+    // As cells: a given is a row written with only that option, so it isn't open at all.
+    let mut written = N::with(plan::install);
+    sudoku(&mut written, 4, 2);
+    for (r, c, d) in givens {
+        let e = Graph::row_id("Cell", &k(&[r, c]));
+        assert!(written.g.make_written(e));
+        written.g.set(e, Options(vec![d.to_string()]));
+    }
+    assert_eq!(written.g.save().nodes.len(), 2 + givens.len(), "the givens are written, and nothing else");
+    let valid = truth(&written.get::<ValueCell>("Solved").unwrap().unwrap());
+    let by_cells = solved_by_place(&written, "Cell", &valid);
+
+    assert!(!by_clues.is_empty() && by_clues.len() < 288, "{}", by_clues.len());
+    assert_eq!(by_cells, by_clues);
+    written.assert_round_trips();
+}
