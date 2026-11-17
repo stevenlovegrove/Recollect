@@ -21,9 +21,19 @@ struct Client {
 }
 
 impl Client {
+    /// A client of an app that doesn't watch the files: see `App::without_watching`.
     fn new() -> Self {
         let home = tempfile::tempdir().unwrap();
-        let app = App::new(home.path().to_path_buf());
+        Self::of(App::without_watching(home.path().to_path_buf()), home)
+    }
+
+    /// One whose app watches the files, as the app run for real does, for edits made outside.
+    fn watching() -> Self {
+        let home = tempfile::tempdir().unwrap();
+        Self::of(App::new(home.path().to_path_buf()), home)
+    }
+
+    fn of(app: Arc<App>, home: tempfile::TempDir) -> Self {
         Client { router: api::router(app.clone()), app, _home: home }
     }
 
@@ -547,7 +557,7 @@ async fn claudes_changes_land_at_once_under_its_name_and_can_be_taken_back() {
 
 #[tokio::test]
 async fn a_hand_edit_on_disk_is_recorded_as_an_event() {
-    let c = Client::new();
+    let c = Client::watching();
     c.open("invoice").await;
     let v = c.view(json!({})).await;
     let dir = v["workspace"]["location"].as_str().unwrap().to_string();
@@ -762,7 +772,7 @@ async fn a_formula_and_its_labels_are_one_change_and_a_bad_one_is_refused() {
 
 #[tokio::test]
 async fn a_hand_edit_to_a_formula_stands_and_its_cell_says_whats_wrong() {
-    let c = Client::new();
+    let c = Client::watching();
     c.open("invoice").await;
     let v = c.view(json!({})).await;
     let dir = v["workspace"]["location"].as_str().unwrap().to_string();
@@ -1524,4 +1534,37 @@ async fn something_seen_says_how_many_fold_it_narrows_the_worlds() {
     let narrows = seen["narrows"].as_f64().unwrap_or_else(|| panic!("{seen}"));
     assert!((narrows / 11.66 - 1.0).abs() < 0.1, "{seen}");
     assert_eq!(seen["at_least"], false, "{seen}");
+}
+
+/// A grid written with the table op: an extent says how far it goes, so its rows are there with nothing
+/// written, each one of the open choices, and writing on one keeps it the node it was.
+#[tokio::test]
+async fn a_grid_from_the_table_op_has_its_rows_before_any_are_written() {
+    let c = Client::new();
+    let dir = tempfile::tempdir().unwrap();
+    c.post("/api/workspaces/new", json!({ "path": dir.path().join("grid"), "name": "Grid" })).await;
+    c.post("/api/call/apply", json!({ "ops": [
+        { "op": "table", "name": "Pair", "extent": "1..2, 1..2", "columns": { "options": ["1", "2"] }, "rows": [{ "key": [2, 1], "note": "a corner" }] },
+    ] })).await;
+    let v = c.view(json!({})).await;
+    let names = |v: &Value| v["unwritten"].as_array().unwrap().iter().map(|n| n["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    assert_eq!(names(&v), vec!["Pair[1, 1]", "Pair[1, 2]", "Pair[2, 2]"], "every row inside the extent that nobody wrote");
+    assert_eq!(node(&v, "Pair[2, 1]")["row"]["key"], json!([2, 1]));
+    let open: Vec<&str> = v["worlds"]["vars"].as_array().unwrap().iter().map(|x| x["name"].as_str().unwrap()).collect();
+    for n in ["Pair[1, 1]", "Pair[1, 2]", "Pair[2, 1]", "Pair[2, 2]"] {
+        assert!(open.contains(&n), "{n} is one of the choices: {open:?}");
+    }
+
+    // Writing on a row nobody wrote, by its name, however its key is spaced, makes it a node with the
+    // handle it had.
+    let before = v["unwritten"][0]["id"].clone();
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "table", "name": "Pair", "rows": [{ "key": "1,1", "note": "the first" }] }] })).await;
+    let v = c.view(json!({})).await;
+    assert_eq!(node(&v, "Pair[1, 1]")["id"], before);
+    assert_eq!(names(&v), vec!["Pair[1, 2]", "Pair[2, 2]"]);
+    c.post("/api/call/apply", json!({ "ops": [{ "op": "set", "id": "Pair[1, 2]", "cell": "note", "value": "next" }] })).await;
+    let v = c.view(json!({})).await;
+    assert_eq!(cell(&v, "Pair[1, 2]", "note")["value"], "next");
+    assert_eq!(names(&v), vec!["Pair[2, 2]"]);
+    assert!(refused(&c, json!([{ "op": "table", "name": "Pair", "rows": [{ "key": ["1,2", 3] }] }])).await.contains("comma"));
 }

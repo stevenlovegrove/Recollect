@@ -6,7 +6,7 @@ use super::*;
 
 fn server(sample: &str) -> (RecollectMcp, tempfile::TempDir) {
     let home = tempfile::tempdir().unwrap();
-    let app = App::new(home.path().to_path_buf());
+    let app = App::without_watching(home.path().to_path_buf());
     app.open_sample(sample, true).unwrap();
     (RecollectMcp::new(app), home)
 }

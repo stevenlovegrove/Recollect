@@ -24,3 +24,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 tempfile = "3"
+
+# The tests work out large graphs and many worlds, which unoptimised code takes minutes over: with a
+# little optimisation the whole suite runs in well under a minute. Debug assertions and overflow checks
+# stay on.
+[profile.dev]
+opt-level = 1

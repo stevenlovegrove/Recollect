@@ -408,6 +408,9 @@ pub struct Graph {
     fills: Arc<HashMap<String, Vec<(String, Backing)>>>,
     /// Names, and the tables they make: see `table`.
     names: Names,
+    /// The edges whose kind cell names each node, and the other way: see `edges_of_kind`.
+    by_kind: HashMap<Entity, BTreeSet<Entity>>,
+    kind_ref: HashMap<Entity, Entity>,
     /// Nodes nobody wrote that something has asked for: numbered rows (see `row_at`), and constants (see
     /// `constant`). They're only ever read, so they live here and in the memos, and never in a file.
     implicit: Mutex<HashMap<Entity, Implicit>>,
@@ -560,7 +563,15 @@ impl Graph {
         });
         self.touch(Dep::Into(to, component.to_string()));
         self.touch(Dep::From(from, component.to_string()));
+        self.kinds_moved(component);
         edge
+    }
+
+    /// A table takes how far it goes from its kinds, so a change to those is a change to which rows there are.
+    fn kinds_moved(&mut self, component: &str) {
+        if self.registry.inherits_through.as_deref() == Some(component) {
+            self.touch(Dep::Names);
+        }
     }
 
     /// Take a component off the edge from one node to another. An edge is its components, so taking the
@@ -581,12 +592,14 @@ impl Graph {
                 g.given.remove(&edge);
                 g.cells.remove(&edge);
                 g.edges.remove(&edge);
+                g.index_kind(edge);
                 g.out.get_mut(&from).map(|s| s.remove(&edge));
                 g.into.get_mut(&to).map(|s| s.remove(&edge));
             }
         });
         self.touch(Dep::Into(to, component.to_string()));
         self.touch(Dep::From(from, component.to_string()));
+        self.kinds_moved(component);
         self
     }
 
@@ -645,6 +658,9 @@ impl Graph {
                 None => {
                     g.cells.get_mut(&e).map(|c| c.remove(cell));
                 }
+            }
+            if g.registry.edge_kind.as_deref() == Some(cell) {
+                g.index_kind(e);
             }
             if cell == Name::NAME {
                 let name = match g.cells.get(&e).and_then(|c| c.get(cell)) {
@@ -758,6 +774,8 @@ impl Graph {
             defaults: self.defaults.clone(),
             fills: self.fills.clone(),
             names: self.names.clone(),
+            by_kind: self.by_kind.clone(),
+            kind_ref: self.kind_ref.clone(),
             implicit: Mutex::new(lock(&self.implicit).clone()),
             components: Mutex::new(lock(&self.components).clone()),
             resources: self.resources.clone(),
@@ -828,16 +846,15 @@ impl Graph {
             }
         }
         // Every row inside an extent is there, whether or not anything has read it yet.
-        for (e, cells) in &self.cells {
-            if let Some(cell) = &self.registry.extent
-                && cells.contains_key(cell)
-                && let Some(table) = self.names.of.get(e)
-            {
-                self.rows(table);
+        for table in self.tables() {
+            if self.extent(&table).is_some() {
+                self.rows(&table);
             }
         }
+        // A row asked for before it was written is the written one now, if that has another handle.
+        let written_at = |r: &Row| self.names.tables.get(&r.table).and_then(|t| t.get(&r.key)).is_some_and(|s| !s.is_empty());
         rows.extend(lock(&self.implicit).iter().filter_map(|(e, i)| match i {
-            Implicit::Row(r) if !self.nodes.contains(e) => Some((r.clone(), *e)),
+            Implicit::Row(r) if !self.nodes.contains(e) && !written_at(r) => Some((r.clone(), *e)),
             _ => None,
         }));
         rows.sort_by(|a, b| (&a.0.table, &a.0.key).cmp(&(&b.0.table, &b.0.key)));
@@ -933,11 +950,36 @@ impl Graph {
         self.edge_kind_of(edge).and_then(|k| self.names.of.get(&k).cloned())
     }
 
-    /// The edges of a kind, wherever they are.
+    /// The edges of a kind, wherever they are, in order. Kept as an index: everything that might take from a
+    /// node asks this of it, so a change would otherwise read every edge for every node it reaches.
     pub fn edges_of_kind(&self, kind: Entity) -> Vec<Entity> {
-        let mut out: Vec<Entity> = self.edges.keys().copied().filter(|e| self.edge_kind_of(*e) == Some(kind)).collect();
-        out.sort();
-        out
+        if !self.nodes.contains(&kind) {
+            return Vec::new();
+        }
+        self.by_kind.get(&kind).map(|s| s.iter().copied().collect()).unwrap_or_default()
+    }
+
+    /// Bring the index of edges by kind up to date for this edge, after its kind cell changed or it went.
+    fn index_kind(&mut self, edge: Entity) {
+        if let Some(old) = self.kind_ref.remove(&edge)
+            && let Some(set) = self.by_kind.get_mut(&old)
+        {
+            set.remove(&edge);
+            if set.is_empty() {
+                self.by_kind.remove(&old);
+            }
+        }
+        let Some(cell) = self.registry.edge_kind.as_ref() else { return };
+        let named = match self.cells.get(&edge).and_then(|c| c.get(cell)) {
+            Some(Backing::Value(v)) => v.get("ref").and_then(Value::as_str).and_then(|r| r.parse::<Entity>().ok()),
+            _ => None,
+        };
+        if let Some(kind) = named
+            && self.edges.contains_key(&edge)
+        {
+            self.kind_ref.insert(edge, kind);
+            self.by_kind.entry(kind).or_default().insert(edge);
+        }
     }
 
     /// The edges with this component leaving a node, each with its target, in the order those were made.
@@ -1437,13 +1479,19 @@ impl Graph {
     }
 
     /// How far a table goes, if it says: the cell the registry names for it, on the node named for the
-    /// table. See `table::Extent`.
+    /// table, or else on the nearest of its kinds that says. See `table::Extent`.
     pub fn extent(&self, table: &str) -> Option<table::Extent> {
         let cell = self.registry.extent.as_ref()?;
-        self.names.named.get(table)?.iter().find_map(|t| match self.cells.get(t)?.get(cell)? {
+        // A row takes its table's cells, so it would seem to say how far it goes too: it isn't a table.
+        if table::row_of(table).is_some() {
+            return None;
+        }
+        let said = |n: &Entity| match self.cells.get(n)?.get(cell)? {
             Backing::Value(Value::String(s)) => table::Extent::parse(s).ok(),
             _ => None,
-        })
+        };
+        let nodes = self.names.named.get(table)?;
+        nodes.iter().find_map(said).or_else(|| nodes.iter().find_map(|t| self.lookup(*t).iter().find_map(said)))
     }
 
     /// The rows written outside the extent their table says, which nothing reads by where it is.
@@ -1499,8 +1547,8 @@ impl Graph {
     /// Every table: those with a row written, and those that say how far they go.
     pub fn tables(&self) -> Vec<String> {
         let mut out: BTreeSet<String> = self.names.tables.iter().filter(|(_, rows)| rows.values().any(|s| !s.is_empty())).map(|(t, _)| t.clone()).collect();
-        if let Some(cell) = &self.registry.extent {
-            out.extend(self.cells.iter().filter(|(_, c)| c.contains_key(cell)).filter_map(|(e, _)| self.names.of.get(e).cloned()));
+        if self.registry.extent.is_some() {
+            out.extend(self.names.named.iter().filter(|(n, at)| !at.is_empty() && table::row_of(n).is_none()).filter(|(n, _)| self.extent(n).is_some()).map(|(n, _)| n.clone()));
         }
         out.into_iter().collect()
     }

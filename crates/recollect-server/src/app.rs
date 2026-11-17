@@ -68,7 +68,21 @@ pub struct Open {
     pub dir: PathBuf,
     pub ws: Workspace,
     _lock: File,
-    _watcher: Option<notify::RecommendedWatcher>,
+    _watcher: Option<Watching>,
+}
+
+/// A watch on a workspace's files. Stopping one waits on the system for about a second on macOS, and
+/// stops wait on each other, so it's stopped on a thread of its own: closing or switching a workspace
+/// doesn't wait for it. A reload from it once it's stopping is for a workspace no longer open, or the same
+/// one, and is harmless either way: see `App::reload`.
+struct Watching(Option<notify::RecommendedWatcher>);
+
+impl Drop for Watching {
+    fn drop(&mut self) {
+        if let Some(w) = self.0.take() {
+            std::thread::spawn(move || drop(w));
+        }
+    }
 }
 
 pub struct App {
@@ -76,6 +90,9 @@ pub struct App {
     pub home: PathBuf,
     current: Mutex<Option<Open>>,
     pub events: broadcast::Sender<Event>,
+    /// Whether to watch an open workspace's files for edits made outside. Without it, an edit is still
+    /// brought in before any change: see `Open::sync`.
+    watching: bool,
 }
 
 /// The files that make up a workspace, as `recollect_core` reads them. Anything else in the directory
@@ -167,7 +184,14 @@ impl Open {
 impl App {
     pub fn new(home: PathBuf) -> Arc<App> {
         let (events, _) = broadcast::channel(64);
-        Arc::new(App { home, current: Mutex::new(None), events })
+        Arc::new(App { home, current: Mutex::new(None), events, watching: true })
+    }
+
+    /// One that doesn't watch the files, for tests: starting a watch asks the system, which on macOS
+    /// takes a while and waits on every other watch being started, so many tests at once wait on each other.
+    pub fn without_watching(home: PathBuf) -> Arc<App> {
+        let (events, _) = broadcast::channel(64);
+        Arc::new(App { home, current: Mutex::new(None), events, watching: false })
     }
 
     fn lock(&self) -> MutexGuard<'_, Option<Open>> {
@@ -231,7 +255,9 @@ impl App {
         }
         let mut opened = Open { dir: dir.clone(), ws, _lock: lock, _watcher: None };
         opened.flush().map_err(AppError::Other)?;
-        opened._watcher = Some(watch(self.clone(), &dir).map_err(AppError::Other)?);
+        if self.watching {
+            opened._watcher = Some(Watching(Some(watch(self.clone(), &dir).map_err(AppError::Other)?)));
+        }
         *current = Some(opened);
         drop(current);
         let _ = std::fs::create_dir_all(&self.home);

@@ -19,7 +19,9 @@
 //! - `{"op": "table", "name": "Car", "is_a": "Vehicle", "columns": {..}, "rows": [{"key": "Hatchback",
 //!   ..}, ..]}` writes a table: the node named `Car`, with `columns` its cells, which every row takes
 //!   unless it says otherwise, and a node named `Car[Hatchback]` for each row, with its own cells.
-//!   A row can be just its key, and `"range": [0, 10]` adds numbered rows. Nodes with those names
+//!   A row can be just its key, and `"range": [0, 10]` adds numbered rows. A row of a grid has a key
+//!   with a part for each way across, as `[2, 3]` or `"2, 3"`, and `"extent": "1..9, 1..9"` says how far
+//!   the table goes, so every row inside it is there without being written: see `docs/expressions.md`. Nodes with those names
 //!   already are used, not made again. `"alternative_of": "Which car?"` makes every row one of that
 //!   decision's options. `"csv"` in place of `"rows"` reads them from the text of a CSV file, whose first
 //!   line names the columns, numbered from 1 unless `"key"` names the column their keys are in: see
@@ -393,6 +395,10 @@ fn table(mut op: Map<String, Value>, names: &BTreeMap<String, Vec<Entity>>) -> R
             out.push(json!({ "op": "add", "id": at, "component": c }));
         }
     }
+    // How far the table goes, such as "1..9, 1..9": every row inside it is there, written or not.
+    if let Some(extent) = op.remove("extent") {
+        out.push(set_cell(&at, "extent", extent));
+    }
     if let Some(columns) = op.remove("columns") {
         let Value::Object(columns) = columns else { return Err("a table's columns are {cell: value or {formula, labels}}".to_string()) };
         for (c, v) in columns {
@@ -417,6 +423,7 @@ fn table(mut op: Map<String, Value>, names: &BTreeMap<String, Vec<Entity>>) -> R
             return Err(format!("[{from}, {to}] isn't a range of up to 10,000 rows"));
         }
         let given: Vec<String> = rows.iter().filter_map(|r| r.get("key").or(Some(r)).map(key_text)).collect();
+        // A range is of one part: a grid says how far it goes with an extent instead.
         rows.extend((from..=to).filter(|i| !given.contains(&i.to_string())).map(|i| json!(i)));
     }
     for row in rows {
@@ -424,10 +431,17 @@ fn table(mut op: Map<String, Value>, names: &BTreeMap<String, Vec<Entity>>) -> R
             Value::Object(mut cells) => (cells.remove("key").ok_or("a row needs a key")?, cells),
             key => (key, Map::new()),
         };
-        let key = key_text(&key);
-        if key.is_empty() || key.contains(['[', ']']) {
-            return Err(format!("“{key}” can't be a row's key"));
-        }
+        // A row of a grid has a key with a part for each way across: [2, 3], or "2, 3". It's written as the
+        // row would be named, so a row that's there already, written or not, is found by it.
+        let said = match &key {
+            Value::Array(parts) if parts.iter().any(|p| key_text(p).contains(',')) => return Err(format!("{key} has a part with a comma in it, which would read as two parts")),
+            Value::Array(parts) => parts.iter().map(key_text).collect::<Vec<_>>().join(", "),
+            k => key_text(k),
+        };
+        let key = match recollect_graph::table::Key::parse(&said) {
+            Some(k) if !said.contains(['[', ']']) => k,
+            _ => return Err(format!("“{said}” can't be a row's key")),
+        };
         let id = node(&format!("{name}[{key}]"), &mut out)?;
         for (c, v) in cells {
             out.push(set_cell(&id, &c, v));

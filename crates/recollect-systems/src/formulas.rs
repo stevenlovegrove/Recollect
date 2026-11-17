@@ -2787,7 +2787,9 @@ its lowest row or outside its extent, a row is undefined, so `or(P[row[0] - 1, r
 \"1..9, 1..9\" (a range, either end of which can be `*` for as far as rows are written, a list as [Red, Green], or `*` for whatever is \
 written that way) and every row inside it is there without being written, and `rows` is all of them: a sudoku is a table with `options` \
 and an extent, a `fits` column such as `distinct(Cell[row[0], *].chosen) && distinct(Cell[*, row[1]].chosen)`, and a `requires` node \
-`all(Cell.rows.fits)`. `Cell[2, *]`, `Cell[*, 3]` and `Cell[1..3, 4..6]` are slices, groups of rows to go over. See docs/expressions.md.\n\
+`all(Cell.rows.fits)`. `Cell[2, *]`, `Cell[*, 3]` and `Cell[1..3, 4..6]` are slices, groups of rows to go over. The table op writes one with \
+`\"extent\": \"1..9, 1..9\"` and keys such as `[1, 2]`. A row nobody wrote is a node to write on like any other: writing on it keeps \
+its handle. See docs/expressions.md.\n\
 \n\
 A node with `requires` and a true-or-false value is a demand on choices: only the ways they could go that make it true count. Where it \
 depends on chance, its `at_least` cell says how surely, from 0 to 1. A node with `evidence` is something known to be true: it rules out \

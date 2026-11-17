@@ -28,7 +28,9 @@ pub enum Key {
 }
 
 impl Key {
-    fn parse(s: &str) -> Option<Key> {
+    /// The key a row's name says between its brackets: parts split at commas, each a number if it reads as
+    /// one. Nothing, if a part is empty.
+    pub fn parse(s: &str) -> Option<Key> {
         let parts: Vec<&str> = s.split(',').map(str::trim).collect();
         if parts.iter().any(|p| p.is_empty()) {
             return None;

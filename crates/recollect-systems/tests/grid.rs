@@ -271,3 +271,20 @@ fn every_row_inside_an_extent_is_listed_and_writing_one_keeps_it_the_same_node()
     assert_eq!(g.g.save().nodes.len(), 2);
     g.assert_round_trips();
 }
+
+#[test]
+fn a_table_takes_how_far_it_goes_from_its_kind_unless_it_says() {
+    use recollect_systems::formulas::IS_A;
+    let mut g = N::with(plan::install);
+    g.add("Board", "extent").set("Board", TableExtent("1..2, 1..2".to_string()));
+    g.e("Small");
+    g.formula("Filled", "count(Small.rows)");
+    assert_eq!(value(&g, "Filled"), Ok(Val::Num(0.0)));
+    g.link("Small", "Board", IS_A);
+    assert_eq!(g.g.rows("Small").len(), 4, "from Board");
+    assert_eq!(value(&g, "Filled"), Ok(Val::Num(4.0)), "and what reads them sees it");
+    g.add("Small", "extent").set("Small", TableExtent("1..1, 1..3".to_string()));
+    assert_eq!(value(&g, "Filled"), Ok(Val::Num(3.0)), "its own");
+    assert_eq!(g.g.extent("Small[1, 1]"), None, "a row isn't a table, though it takes its table's cells");
+    g.assert_round_trips();
+}
