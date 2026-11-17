@@ -447,10 +447,7 @@ fn by_id_or_name(g: &Graph, said: &str) -> Vec<Entity> {
 }
 
 fn name_of(g: &Graph, e: Entity) -> Option<String> {
-    match g.get_value(e, Name::NAME) {
-        Ok(Some(Value::String(n))) => Some(n),
-        _ => None,
-    }
+    g.get::<Name>(e).ok().flatten().map(|n| n.0)
 }
 
 /// Every node the selection picks out, in the order they were made.

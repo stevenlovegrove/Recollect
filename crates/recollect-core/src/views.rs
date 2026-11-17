@@ -272,7 +272,7 @@ pub(crate) fn looked_at(g: &Graph, world: &World) -> (Option<Graph>, Vec<Quantit
             continue;
         };
         let mut pin = QuantityPin { key: key.clone(), node, cell: cell.to_string(), text: text.clone(), refused: None };
-        if !g.contains(node) || !matches!(g.get_value(node, cell), Ok(Some(_))) {
+        if !g.contains(node) || !matches!(g.has_value(node, cell), Ok(true)) {
             pin.refused = Some(format!("there's no {cell} there to pin"));
         } else {
             match pinned_to(text) {
@@ -473,7 +473,7 @@ impl Labels {
     /// choices are worked out first, or the first look at a workspace would have no names for them.
     pub(crate) fn gather(g: &Graph) -> Labels {
         for choice in g.having(CHOICE) {
-            let _ = g.get_value(choice, "chosen");
+            let _ = g.get::<recollect_systems::formulas::Chosen>(choice);
         }
         Labels(recollect_systems::labels(g))
     }
@@ -1124,7 +1124,7 @@ pub fn unresolved(g: &Graph) -> Vec<CheckView> {
     // Two nodes with one name, which a reader can't tell apart by it.
     let mut named: BTreeMap<String, Vec<Entity>> = BTreeMap::new();
     for e in g.nodes().written() {
-        if let Ok(Some(Value::String(n))) = g.get_value(e, recollect_graph::Name::NAME)
+        if let Ok(Some(recollect_graph::Name(n))) = g.get::<recollect_graph::Name>(e)
             && !n.is_empty()
         {
             named.entry(n).or_default().push(e);

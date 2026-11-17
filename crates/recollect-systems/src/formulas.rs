@@ -1894,11 +1894,12 @@ fn read_cell(cx: &Cx, node: Entity, component: &str, fields: &[String]) -> Resul
         LatestStart::NAME => number_cell(cx.get::<LatestStart>(node)?.map(|c| c.0)),
         LatestFinish::NAME => number_cell(cx.get::<LatestFinish>(node)?.map(|c| c.0)),
         PlanEnd::NAME => number_cell(cx.get::<PlanEnd>(node)?.map(|c| c.0)),
-        // One of the workspace's own cells, worked out by a formula, is a value already.
-        _ if let Some(v) = cx.get_computed_as::<ValueCell>(node, component) => match v? {
+        // One of the workspace's own cells is a value, worked out or typed in.
+        _ if cx.registry().cell_def(component).is_none() => match cx.get_as::<ValueCell>(node, component)? {
             Some(v) => Ev::Data(v.0.0),
             None => Ev::Data(pure(Val::Undefined)),
         },
+        // A system's cell of a type this doesn't know: JSON is the form every type has in common.
         _ => match cx.get_value(node, component)? {
             None => Ev::Data(pure(Val::Undefined)),
             Some(v) => from_json(v).map_err(|detail| Error::Malformed { cell: (node, component.to_string()), detail })?,
@@ -1949,7 +1950,7 @@ fn value_of(cx: &Cx, part: &Part, values: &[Ev]) -> Result<Ev, Error> {
         }
         // A component, if there's one by that name, and otherwise whether there's anything in that cell.
         Part::Has(node, name) => {
-            let has = if cx.registry().component_def(name).is_some() { cx.has(*node, name) } else { cx.get_value(*node, name)?.is_some() };
+            let has = if cx.registry().component_def(name).is_some() { cx.has(*node, name) } else { cx.has_value(*node, name)? };
             Ev::Truth { yes: space.truth(has), undefined: space.never() }
         }
         Part::Chose(choice, option) => {
@@ -2453,7 +2454,7 @@ fn free_compiler() -> Compile {
     Arc::new(|text: &str| {
         let e = expr::parse(text)?;
         let text = text.to_string();
-        // Kept as what it is, so what reads it doesn't go through JSON: see `Graph::get_computed_as`.
+        // Kept as what it is, so what reads it doesn't go through JSON: see `Graph::get_as`.
         Ok(Computed::typed::<ValueCell>("formula", move |cx| {
             let c = work_out(cx, &e, &Type::Any).map_err(|err| in_text(err, &text))?;
             Ok(Some(ValueCell(Worldly(c))))
@@ -2567,19 +2568,13 @@ fn in_text(err: Error, text: &str) -> Error {
     }
 }
 
-/// One of the workspace's own cells as a world value, if it holds what a formula would.
+/// One of the workspace's own cells as a world value: worked out, or typed in. Something typed in that
+/// isn't a value at all is nothing here, and shown as it is.
 pub fn shown_free(g: &Graph, e: Entity, cell: &str) -> Option<Cell<Shown>> {
-    // Worked out by a formula, it's a value already, with no need to go through JSON.
-    if let Some(v) = g.get_computed_as::<ValueCell>(e, cell) {
-        return Some(v.map(|v| v.map(|v| shown_val(&v.0.0))));
+    match g.get_as::<ValueCell>(e, cell) {
+        Err(Error::Malformed { cell: (at, name), .. }) if at == e && name == cell => None,
+        read => Some(read.map(|v| v.map(|v| shown_val(&v.0.0)))),
     }
-    let v = match g.get_value(e, cell) {
-        Ok(Some(v)) => v,
-        Ok(None) => return Some(Ok(None)),
-        Err(err) => return Some(Err(err)),
-    };
-    let w: Worldly<Val> = serde_json::from_value(v).ok()?;
-    Some(Ok(Some(shown_val(&w.0))))
 }
 
 // ---------- what's built in ----------

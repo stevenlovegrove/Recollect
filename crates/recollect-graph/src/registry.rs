@@ -445,7 +445,7 @@ impl Registry {
             return self;
         }
         comp.checks.push(check);
-        let computed = Computed::json(&cell, move |cx| Ok(Some(serde_json::to_value(f(cx)?).expect("strings serialise"))));
+        let computed = Computed::of::<Vec<String>>(&cell, move |cx| Ok(Some(f(cx)?)));
         self.cells.insert(
             cell.clone(),
             CellDef { name: cell, component: component.to_string(), system: self.current.clone(), about: String::new(), internal: true, summary: false, quiet: false, truth: false, per_entity: true, initial: None, default: Some(Default::Builtin(computed)), compile: None, validate: None, shown: None },

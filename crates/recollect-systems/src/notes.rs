@@ -145,7 +145,8 @@ fn checks(reg: &mut Registry) {
         let (from, to) = cx.ends().expect("an edge");
         let mut out = Vec::new();
         for (end, which, cell) in [(from, "from", FromKind::NAME), (to, "to", ToKind::NAME)] {
-            if let Some(want) = cx.get_value(kind, cell)?.as_ref().and_then(node_ref)
+            let said = if cell == FromKind::NAME { cx.get::<FromKind>(kind)?.map(|k| k.0) } else { cx.get::<ToKind>(kind)?.map(|k| k.0) };
+            if let Some(want) = said.as_ref().and_then(node_ref)
                 && !is_instance(cx, end, want)
             {
                 out.push(format!("goes {which} {end}, which isn't a {want}, as {kind} says it should be"));
@@ -167,10 +168,7 @@ fn checks(reg: &mut Registry) {
 
 /// A node its edges lead back to, following them from source to target, if they make a loop.
 fn loop_of(cx: &Cx, kind: Entity) -> Result<Option<Entity>, Error> {
-    let name = match cx.get_value(kind, Name::NAME)? {
-        Some(Value::String(n)) => n,
-        _ => return Ok(None),
-    };
+    let Some(Name(name)) = cx.get::<Name>(kind)? else { return Ok(None) };
     // Every node an edge of this kind leaves, as where a loop could start.
     let mut starts: Vec<Entity> = cx.scan(Named::NAME).into_iter().filter(|n| !cx.outgoing_at(*n, &name).is_empty()).collect();
     starts.sort();

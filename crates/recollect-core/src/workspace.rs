@@ -87,10 +87,7 @@ fn refusal(e: CommitError, g: &Graph, ops: &[Op]) -> Error {
 /// it knows which node is meant and can still refer to it. A node the refused change would have named
 /// is named as it would have been.
 fn violations(v: &[recollect_graph::Violation], g: &Graph, ops: &[Op]) -> String {
-    let mut names: BTreeMap<String, String> = g.nodes().all().filter_map(|e| match g.get_value(e, Name::NAME) {
-        Ok(Some(Value::String(n))) => Some((e.to_string(), n)),
-        _ => None,
-    }).collect();
+    let mut names: BTreeMap<String, String> = g.nodes().all().filter_map(|e| Some((e.to_string(), g.get::<Name>(e).ok()??.0))).collect();
     for op in ops {
         if let Op::Set { on, cell, to: Some(Stored::Value(Value::String(n))) } = op
             && cell == Name::NAME
@@ -350,7 +347,7 @@ impl Workspace {
         let g = self.log.what_if(ops).map_err(|v| Error::Refused(violations(&v, self.log.graph(), ops)))?;
         for op in ops {
             if let Op::Set { on, cell, to: Some(Stored::Formula(_)) } = op
-                && let Err(e) = g.get_value(on.entity(), cell)
+                && let Err(e) = g.has_value(on.entity(), cell)
             {
                 return Err(Error::Refused(crate::views::error_text(&e, &g)));
             }

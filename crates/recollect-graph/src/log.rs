@@ -618,8 +618,8 @@ fn check_rules(g: &Graph, severity: Severity) -> Vec<Violation> {
     for (component, check) in g.registry().checks().filter(|(_, c)| c.severity == severity) {
         let cell = check.cell();
         for (e, target) in entities.iter().filter(|(e, _)| g.has(*e, component)) {
-            let details = match g.get_value(*e, &cell) {
-                Ok(Some(v)) => serde_json::from_value::<Vec<String>>(v).unwrap_or_default(),
+            let details = match g.get_as::<Vec<String>>(*e, &cell) {
+                Ok(Some(v)) => v,
                 Ok(None) => Vec::new(),
                 Err(Error::Cycle(_)) => vec!["couldn't be checked: it reads itself".to_string()],
                 Err(error) => vec![format!("couldn't be checked: {error:?}")],

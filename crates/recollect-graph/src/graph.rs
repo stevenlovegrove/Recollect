@@ -192,6 +192,8 @@ pub struct Computed {
     eval: Box<dyn Fn(&Cx) -> AnyValue + Send + Sync>,
     same: fn(&AnyValue, &AnyValue) -> bool,
     json: fn(&AnyValue) -> Result<Option<Value>, Error>,
+    /// Whether it came to something, or the error, without making anything of it.
+    present: fn(&AnyValue) -> Result<bool, Error>,
 }
 
 impl Computed {
@@ -206,12 +208,19 @@ impl Computed {
             }),
             same: |a, b| a.downcast_ref::<Result<Option<T>, Error>>() == b.downcast_ref::<Result<Option<T>, Error>>(),
             json,
+            present: |a| a.downcast_ref::<Result<Option<T>, Error>>().expect("one cell, one type").as_ref().map(Option::is_some).map_err(Clone::clone),
         })
     }
 
     /// One that gives a typed cell.
     pub fn typed<C: CellType>(name: &str, f: impl Fn(&Cx) -> Cell<C> + Send + Sync + 'static) -> Arc<Computed> {
-        Self::erased(name, f, |a| a.downcast_ref::<Cell<C>>().expect("one cell, one type").clone().map(|v| v.map(|v| serde_json::to_value(&v).expect("cells serialise"))))
+        Self::of(name, f)
+    }
+
+    /// One that gives any Rust type, kept as that type, so what reads it as that type doesn't go through
+    /// JSON: see `Graph::get_as`. JSON is only made of it where it's needed, as when a view is sent.
+    pub fn of<T: Serialize + Clone + PartialEq + Send + Sync + 'static>(name: &str, f: impl Fn(&Cx) -> Cell<T> + Send + Sync + 'static) -> Arc<Computed> {
+        Self::erased(name, f, |a| a.downcast_ref::<Cell<T>>().expect("one cell, one type").clone().map(|v| v.map(|v| serde_json::to_value(&v).expect("cells serialise"))))
     }
 
     /// One that gives JSON, for a cell with no Rust type.
@@ -1219,15 +1228,21 @@ impl Graph {
         self.reading(|s| s.read(e))
     }
 
-    /// Any cell by its name, whether or not Rust has a type for it.
+    /// Any cell by its name as JSON, the form it has outside the engine: for sending, saving, or showing
+    /// as it is. Inside, `get_as` is the way, with the type it's wanted as.
     pub fn get_value(&self, e: Entity, cell: &str) -> Cell<Value> {
         self.reading(|s| s.read_value(e, cell))
     }
 
-    /// A worked-out cell, by its name, as the type it was worked out as, which saves going through JSON:
-    /// see `Session::read_computed_as`. Nothing if it isn't worked out, or isn't that type.
-    pub fn get_computed_as<C: Clone + 'static>(&self, e: Entity, cell: &str) -> Option<Cell<C>> {
-        self.reading(|s| s.read_computed_as(e, cell))
+    /// Any cell, by its name, as a Rust type: the way to read one. JSON is only made where the cell's value
+    /// is JSON where it's written, or was worked out as another type: see `Session::read_as`.
+    pub fn get_as<C: DeserializeOwned + Clone + 'static>(&self, e: Entity, cell: &str) -> Cell<C> {
+        self.reading(|s| s.read_as(e, cell))
+    }
+
+    /// Whether a cell has something in it, or the error it gives, with nothing made of its value.
+    pub fn has_value(&self, e: Entity, cell: &str) -> Result<bool, Error> {
+        self.reading(|s| s.read_present(e, cell))
     }
 
     /// Run something with what a computed cell on this entity could see, as one would, without keeping
@@ -1594,9 +1609,16 @@ impl Session<'_> {
     }
 
     fn read<C: CellType>(&self, e: Entity) -> Cell<C> {
-        let key: Key = (e, C::NAME.to_string());
+        self.read_as(e, C::NAME)
+    }
+
+    /// A cell, by its name, as a Rust type. What's worked out as that type is that value, with no JSON in
+    /// between. Only a value typed in, which is JSON where it's written, or one worked out as some other
+    /// type, goes through JSON, as the form every type has in common.
+    fn read_as<C: DeserializeOwned + Clone + 'static>(&self, e: Entity, cell: &str) -> Cell<C> {
+        let key: Key = (e, cell.to_string());
         self.note(Dep::Cell(key.clone()));
-        match self.g.backing_at(e, C::NAME) {
+        match self.g.backing_at(e, cell) {
             None => self.missing(key),
             Some((Backing::Value(v), _)) => decode(&key, &v).map(Some),
             Some((Backing::Formula(_, Err(error)), _)) => Err(error),
@@ -1617,18 +1639,23 @@ impl Session<'_> {
         }
     }
 
-    /// A worked-out cell's value as the Rust type it was worked out as, by the cell's name, without going
-    /// through JSON. Nothing if it isn't worked out, or isn't that type: then `read_value` is the way.
-    fn read_computed_as<C: Clone + 'static>(&self, e: Entity, cell: &str) -> Option<Cell<C>> {
+    /// Whether a cell has something in it, or the error it gives, with nothing made of its value.
+    fn read_present(&self, e: Entity, cell: &str) -> Result<bool, Error> {
         let key: Key = (e, cell.to_string());
-        let c = self.g.backing_at(e, cell)?.0.computed()?.clone();
         self.note(Dep::Cell(key.clone()));
-        if let Err(err) = self.settle(&key, &c) {
-            return Some(Err(err));
+        match self.g.backing_at(e, cell) {
+            None => self.missing::<()>(key).map(|v| v.is_some()),
+            Some((Backing::Value(_), _)) => Ok(true),
+            Some((Backing::Formula(_, Err(error)), _)) => Err(error),
+            Some((b, _)) => {
+                let c = b.computed().expect("the rest are computed").clone();
+                self.settle(&key, &c)?;
+                (c.present)(&self.engine.borrow().memo[&key].value)
+            }
         }
-        self.engine.borrow().memo[&key].value.downcast_ref::<Cell<C>>().cloned()
     }
 
+    /// A cell as JSON, the form it has outside the engine: for sending, saving, or showing as it is.
     fn read_value(&self, e: Entity, cell: &str) -> Cell<Value> {
         let key: Key = (e, cell.to_string());
         self.note(Dep::Cell(key.clone()));
@@ -1850,9 +1877,14 @@ impl Cx<'_> {
         self.s.read_value(e, cell)
     }
 
-    /// A worked-out cell as the type it was worked out as: see `Graph::get_computed_as`.
-    pub fn get_computed_as<C: Clone + 'static>(&self, e: Entity, cell: &str) -> Option<Cell<C>> {
-        self.s.read_computed_as(e, cell)
+    /// Any cell, by its name, as a Rust type: see `Graph::get_as`.
+    pub fn get_as<C: DeserializeOwned + Clone + 'static>(&self, e: Entity, cell: &str) -> Cell<C> {
+        self.s.read_as(e, cell)
+    }
+
+    /// Whether a cell has something in it: see `Graph::has_value`.
+    pub fn has_value(&self, e: Entity, cell: &str) -> Result<bool, Error> {
+        self.s.read_present(e, cell)
     }
 
     /// The edges with this component arriving here, each with its source.

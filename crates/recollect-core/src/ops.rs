@@ -98,7 +98,8 @@ impl Resolver<'_> {
         if self.g.contains(e) || self.g.kind_of(e) != Some(NodeKind::Row) || !self.spawned.insert(e.to_string()) {
             return;
         }
-        let name = self.g.get_value(e, Name::NAME).ok().flatten().unwrap_or(Value::Null);
+        // Into an op, which is JSON.
+        let name = self.g.get::<Name>(e).ok().flatten().map_or(Value::Null, |n| Value::String(n.0));
         out.push(json!({ "op": "spawn", "id": id }));
         out.push(json!({ "op": "set", "id": id, "cell": Name::NAME, "value": name }));
     }

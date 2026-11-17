@@ -14,7 +14,7 @@ pub mod view;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, OnceLock};
 
-use recollect_graph::{CellType, Entity, Graph, Name, Registry};
+use recollect_graph::{Entity, Graph, Name, Registry};
 
 /// A system, as a workspace names it.
 #[derive(Clone, Copy)]
@@ -111,8 +111,8 @@ pub fn labels(g: &Graph) -> HashMap<String, String> {
 }
 
 pub fn label_of(g: &Graph, e: Entity) -> String {
-    match g.get_value(e, Name::NAME) {
-        Ok(Some(serde_json::Value::String(n))) => n,
+    match g.get::<Name>(e) {
+        Ok(Some(Name(n))) => n,
         _ => e.to_string().chars().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect(),
     }
 }
