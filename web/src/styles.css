@@ -2761,6 +2761,21 @@ tr.pruned {
   background: var(--hl);
 }
 /* Given: not a choice at all, so nothing to pick. */
+/* A table's card names the table, which can be picked, as its own node. */
+.card-title-button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.card-title-button:hover {
+  text-decoration: underline;
+}
 .board-cell.given .board-big {
   display: grid;
   place-items: center;
