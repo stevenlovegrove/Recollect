@@ -2760,6 +2760,12 @@ tr.pruned {
 .board-cell.picked {
   background: var(--hl);
 }
+/* Given: not a choice at all, so nothing to pick. */
+.board-cell.given .board-big {
+  display: grid;
+  place-items: center;
+  color: var(--text);
+}
 .board-big.forced {
   color: var(--muted);
   font-weight: 400;

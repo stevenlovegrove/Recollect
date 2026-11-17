@@ -90,8 +90,7 @@ export function WorldPanel({ ws, onSelect, summary, steps }: { ws: Workspace; on
 
   const options = w.vars.flatMap((v) => v.options.map((o) => o.name));
   const shared = w.vars.length > 0 && new Set(options).size === w.vars[0].options.length && w.vars.every((v) => v.options.length === w.vars[0].options.length);
-  const atInfo = (v: VarView) => ws.byId.get(v.id)?.cells.at?.value as { row: number; col: number } | undefined;
-  const isBoard = w.vars.length > 0 && w.vars.every((v) => atInfo(v));
+  const isBoard = w.vars.length > 0 && w.vars.every((v) => placeOf(ws, v.id));
 
   return (
     <div className="world-panel">
@@ -268,16 +267,62 @@ function Grid({ ws }: { ws: ViewProps["ws"] }) {
   );
 }
 
-/** Choices placed on a board, each showing what's still possible where it is. */
+type Place = { row: number; col: number; byKey: boolean };
+
+/**
+ * Where something goes on a board: where its `at` says, counting from 0, or, for a row of a grid numbered
+ * both ways, as `Cell[2, 3]`, where its key says.
+ */
+function placeOf(ws: ViewProps["ws"], id: string): Place | undefined {
+  const n = ws.byId.get(id);
+  const at = n?.cells.at?.value as { row: number; col: number } | undefined;
+  if (at) return { ...at, byKey: false };
+  const key = n?.row?.key;
+  if (Array.isArray(key) && key.length === 2 && typeof key[0] === "number" && typeof key[1] === "number") return { row: key[0], col: key[1], byKey: true };
+  return undefined;
+}
+
+/**
+ * Choices placed on a board, each showing what's still possible where it is. A cell of the same grid that's
+ * given, a choice of one option, isn't open, so it isn't one of the choices: it's shown where it is, fixed.
+ */
 function Board({ ws }: { ws: ViewProps["ws"] }) {
-  const w = ws.view!.worlds;
-  const at = (v: VarView) => ws.byId.get(v.id)!.cells.at.value as { row: number; col: number };
-  const rows = Math.max(...w.vars.map((v) => at(v).row)) + 1;
-  const cols = Math.max(...w.vars.map((v) => at(v).col)) + 1;
+  const g = ws.view!;
+  const w = g.worlds;
+  const open = new Set(w.vars.map((v) => v.id));
+  const tables = new Set(w.vars.map((v) => ws.byId.get(v.id)?.row?.table).filter((t) => t !== undefined));
+  const givens = [...g.nodes, ...g.unwritten]
+    .filter((n) => !open.has(n.id) && n.row && tables.has(n.row.table) && placeOf(ws, n.id)?.byKey)
+    .flatMap((n) => {
+      const options = n.cells.options?.value;
+      return Array.isArray(options) && options.length === 1 ? [{ id: n.id, name: n.name, value: String(options[0]) }] : [];
+    });
+  // A grid's keys start where its extent does, as 1: its first row and column are the board's.
+  const keyed = [...w.vars.map((v) => placeOf(ws, v.id)!), ...givens.map((x) => placeOf(ws, x.id)!)].filter((p) => p.byKey);
+  const top = keyed.length ? Math.min(...keyed.map((p) => p.row)) : 0;
+  const left = keyed.length ? Math.min(...keyed.map((p) => p.col)) : 0;
+  const at = (id: string) => {
+    const p = placeOf(ws, id)!;
+    return p.byKey ? { row: p.row - top, col: p.col - left } : p;
+  };
+  const all = [...w.vars.map((v) => at(v.id)), ...givens.map((x) => at(x.id))];
+  const rows = Math.max(...all.map((p) => p.row)) + 1;
+  const cols = Math.max(...all.map((p) => p.col)) + 1;
+  // A big board's cells are smaller, so a 9×9 fits.
+  const size = Math.max(rows, cols) > 5 ? 52 : 88;
   return (
-    <div className="board" style={{ gridTemplateColumns: `repeat(${cols}, 88px)`, gridTemplateRows: `repeat(${rows}, 88px)` }}>
+    <div className="board" style={{ gridTemplateColumns: `repeat(${cols}, ${size}px)`, gridTemplateRows: `repeat(${rows}, ${size}px)` }}>
+      {givens.map((x) => {
+        const { row, col } = at(x.id);
+        return (
+          <div key={x.id} className="board-cell given" style={{ gridRow: row + 1, gridColumn: col + 1 }} title={`${x.name}: given`}>
+            <span className="board-big">{x.value}</span>
+          </div>
+        );
+      })}
       {w.vars.map((v) => {
-        const { row, col } = at(v);
+        const { row, col } = at(v.id);
+        const side = Math.ceil(Math.sqrt(v.options.length));
         const possible = v.options.filter((o) => o.possible);
         const picked = v.options.find((o) => o.picked);
         return (
@@ -291,7 +336,7 @@ function Board({ ws }: { ws: ViewProps["ws"] }) {
                 {possible[0].name}
               </button>
             ) : (
-              <span className="board-small">
+              <span className="board-small" style={{ gridTemplateColumns: `repeat(${side}, 1fr)`, gridTemplateRows: `repeat(${side}, 1fr)` }}>
                 {v.options.map((o) => (
                   <button key={o.id} className={isOut(ws, v, o) ? "out" : ""} disabled={!o.possible && !isOut(ws, v, o)} onClick={pinner(ws, v, o)} onContextMenu={ruler(ws, v, o)}>
                     {o.possible || isOut(ws, v, o) ? o.name : ""}
